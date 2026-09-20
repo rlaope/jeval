@@ -29,6 +29,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `tests/test_documented_features.py`: the README and the command surface are now checked against
   each other in both directions, so a documented-but-unimplemented feature fails the suite.
 
+### Added
+- `jeval.collect`: a provider-neutral recorder. `track(client, source_key=...)` wraps the client you
+  already use so every answered call is written to `.jeval/records.jsonl` with its distribution, the
+  model that actually answered, the join key, the token count and the latency. Best effort by
+  design: nothing raises, `JEVAL_COLLECT=0` switches it off, `JEVAL_COLLECT=<path>` moves the file.
+- `jeval ingest --preset jev-native`: reads a decision API's own response log without reshaping it —
+  answers keyed by question name, `choice`/`noul`/`score`, probabilities, confidence and usage.
+  `--list-presets`, `--response-field` and `--source-key-field` cover a log that nests differently.
+- `questions_field` accepts a container keyed by question name and a dotted path, which is the shape
+  a decision API returns (`{"response": {"answers": {...}}}`) rather than a list of questions.
+
 ### Fixed
 - A label harvest joined on a shared key no longer writes one question's answer onto another
   question's records (found by running the documented flow against a two-question log).

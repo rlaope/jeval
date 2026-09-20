@@ -42,6 +42,8 @@ and a pull request adding them will be closed:
 | `jeval/costs.py` | cost matrix, threshold sweep, the bootstrap interval on the threshold, impact table |
 | `jeval/drift.py` | slices by model version or period, model-change detection, `--fail-on` checks, CI text block |
 | `jeval/baseline.py` | baseline snapshots: measurements only, never records |
+| `jeval/collect.py` | the provider-neutral recorder: `track()`/`record()`, env-gated, best-effort, never raises |
+| `jeval/presets.py` | ingest presets: where a product's field spelling is written down, as data |
 | `jeval/score.py` | score-type questions: MAE, RMSE, rank correlation, level view — never binary accuracy |
 | `jeval/planning.py` | label-needed projections: interval-width scaling, with an explicit refusal below 200 labels |
 | `jeval/active.py` | the labeling queue: threshold band, flat distributions, sparse bins; CSV sheet round-trip |
@@ -72,6 +74,9 @@ uv run jeval demo --out-dir /tmp/jeval-demo
 
 - **English only** in code, identifiers, comments, docstrings, error messages, CLI help, docs,
   and commit messages.
+- The collector may never become a failure mode: no raising, no blocking, no vendor SDK import, and
+  it never calls a model. Collection is off with `JEVAL_COLLECT=0`. Product-specific field names go
+  in `presets.py` as data — never as a conditional branch in the core.
 - New runtime dependencies require discussion before the change, not after. The runtime set is
   `numpy`, `pydantic`, `pyyaml`, `typer` and should be treated as closed by default.
 - No database, no server, no network calls in any command.

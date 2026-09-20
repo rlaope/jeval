@@ -152,6 +152,52 @@ Until the first release is on PyPI, run the same thing from a checkout
 known, reports on it, and shows you the reliability curve and ECE. Nothing is downloaded from your side and no data
 leaves the machine; the demo data is generated locally and is explicitly labeled as synthetic.
 
+## Pointing it at your own system
+
+Install once, wrap the client you already use, and every call is recorded where it was made:
+
+```python
+from typesafe_sdk import TypeSafeClient  # your SDK, not jeval's
+from jeval import collect
+
+client = collect.track(
+    TypeSafeClient(),
+    source_key=lambda **kw: kw["trace_id"],  # the id you will join a human answer back on
+)
+```
+
+That is the whole integration. The wrapper makes no calls of its own: it observes the call you
+already make, records the answers, and returns exactly what the client returned. It cannot take
+your service down — a failed write is counted, never raised, and collection is off with
+`JEVAL_COLLECT=0` or pointed elsewhere with `JEVAL_COLLECT=/var/log/decisions.jsonl`.
+
+Then measure:
+
+```sh
+$ jeval report
+```
+
+Three things come out of that wrapper, and the third is the one that matters most: the answers with
+their probabilities, the **model that actually answered** (`jev-1.13.0`, never the `jev-latest`
+you asked for), and the **join key**. Without the join key there is no free-label harvest, because
+nothing else in your stack knows which decision a human answer belongs to.
+
+### A log you already have
+
+If you already write these responses somewhere, skip the wrapper and ingest the file directly:
+
+```sh
+$ jeval ingest --preset jev-native api-decisions.jsonl
+preset: jev-native (response at 'response', answers under 'answers', join key from 'request_id')
+read 4 rows
+wrote 8 records to .jeval/records.jsonl
+```
+
+The preset reads the response object as the API returned it — `answers` keyed by question name,
+`choice`/`noul`/`score`, probabilities, confidence, `usage.input_tokens`. No reshaping, no column
+mapping. `jeval ingest --list-presets` shows what is available; `--response-field` and
+`--source-key-field` override where it looks.
+
 ## What jeval does not do
 
 - It does **not** validate a vendor's calibration claim in general. It measures the model you
@@ -165,6 +211,10 @@ leaves the machine; the demo data is generated locally and is explicitly labeled
   noticing.
 - `jeval calibrate` exports a correction map; **jeval never applies it**. Adapters, gateways,
   routers and request-path libraries stay out of scope — that is your application's job.
+- The collector is a **recorder, not a proxy**. It never calls a model, never chooses one, never
+  retries, never blocks and never routes; it observes a call your code already makes and appends a
+  line. It imports no vendor SDK — the wrap works on any object with a method that takes questions
+  and returns typed answers — and a preset, not a branch, is where a product's field names live.
 - No gateway, no router, no hosting, no prompt optimization, no fine-tuning, no dashboard,
   no accounts.
 
@@ -293,7 +343,7 @@ fails if this table and the command surface disagree in either direction.
 | Command | Purpose | Status |
 | --- | --- | --- |
 | `jeval init` | scaffold `.jeval/` config and ingest map | implemented (M0) |
-| `jeval ingest` | JSONL/CSV logs to decision records | implemented (M0) |
+| `jeval ingest` | JSONL/CSV logs to decision records; `--preset jev-native` reads a decision API's own response log; `--labels` harvests human answers | implemented (M0, M3) |
 | `jeval report` | the argument document: verdict, reliability, cost, impact, segments, score questions, labels-and-correction, drift, data quality — one HTML file, or `--format md` for a paste-ready summary | implemented |
 | `jeval demo` | synthetic log with known miscalibration, rendered through the same report path | implemented |
 | `jeval threshold` | cost matrix to per-action threshold with a bootstrap interval, written to `thresholds.yaml`; `--by <segment>` answers whether splitting pays | implemented |
