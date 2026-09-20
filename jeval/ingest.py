@@ -87,11 +87,27 @@ def records_from_row(row: Mapping[str, Any], mapping: IngestMap) -> list[Decisio
     """Build one record per question carried by a raw row.
 
     A row may carry several questions; per-question fields live under the configured
-    ``questions_field`` list and override the row defaults. Aggregating several questions
-    into one record would hide the per-question failure modes this tool exists to expose.
+    ``questions_field`` and override the row defaults. Aggregating several questions into one
+    record would hide the per-question failure modes this tool exists to expose.
+
+    The container may be a list of question objects, or an object keyed by question name — the
+    shape a decision API returns (``{"answers": {"department": {...}, "is_urgent": {...}}}``).
+    The key becomes the question key when the payload does not name one. ``questions_field``
+    accepts a dotted path, so a container nested inside a response object is reachable.
     """
     shared = _shared_fields(row, mapping)
-    questions = row.get(mapping.questions_field)
+    questions = _read_path(row, mapping.questions_field)
+    if questions is _MISSING:
+        questions = row.get(mapping.questions_field)
+    if isinstance(questions, Mapping) and questions:
+        # A container keyed by question name, as a decision API returns it: the key is the
+        # question key unless the payload names one itself.
+        questions = [
+            {**dict(payload), "question_key": dict(payload).get("question_key", name)}
+            if isinstance(payload, Mapping)
+            else payload
+            for name, payload in questions.items()
+        ]
     if isinstance(questions, list) and questions:
         payloads: list[Mapping[str, Any]] = questions
         records: list[DecisionRecord] = []
@@ -135,6 +151,71 @@ def ingest_files(
                     report.per_question.get(record.question_key, 0) + 1
                 )
                 records.append(record)
+
+    target = Path(out_path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    mode = "a" if append else "w"
+    with target.open(mode, encoding="utf-8") as handle:
+        for record in records:
+            handle.write(record.model_dump_json() + "\n")
+    report.n_records = len(records)
+    return report
+
+
+def ingest_preset_files(
+    inputs: Sequence[Path | str],
+    out_path: Path | str,
+    preset: Any,
+    *,
+    append: bool = False,
+    keys: Mapping[str, str] | None = None,
+    source_key_field: str | None = None,
+) -> IngestReport:
+    """Ingest a log a product already writes, using a preset to name its shape.
+
+    Rows that carry no recognizable response are skipped and counted with the location the preset
+    looked in, rather than being forced into a record that would measure the wrong thing.
+    """
+    from jeval.presets import rows_to_payloads
+
+    report = IngestReport(out_path=Path(out_path))
+    records: list[DecisionRecord] = []
+    for source in inputs:
+        for row in iter_rows(source):
+            report.n_rows += 1
+            try:
+                payloads = rows_to_payloads(
+                    preset, row, keys=keys, source_key_field=source_key_field
+                )
+            except Exception as exc:
+                report.n_skipped += 1
+                if len(report.errors) < 10:
+                    report.errors.append(f"{Path(source).name} row {report.n_rows}: {exc}")
+                continue
+            if not payloads:
+                report.n_skipped += 1
+                if len(report.errors) < 10:
+                    report.errors.append(
+                        f"{Path(source).name} row {report.n_rows}: no response object found "
+                        f"(looked for {preset.response_field!r} with answers under "
+                        f"{preset.container!r})"
+                    )
+                continue
+            for payload in payloads:
+                try:
+                    built = normalize_record(payload)
+                except Exception as exc:
+                    report.n_skipped += 1
+                    if len(report.errors) < 10:
+                        report.errors.append(f"{Path(source).name} row {report.n_rows}: {exc}")
+                    continue
+                built = _drop_impossible_label(built, report)
+                if not built.is_labeled:
+                    report.n_unlabeled += 1
+                report.per_question[built.question_key] = (
+                    report.per_question.get(built.question_key, 0) + 1
+                )
+                records.append(built)
 
     target = Path(out_path)
     target.parent.mkdir(parents=True, exist_ok=True)

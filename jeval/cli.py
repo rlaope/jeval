@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import json
 from collections.abc import Sequence
+from dataclasses import replace
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -131,7 +132,9 @@ def init(
 
 @app.command()
 def ingest(
-    files: Annotated[list[Path], typer.Argument(help="JSONL or CSV files to ingest.")],
+    files: Annotated[
+        list[Path] | None, typer.Argument(help="JSONL or CSV files to ingest.")
+    ] = None,
     root: Annotated[Path, typer.Option("--root", help="Project root holding .jeval/.")] = Path("."),
     mapping: Annotated[
         Path | None,
@@ -161,6 +164,27 @@ def ingest(
         bool,
         typer.Option("--overwrite", help="Let harvested labels replace existing ones."),
     ] = False,
+    preset: Annotated[
+        str | None,
+        typer.Option(
+            "--preset",
+            help="Ingest a log a product already writes, e.g. jev-native (native decision-API "
+            "responses). List them with --list-presets.",
+        ),
+    ] = None,
+    response_field: Annotated[
+        str | None,
+        typer.Option("--response-field", help="Where the response object sits in each log line."),
+    ] = None,
+    source_key_field: Annotated[
+        str | None,
+        typer.Option(
+            "--source-key-field", help="Field carrying the join key (ticket id, trace id)."
+        ),
+    ] = None,
+    list_presets: Annotated[
+        bool, typer.Option("--list-presets", help="Show the available ingest presets and exit.")
+    ] = False,
     label_question: Annotated[
         str | None,
         typer.Option(
@@ -178,6 +202,27 @@ def ingest(
     ] = False,
 ) -> None:
     """Turn raw logs into decision records, and optionally harvest labels you already have."""
+    files = list(files or [])
+    if list_presets:
+        from jeval import presets as preset_module
+
+        for name in preset_module.available():
+            item = preset_module.get(name)
+            typer.echo(f"{name}\n  {item.description}\n  {preset_module.describe(item)}")
+        return
+    if preset is not None:
+        if not files:
+            typer.echo(f"--preset {preset} needs at least one log file")
+            raise typer.Exit(code=1)
+        _preset_command(
+            root=root,
+            inputs=files,
+            name=preset,
+            appendix=append,
+            response_field=response_field,
+            source_key_field=source_key_field,
+        )
+        return
     if labels is not None:
         _harvest_command(
             root=root,
@@ -190,13 +235,21 @@ def ingest(
             allow_unlisted=allow_unlisted,
         )
         return
+    if not files:
+        typer.echo("nothing to ingest: pass a JSONL/CSV file, or use --preset / --labels with one")
+        raise typer.Exit(code=1)
     config = load_config(root)
     map_path = mapping or (Path(root) / DATA_DIR_NAME / config.ingest_map)
     ingest_map = load_ingest_map(map_path)
     out_path = records_path(root)
     result = ingest_files(files, out_path, ingest_map, append=append)
-    typer.echo(f"read {result.n_rows} rows from {len(files)} file(s)")
-    typer.echo(f"wrote {result.n_records} records to {out_path}")
+    _report_ingest(result)
+
+
+def _report_ingest(result: Any) -> None:
+    """Print one ingest run's numbers, including every reason a row was skipped."""
+    typer.echo(f"read {result.n_rows} rows")
+    typer.echo(f"wrote {result.n_records} records to {result.out_path}")
     if result.per_question:
         typer.echo("questions:")
         for key in sorted(result.per_question):
@@ -224,6 +277,7 @@ def ingest(
         raise typer.Exit(code=1)
 
 
+@app.command()
 def resolve_cost_actions(costs: Path | None, root: Path) -> tuple[list[Any], str]:
     """Load a cost matrix if one exists. Returns the actions and a note for the report."""
     from jeval.costs import load_cost_actions
@@ -1011,6 +1065,44 @@ def labels_for_tighter_interval(n: int, span: float, target_span: float = 0.05) 
     if n <= 0 or span != span or span <= target_span:
         return 0
     return max(0, int(n * ((span / target_span) ** 2 - 1)))
+
+
+def _preset_command(
+    *,
+    root: Path,
+    inputs: Sequence[Path],
+    name: str,
+    appendix: bool,
+    response_field: str | None,
+    source_key_field: str | None,
+) -> None:
+    """Ingest a log a product already writes, through a preset."""
+    from jeval import presets as preset_module
+    from jeval.ingest import ingest_preset_files
+
+    try:
+        item = preset_module.get(name)
+    except ValueError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=1) from None
+    if response_field:
+        item = replace(item, response_field=response_field)
+    if source_key_field:
+        item = replace(item, source_key_field=source_key_field)
+    report = ingest_preset_files(
+        list(inputs),
+        records_path(root),
+        item,
+        append=appendix,
+        source_key_field=source_key_field,
+    )
+    typer.echo(f"preset: {name} ({preset_module.describe(item)})")
+    if report.n_records == 0:
+        typer.echo(f"wrote 0 records from {report.n_rows} row(s)")
+        for error in report.errors[:5]:
+            typer.echo(f"  {error}")
+        return
+    _report_ingest(report)
 
 
 def _harvest_command(
