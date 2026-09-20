@@ -296,7 +296,7 @@ def impact_table_html(
     volume = (
         '<label class="volume">monthly cases '
         f'<input type="number" min="0" step="100" value="{int(impact.monthly_volume or 0)}" '
-        f'id="volume-input" data-currency="{escape(impact.currency)}"></label>'
+        f'id="{escape(slider_id)}-volume" data-currency="{escape(impact.currency)}"></label>'
         if impact.monthly_volume is not None
         else ""
     )
@@ -367,6 +367,7 @@ def render_cost_section(
     *,
     current_threshold: float | None = None,
     impact: ImpactTable | None = None,
+    slider_id: str = "threshold-slider",
 ) -> str:
     """Curve, its data table, and the impact table when one exists."""
     chart = render_cost_curve(result, current_threshold=current_threshold)
@@ -376,7 +377,9 @@ def render_cost_section(
         COST_HEADERS, cost_table_rows(result), summary="Every threshold in the sweep"
     )
     impact_html = (
-        impact_table_html(impact, action=result.action, result=result) if impact is not None else ""
+        impact_table_html(impact, action=result.action, result=result, slider_id=slider_id)
+        if impact is not None
+        else ""
     )
     ci_note = (
         f'<p class="note">Recommended threshold {S.fmt(result.threshold)} '

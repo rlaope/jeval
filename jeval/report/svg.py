@@ -440,7 +440,10 @@ def embed_json(payload: str, *, element_id: str) -> str:
     The ``application/json`` type means the browser will not execute it, and the payload holds
     aggregated values only — raw decision records never enter the report.
     """
-    safe = payload.replace("</", "<\\/")
+    # Escaping every `<` (not just `</`) also closes the HTML script-data double-escape hole: a
+    # `<!--<script` inside a value would otherwise leave the comment open and swallow the report's
+    # own script, killing every interactive control.
+    safe = payload.replace("<", "\\u003c")
     return f'<script type="application/json" id="{escape(element_id)}">{safe}</script>'
 
 

@@ -214,6 +214,12 @@ def ingest(
         if not files:
             typer.echo(f"--preset {preset} needs at least one log file")
             raise typer.Exit(code=1)
+        if labels is not None:
+            typer.echo(
+                "--preset reads a log and --labels harvests human answers onto records: run them "
+                "as two commands, because the harvest needs the records the preset just wrote"
+            )
+            raise typer.Exit(code=1)
         _preset_command(
             root=root,
             inputs=files,
@@ -224,6 +230,21 @@ def ingest(
         )
         return
     if labels is not None:
+        if files:
+            # `jeval ingest log.jsonl --labels resolutions.jsonl` reads as "ingest the log and
+            # harvest the answers". Silently ignoring the log would leave the user believing their
+            # records were loaded, so both steps run, in the order that makes them work.
+            ingest_map_for_files = load_ingest_map(
+                mapping or (Path(root) / DATA_DIR_NAME / load_config(root).ingest_map)
+            )
+            try:
+                loaded = ingest_files(
+                    files, records_path(root), ingest_map_for_files, append=append
+                )
+            except (ValueError, FileNotFoundError) as exc:
+                typer.echo(str(exc))
+                raise typer.Exit(code=1) from None
+            _report_ingest(loaded)
         _harvest_command(
             root=root,
             labels=labels,
@@ -242,8 +263,19 @@ def ingest(
     map_path = mapping or (Path(root) / DATA_DIR_NAME / config.ingest_map)
     ingest_map = load_ingest_map(map_path)
     out_path = records_path(root)
-    result = ingest_files(files, out_path, ingest_map, append=append)
+    try:
+        result = ingest_files(files, out_path, ingest_map, append=append)
+    except (ValueError, FileNotFoundError) as exc:
+        # One malformed line used to abort the command as a rich traceback panel.
+        typer.echo(str(exc))
+        raise typer.Exit(code=1) from None
     _report_ingest(result)
+
+
+MIN_BINS = 2
+"""One bin aggregates every decision into a single average: ECE collapses toward zero and the
+report reads as 'confidence is trustworthy' whatever the data says. Two is the least that can
+show a direction, so two is the floor."""
 
 
 def _report_ingest(result: Any) -> None:
@@ -331,24 +363,32 @@ def sweep_actions(
     monthly_volume: float | None = None,
     currency: str = "USD",
     current_threshold: float | None = None,
-) -> tuple[tuple[ThresholdResult, ...], ImpactTable | None]:
-    """Sweep every action's threshold and build the impact table for the first one."""
+) -> tuple[tuple[ThresholdResult, ...], dict[str, ImpactTable]]:
+    """Sweep every action's threshold, and build one impact table per action.
+
+    Per action, because a single table shared across the report showed the first action's
+    numbers beside every other action's curve — the wrong threshold, the wrong cost and the
+    wrong auto-rate under a heading naming a different decision.
+
+    With no deployed threshold there is no table at all: substituting the recommendation would
+    make the report claim a threshold is in use when nobody said so, and every delta would be
+    zero by construction.
+    """
     from jeval.costs import build_impact, sweep
 
     results: list[ThresholdResult] = []
-    impact: ImpactTable | None = None
+    impacts: dict[str, ImpactTable] = {}
     for action in actions:
         result = sweep(action, records, steps=steps, n_boot=n_boot, alpha=alpha)
         results.append(result)
-        if impact is None:
-            current = current_threshold if current_threshold is not None else result.threshold
-            impact = build_impact(
+        if current_threshold is not None:
+            impacts[result.action] = build_impact(
                 result,
-                current_threshold=current,
+                current_threshold=current_threshold,
                 monthly_volume=monthly_volume,
                 currency=currency,
             )
-    return tuple(results), impact
+    return tuple(results), impacts
 
 
 def _metrics_for(group: Sequence[Any], *, alpha: float, n_boot: int) -> Any:
@@ -617,8 +657,9 @@ def build_and_write_report(
     actions, costs_note = resolve_cost_actions(costs, root)
     thresholds: tuple[ThresholdResult, ...] = ()
     impact: ImpactTable | None = None
+    impacts: dict[str, ImpactTable] = {}
     if actions:
-        thresholds, impact = sweep_actions(
+        thresholds, impacts = sweep_actions(
             actions,
             records,
             n_boot=bootstrap,
@@ -627,6 +668,7 @@ def build_and_write_report(
             currency=currency,
             current_threshold=deployed_threshold(root, current),
         )
+        impact = next(iter(impacts.values()), None)
     segments_view, segment_metrics = segment_views(
         records, by, alpha=alpha, n_boot=bootstrap, min_samples=min_segment_size
     )
@@ -646,6 +688,7 @@ def build_and_write_report(
         impact=impact,
         segments=segments_view,
         drift=compare_view,
+        impacts=impacts,
         score=_score_view(records),
         recalibration=_recalibration_view(records, alpha=alpha),
         label_plan=_label_plan_rows(records, by=by, alpha=alpha),
@@ -674,7 +717,10 @@ def build_and_write_report(
 def report(
     root: Annotated[Path, typer.Option("--root", help="Project root holding .jeval/.")] = Path("."),
     out: Annotated[Path | None, typer.Option("-o", "--out", help="Output file.")] = None,
-    bins: Annotated[int | None, typer.Option("--bins", help="Requested bin count.")] = None,
+    bins: Annotated[
+        int | None,
+        typer.Option("--bins", help=f"Requested bin count (at least {MIN_BINS})."),
+    ] = None,
     equal_width: Annotated[
         bool, typer.Option("--bins-equal-width", help="Use equal-width bins instead of quantiles.")
     ] = False,
@@ -727,6 +773,14 @@ def report(
             typer.echo(f"no records for question {question!r}")
             raise typer.Exit(code=1)
 
+    if bins is not None and bins < MIN_BINS:
+        # One bin aggregates everything, so ECE collapses toward zero and the report reads as
+        # "confidence is trustworthy" whatever the data says.
+        typer.echo(
+            f"--bins {bins} cannot support a calibration claim: one bin averages every decision "
+            f"together, so the curve disappears. Use at least {MIN_BINS}."
+        )
+        raise typer.Exit(code=1)
     breakdown = tuple(by) if by else config.by
     bootstrap = min(200, config.bootstrap_samples)
     if format_ == "md":
@@ -738,7 +792,7 @@ def report(
             n_boot=bootstrap,
         )
         actions, _ = resolve_cost_actions(costs, root)
-        thresholds, impact = (
+        thresholds, impacts = (
             sweep_actions(
                 actions,
                 records,
@@ -749,8 +803,9 @@ def report(
                 current_threshold=deployed_threshold(root, current),
             )
             if actions
-            else ((), None)
+            else ((), {})
         )
+        impact = next(iter(impacts.values()), None)
         verdict = build_verdict(
             dataset.overall,
             threshold=thresholds[0] if thresholds else None,

@@ -287,6 +287,7 @@ class ReportModel:
     reliability_sections: list[Any] = field(default_factory=list)
     thresholds: tuple[ThresholdResult, ...] = ()
     impact: ImpactTable | None = None
+    impacts: Mapping[str, ImpactTable] = field(default_factory=dict)
     segments: SegmentView | None = None
     drift: DriftView | None = None
     score: ScoreView | None = None

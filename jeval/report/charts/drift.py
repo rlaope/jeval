@@ -7,6 +7,8 @@ collapsible table underneath.
 
 from __future__ import annotations
 
+from html import escape
+
 from jeval.calibration import CalibrationMetrics
 from jeval.report import svg as S
 from jeval.report.model import DriftView
@@ -256,12 +258,12 @@ def render_drift_section(
     """The whole drift section, or an explanation of why there is none."""
     if not view.slices:
         return f'<p class="note">{view.note or "No drift comparison available."}</p>'
-    parts = [f'<p class="note">{view.note}</p>' if view.note else ""]
+    parts = [f'<p class="note">{escape(view.note)}</p>' if view.note else ""]
     if view.failures:
         parts.append(
             '<div class="warn"><strong>Drift checks failed.</strong><ul>'
             + "".join(
-                f"<li><code>{failure.check}</code> {failure.detail} "
+                f"<li><code>{escape(failure.check)}</code> {escape(failure.detail)} "
                 f"(value {S.fmt(failure.value, 3)} against limit {S.fmt(failure.limit, 3)})</li>"
                 for failure in view.failures
             )

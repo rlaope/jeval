@@ -262,7 +262,8 @@ def _cost_section(
         + cost_charts.render_cost_section(
             result,
             current_threshold=current_thresholds.get(result.action),
-            impact=model.impact,
+            impact=model.impacts.get(result.action) or model.impact,
+            slider_id=f"threshold-slider-{_slug(result.action)}",
         )
         for result in thresholds
     )
@@ -405,6 +406,11 @@ def _label_plan_section(model: ReportModel) -> str:
         parts.append(f'<p class="note">{verdict}</p>')
     parts.append("</section>")
     return "".join(parts)
+
+
+def _slug(value: str) -> str:
+    """A DOM-safe id fragment for one action's controls, so two actions cannot share an id."""
+    return "".join(character if character.isalnum() else "-" for character in value).strip("-")
 
 
 def _data_quality_section(model: ReportModel) -> str:
