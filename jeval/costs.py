@@ -130,6 +130,16 @@ class CostAction:
     cost_escalate: float
     cost_false_reject: float
 
+    def __post_init__(self) -> None:
+        """Refuse a cost the arithmetic cannot carry: a NaN won every comparison (all of them are
+        False), so the first grid point was reported as a measured threshold."""
+        for name in ("cost_false_accept", "cost_escalate", "cost_false_reject"):
+            value = float(getattr(self, name))
+            if not math.isfinite(value):
+                raise ValueError(f"{self.name}: {name} must be a finite number, got {value!r}")
+            if value < 0:
+                raise ValueError(f"{self.name}: {name} must not be negative, got {value!r}")
+
     @property
     def label(self) -> str:
         """``name`` with its trigger, for messages that must say what is being measured."""

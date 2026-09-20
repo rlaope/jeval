@@ -74,10 +74,13 @@ def _split_labels(
     for record in records:
         if not record.is_labeled:
             unlabeled.append(record)
-        elif record.is_silver:
-            silver.append(record)
-        else:
+        elif record.is_gold:
             gold.append(record)
+        else:
+            # Anything else counts as silver, including a label with no source at all. It used to
+            # land in the gold population here while costs, drift, baseline and the segment bars
+            # excluded it — two definitions of the same word, in one report.
+            silver.append(record)
     return gold, silver, unlabeled
 
 

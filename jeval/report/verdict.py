@@ -203,7 +203,10 @@ def _resolve_current(
     found = _as_float(_attribute(threshold, "current_threshold"))
     if found is not None:
         return found
-    return recommended
+    # Deliberately no fallback to `recommended`: substituting it made the report claim a threshold
+    # was in use and compare the recommendation with itself. With nothing deployed, the verdict
+    # says no threshold was supplied, which is the true statement.
+    return None
 
 
 def _sweep_step(threshold: object | None) -> float:

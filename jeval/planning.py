@@ -44,6 +44,9 @@ DEFAULT_TARGET_CI = 0.05
 
 # A scaling law fitted from two points needs enough records under each point for the bootstrap
 # interval to mean anything. Below this, the honest answer is "not enough labels to say".
+ABSURD_LABEL_COUNT = 1e9
+"""A projection past this is arithmetic, not advice: nobody labels a billion decisions."""
+
 MIN_LABELS_FOR_PROJECTION = 200
 
 # Widths reported per scope, as fractions of the measured width, besides the caller's target_ci.
@@ -143,7 +146,14 @@ def _target_widths(ci_width: float, target_ci: float) -> tuple[float, ...]:
 
 def _labels_needed(k: float, target: float, n_now: int) -> int | None:
     """Additional labels to reach ``target``, or ``None`` when the fit gives an absurd number."""
-    n_needed = (k / target) ** 2
+    if target <= 0.0 or k <= 0.0:
+        return None
+    # Decided in log space: `(k / target) ** 2` raises OverflowError long before it returns
+    # inf, so a tiny target crashed the command instead of being reported as unprojectable.
+    log_needed = 2.0 * (math.log(k) - math.log(target))
+    if log_needed > math.log(ABSURD_LABEL_COUNT):
+        return None
+    n_needed = math.exp(log_needed)
     if not math.isfinite(n_needed):
         return None
     return max(0, math.ceil(n_needed) - n_now)

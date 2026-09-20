@@ -485,6 +485,13 @@ def attach_thresholds(
     )
 
 
+def _looks_like_period(label: str) -> bool:
+    """An ISO week or month label, so the block can stop calling a month a model."""
+    import re
+
+    return re.fullmatch(r"\d{4}-(W\d{2}|\d{2})", label or "") is not None
+
+
 def format_ci_block(view: DriftView, failures: Sequence[DriftFailure]) -> str:
     """The block a CI job prints, as plain column-aligned text.
 
@@ -496,7 +503,16 @@ def format_ci_block(view: DriftView, failures: Sequence[DriftFailure]) -> str:
     """
     if not view.baseline_label and not view.current_label:
         return _with_exit(view.note or "no drift comparison available", failures)
-    header = f"model changed: {view.baseline_label} -> {view.current_label}"
+    if view.baseline_label == view.current_label:
+        # Comparing a unit with itself produced "model changed: new -> new" and a +0.000 delta
+        # that reads as a clean bill of health for a comparison nobody made.
+        return _with_exit(
+            f"nothing to compare: the baseline and the current slice are both "
+            f"{view.baseline_label}",
+            failures,
+        )
+    kind = "period" if _looks_like_period(view.baseline_label) else "model"
+    header = f"{kind} changed: {view.baseline_label} -> {view.current_label}"
     when = _change_date(view)
     if when:
         header += f" ({when})"

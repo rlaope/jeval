@@ -240,9 +240,21 @@ def bootstrap_ece_ci(
         idx = rng.integers(0, n, size=n)
         bins = bins_from_edges(confidences[idx], correct[idx], edges, alpha)
         estimates[draw] = expected_calibration_error(bins, n)
+    observed = expected_calibration_error(bins_from_edges(confidences, correct, edges, alpha), n)
+    spread = float(np.ptp(estimates))
+    if spread <= 0.0:
+        # Every resample agreed exactly: an all-identical draw says nothing about sampling error,
+        # and reporting [x, x] would assert a precision the sample does not have.
+        return (float("nan"), float("nan"))
     lower = float(np.quantile(estimates, alpha / 2.0))
     upper = float(np.quantile(estimates, 1.0 - alpha / 2.0))
-    return (lower, upper)
+    # |accuracy - confidence| is convex, so the resample ECE is biased upward and the percentile
+    # interval can sit entirely above the value it is an interval for — and above zero for a
+    # calibrated log. A basic-bootstrap recentering is not the answer either: ECE cannot be
+    # negative, and recentering drives the bound below zero on exactly those samples. So the
+    # interval is widened to contain its own point estimate, which is the least a reported
+    # interval owes its reader.
+    return (min(lower, observed), max(upper, observed))
 
 
 def compute_calibration(
@@ -320,8 +332,16 @@ def diagnose(metrics: CalibrationMetrics, tolerance: float = 0.02) -> str:
             f"Well calibrated within sampling error: ECE {metrics.ece:.3f} "
             f"(95% CI {metrics.ece_ci_low:.3f}-{metrics.ece_ci_high:.3f}, n={metrics.n})."
         )
-    direction = "overconfidence" if worst.gap < 0 else "underconfidence"
     interval = f"{worst.ci_low:.2f}-{worst.ci_high:.2f}"
+    if worst.ci_low <= worst.mean_confidence <= worst.ci_high:
+        # The bin's own interval contains the confidence it is supposed to contradict, so a
+        # direction cannot be claimed from it however large the gap looks.
+        return (
+            f"Not distinguishable from calibrated at this n: the worst bin ({worst.label}) claims "
+            f"{worst.mean_confidence:.2f} and observed {worst.accuracy:.2f} "
+            f"(95% CI {interval}, n={worst.n}); ECE {metrics.ece:.3f}."
+        )
+    direction = "overconfidence" if worst.gap < 0 else "underconfidence"
     return (
         f"{direction.capitalize()} in {worst.label}: claimed {worst.mean_confidence:.2f}, "
         f"observed {worst.accuracy:.2f} (95% CI {interval}, n={worst.n}); "

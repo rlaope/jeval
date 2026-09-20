@@ -191,6 +191,12 @@ def mean_signed_error(predicted: Sequence[float], actual: Sequence[float]) -> fl
     return float(np.mean(pred - real))
 
 
+def _finite_or_nan(value: float) -> float:
+    """Two finite inputs can overflow a reduction (1e308 against -1e308), and `inf` rendered in a
+    report reads as a measurement rather than as the absence of one."""
+    return value if math.isfinite(value) else float("nan")
+
+
 def score_levels(
     predicted: Sequence[float], actual: Sequence[float], *, n_bins: int = DEFAULT_LEVEL_BINS
 ) -> tuple[ScoreLevel, ...]:
@@ -293,9 +299,9 @@ def measure_score(
         )
     return ScoreMetrics(
         n=n,
-        mae=mean_absolute_error(predicted, actual),
-        rmse=root_mean_squared_error(predicted, actual),
-        bias=mean_signed_error(predicted, actual),
+        mae=_finite_or_nan(mean_absolute_error(predicted, actual)),
+        rmse=_finite_or_nan(root_mean_squared_error(predicted, actual)),
+        bias=_finite_or_nan(mean_signed_error(predicted, actual)),
         spearman_rho=spearman_rho(predicted, actual),
         levels=score_levels(predicted, actual, n_bins=n_bins),
         levels_requested=n_bins,
