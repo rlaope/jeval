@@ -129,9 +129,11 @@ def test_drift_baseline_round_trip(tmp_path: Path) -> None:
     assert saved.exit_code == 0, saved.stdout
     assert baseline.exists()
     payload = json.loads(baseline.read_text(encoding="utf-8"))
-    assert payload["schema_version"] == 1
+    assert payload["schema_version"] == 2
     assert payload["questions"]["intent"]["n"] > 0
     assert "records" not in payload["questions"]["intent"]
+    # The edges travel with the measurement so the later comparison bins both sides the same way.
+    assert len(payload["questions"]["intent"]["edges"]) >= 3
 
     # Comparing the same records against their own snapshot must not invent a degradation.
     compared = runner.invoke(

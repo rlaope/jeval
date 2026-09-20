@@ -16,11 +16,19 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from jeval.calibration import compute_calibration
+import numpy as np
+
+from jeval.calibration import (
+    bins_from_edges,
+    compute_calibration,
+    equal_width_edges,
+    expected_calibration_error,
+    quantile_edges,
+)
 from jeval.report.model import DriftSlice, DriftView, ModelChange
 from jeval.schema import DecisionRecord
 
-SNAPSHOT_VERSION = 1
+SNAPSHOT_VERSION = 2
 
 
 def _gold(records: Sequence[DecisionRecord]) -> list[DecisionRecord]:
@@ -29,14 +37,47 @@ def _gold(records: Sequence[DecisionRecord]) -> list[DecisionRecord]:
     ]
 
 
-def _ece(group: Sequence[DecisionRecord], *, alpha: float, n_boot: int) -> tuple[float, int]:
-    pairs = [point for point in (record.calibration_point() for record in group) if point]
-    metrics = compute_calibration(
-        [point[0] for point in pairs],
-        [point[1] for point in pairs],
-        alpha=alpha,
-        n_boot=n_boot,
+def _pairs(group: Sequence[DecisionRecord]) -> tuple[list[float], list[bool]]:
+    points = [point for point in (record.calibration_point() for record in group) if point]
+    return [point[0] for point in points], [point[1] for point in points]
+
+
+def _edges_for(group: Sequence[DecisionRecord], *, n_bins: int = 10) -> list[float]:
+    confidences, _ = _pairs(group)
+    if not confidences:
+        return []
+    values = np.asarray(confidences, dtype=float)
+    edges = (
+        equal_width_edges(values, n_bins)
+        if len(set(confidences)) == 1
+        else quantile_edges(values, n_bins)
     )
+    return [float(edge) for edge in edges]
+
+
+def _ece_over_edges(group: Sequence[DecisionRecord], edges: Sequence[float]) -> tuple[float, int]:
+    """Measure a group over a fixed edge set rather than re-deriving bins from its own sample.
+
+    This is the same rule drift.py applies between slices. Re-deriving edges per side would
+    re-partition the confidence range between 'before' and 'after', so part of any delta would be
+    bin movement instead of calibration movement — the tool would be reporting its own binning as
+    the model's drift.
+    """
+    confidences, correct = _pairs(group)
+    if not confidences:
+        return float("nan"), 0
+    conf = np.asarray(confidences, dtype=float)
+    hit = np.asarray(correct, dtype=bool)
+    if len(edges) < 2:
+        metrics = compute_calibration(conf, hit)
+        return metrics.ece, metrics.n
+    bins = bins_from_edges(conf, hit, edges)
+    return expected_calibration_error(bins, int(conf.size)), int(conf.size)
+
+
+def _ece(group: Sequence[DecisionRecord], *, alpha: float, n_boot: int) -> tuple[float, int]:
+    confidences, correct = _pairs(group)
+    metrics = compute_calibration(confidences, correct, alpha=alpha, n_boot=n_boot)
     return metrics.ece, metrics.n
 
 
@@ -49,6 +90,7 @@ def snapshot(
     for record in gold:
         questions.setdefault(record.question_key, []).append(record)
     overall_ece, overall_n = _ece(gold, alpha=0.05, n_boot=200)
+    overall_edges = _edges_for(gold)
     stamps = sorted(record.ts for record in records)
     return {
         "schema_version": SNAPSHOT_VERSION,
@@ -59,13 +101,19 @@ def snapshot(
         "overall": {
             "ece": None if math.isnan(overall_ece) else round(overall_ece, 6),
             "n": overall_n,
+            "edges": overall_edges,
         },
         "date_range": {
             "start": stamps[0].isoformat() if stamps else "",
             "end": stamps[-1].isoformat() if stamps else "",
         },
         "questions": {
-            key: {"ece": round(_ece(group, alpha=0.05, n_boot=200)[0], 6), "n": len(group)}
+            key: {
+                "ece": round(_ece_over_edges(group, _edges_for(group))[0], 6),
+                "n": len(group),
+                # Recorded so the later comparison measures both sides over one partition.
+                "edges": _edges_for(group),
+            }
             for key, group in sorted(questions.items())
             if len(group) >= 2
         },
@@ -100,6 +148,7 @@ def view_from_snapshot(
         current_by_question.setdefault(record.question_key, []).append(record)
 
     slices: list[DriftSlice] = []
+    independently_binned: list[str] = []
     labels = sorted(set(saved_questions) | set(current_by_question))
     for key in labels:
         saved = saved_questions.get(key)
@@ -116,7 +165,12 @@ def view_from_snapshot(
                 )
             )
         if len(current_group) >= min_slice:
-            current_ece, current_n = _ece(current_group, alpha=alpha, n_boot=n_boot)
+            saved_edges = [float(edge) for edge in (saved or {}).get("edges", [])]
+            if saved_edges:
+                current_ece, current_n = _ece_over_edges(current_group, saved_edges)
+            else:
+                current_ece, current_n = _ece(current_group, alpha=alpha, n_boot=n_boot)
+                independently_binned.append(key)
             slices.append(
                 DriftSlice(
                     label=key,
@@ -141,6 +195,12 @@ def view_from_snapshot(
         f"compared against the baseline saved {saved_at} ({saved_models}); "
         f"{len(slices) // 2 or 0} question(s) measurable on both sides"
     )
+    if independently_binned:
+        note += (
+            f". Warning: the baseline recorded no bin edges for "
+            f"{', '.join(independently_binned)}, so those sides were binned independently and part "
+            "of their delta is bin movement rather than calibration movement."
+        )
     return DriftView(
         baseline_label=saved_models,
         current_label=", ".join(sorted({record.model for record in records})) or "current",
