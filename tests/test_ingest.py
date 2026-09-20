@@ -7,7 +7,7 @@ from pathlib import Path
 
 import yaml
 
-from jeval.config import load_ingest_map
+from jeval.config import IngestMap, load_ingest_map
 from jeval.ingest import ingest_files, iter_rows
 from jeval.store import read_records
 
@@ -242,3 +242,74 @@ def test_missing_input_file_is_reported(tmp_path: Path) -> None:
         assert "nope.jsonl" in str(exc)
     else:  # pragma: no cover
         raise AssertionError("expected FileNotFoundError")
+
+
+# --- the inline label path gets the same guard as the harvest path ---------------------------
+# A label that arrives inside the log used to skip the check entirely, so a department answer on a
+# noul record was stored as ground truth and counted as a wrong answer forever.
+
+
+def test_an_inline_label_the_question_cannot_produce_is_dropped_and_counted(tmp_path: Path) -> None:
+    raw = tmp_path / "log.jsonl"
+    raw.write_text(
+        json.dumps(
+            {
+                "model": "jev-1.13.0",
+                "questions": [
+                    {
+                        "question_key": "is_urgent",
+                        "question_type": "noul",
+                        "prediction": "yes",
+                        "confidence": 0.6,
+                        "probabilities": {"yes": 0.8, "no": 0.2},
+                        "label": "billing",  # a department answer on a yes/no question
+                        "label_source": "human_override",
+                    }
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    out = tmp_path / "records.jsonl"
+    report = ingest_files([raw], out, IngestMap())
+
+    assert report.n_impossible_labels == 1
+    assert report.impossible_labels == ["is_urgent='billing'"]
+    stored = read_records(out)
+    assert len(stored) == 1
+    assert stored[0].label is None  # the label is refused
+    assert stored[0].label_source is None
+    assert stored[0].prediction == "yes"  # the prediction is kept: it is evidence either way
+    assert report.n_unlabeled == 1
+
+
+def test_a_possible_inline_label_is_left_alone(tmp_path: Path) -> None:
+    raw = tmp_path / "log.jsonl"
+    raw.write_text(
+        json.dumps(
+            {
+                "model": "jev-1.13.0",
+                "questions": [
+                    {
+                        "question_key": "department",
+                        "question_type": "choice",
+                        "prediction": "billing",
+                        "confidence": 0.91,
+                        "probabilities": {"billing": 0.91, "technical": 0.06},
+                        "label": "technical",
+                        "label_source": "human_override",
+                    }
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    out = tmp_path / "records.jsonl"
+    report = ingest_files([raw], out, IngestMap())
+
+    assert report.n_impossible_labels == 0
+    stored = read_records(out)
+    assert stored[0].label == "technical"
+    assert stored[0].label_source == "human_override"

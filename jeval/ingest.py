@@ -27,7 +27,9 @@ class IngestReport:
     n_skipped: int = 0
     n_unlabeled: int = 0
     n_duplicate_questions: int = 0
+    n_impossible_labels: int = 0
     per_question: dict[str, int] = field(default_factory=dict)
+    impossible_labels: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
 
     @property
@@ -126,6 +128,7 @@ def ingest_files(
                     report.n_duplicate_questions += 1
                     continue
                 seen.add(record.question_key)
+                record = _drop_impossible_label(record, report)
                 if not record.is_labeled:
                     report.n_unlabeled += 1
                 report.per_question[record.question_key] = (
@@ -353,6 +356,24 @@ def harvest_labels(
     report.kept_existing_question_keys = tuple(sorted(set(kept)))
     report.unlisted_labels = tuple(sorted(unlisted))
     return report
+
+
+def _drop_impossible_label(record: DecisionRecord, report: IngestReport) -> DecisionRecord:
+    """Refuse an inline label the record's own question could not have produced.
+
+    The harvest path already refuses these, but a label that arrives inside the log skipped the
+    check entirely — and an impossible label is worse than a missing one, because it is counted as
+    a wrong answer forever and drags the measured accuracy down while looking like real ground
+    truth. The prediction is kept: it is legitimate evidence either way.
+    """
+    if record.label is None or _label_is_possible(record, record.label):
+        return record
+    report.n_impossible_labels += 1
+    if len(report.impossible_labels) < 10:
+        report.impossible_labels.append(f"{record.question_key}={record.label!r}")
+    return DecisionRecord.model_validate(
+        {**record.model_dump(), "label": None, "label_source": None}
+    )
 
 
 def _label_is_possible(record: DecisionRecord, label: str) -> bool:

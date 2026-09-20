@@ -201,6 +201,13 @@ def ingest(
         typer.echo("questions:")
         for key in sorted(result.per_question):
             typer.echo(f"  {key:<24} {result.per_question[key]}")
+    if result.n_impossible_labels:
+        named = ", ".join(result.impossible_labels[:3])
+        typer.echo(
+            f"dropped {result.n_impossible_labels} label(s) the record's own question cannot "
+            f"produce ({named}) — an impossible label counts as a wrong answer forever, so the "
+            "prediction is kept and the label is not"
+        )
     if result.n_unlabeled:
         typer.echo(
             f"{result.n_unlabeled} records have no label yet and will be excluded from metrics."

@@ -205,6 +205,10 @@ records and a wrong label: a harvest never overwrites an existing label unless y
 of writing it — refusing is counted and named in the output, because a wrong label is worse than a
 missing one. Pass `--allow-unlisted-labels` if your `probabilities` map lists top candidates only.
 
+The same guard applies to labels that arrive inside the log itself: a label the record's own
+question cannot produce is dropped, named, and counted at ingest, because an impossible label is
+recorded as a wrong answer forever while looking like ground truth.
+
 The harvest rewrites `.jeval/records.jsonl` in place and atomically, touching only the label
 fields — every other byte of your log is preserved.
 
