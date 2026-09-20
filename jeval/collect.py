@@ -44,6 +44,8 @@ _STATS: dict[str, int] = {
     "unsupported": 0,
     "calls": 0,
     "already_tracked": 0,
+    "install_failed": 0,
+    "unknown_flag_value": 0,
 }
 
 
@@ -65,16 +67,31 @@ def target_path(explicit: str | Path | None = None) -> Path | None:
     With the flag unset, records go to ``$JEVAL_ROOT/.jeval/records.jsonl`` (the current directory
     by default), which is the same file ``jeval report`` already reads.
     """
+    # The off switch wins over everything, including an explicit path: a user killing collection
+    # during an incident must not have records land because one call site passed a path.
+    flag = os.environ.get(ENV_FLAG)
+    if flag is not None and flag.strip().lower() in _OFF:
+        return None
     if explicit is not None:
         return Path(explicit)
-    flag = os.environ.get(ENV_FLAG)
-    if flag is not None:
-        lowered = flag.strip().lower()
-        if lowered in _OFF:
-            return None
-        if lowered not in _ON and flag.strip():
-            return Path(flag.strip())
+    if flag is not None and flag.strip():
+        candidate = flag.strip()
+        if candidate.lower() not in _ON:
+            if _looks_like_a_path(candidate):
+                return Path(candidate)
+            # `JEVAL_COLLECT=enabled` is not a filename. Counted, then treated as "on".
+            _STATS["unknown_flag_value"] += 1
     return records_path(os.environ.get(ENV_ROOT, "."))
+
+
+def _looks_like_a_path(value: str) -> bool:
+    """Whether a flag value names a file, rather than being a truthy word typed by mistake."""
+    return (
+        os.path.isabs(value)
+        or "/" in value
+        or "\\" in value
+        or value.lower().endswith((".jsonl", ".json", ".ndjson", ".log"))
+    )
 
 
 def enabled() -> bool:
@@ -210,8 +227,9 @@ def answer_payloads(
             "question_key": str(question_key),
             "question_type": question_type,
         }
-        if model:
-            common["model"] = model
+        # Never omit the model: a record without one cannot be validated, so the whole answer
+        # would be dropped silently — total data loss from a response that merely omitted a field.
+        common["model"] = model or os.environ.get(ENV_MODEL) or "unknown"
         if source_key is not None:
             common["source_key"] = str(source_key)
         if segment:
@@ -224,6 +242,11 @@ def answer_payloads(
                 common["state_tokens"] = tokens
         if isinstance(probabilities, Mapping) and probabilities:
             common["probabilities"] = dict(probabilities)
+        for schema_name, default_key in (("label", "label"), ("label_source", "label_source")):
+            answer_key = names.get(schema_name, default_key)
+            value = answer.get(answer_key)
+            if value not in (None, ""):
+                common[schema_name] = str(value)
 
         confidence = answer.get(confidence_key)
         if question_type == "noul":
@@ -305,22 +328,33 @@ def track(
     if not enabled():
         return client
     for method_name in method_names:
-        original = getattr(client, method_name, None)
-        if not callable(original):
-            continue
-        if getattr(original, _TRACKED_ATTR, False):
-            _STATS["already_tracked"] += 1
+        try:
+            original = getattr(client, method_name, None)
+            if not callable(original):
+                continue
+            if getattr(original, _TRACKED_ATTR, False) is True:
+                _STATS["already_tracked"] += 1
+                return client
+            wrapper = _wrap(
+                original,
+                source_key=source_key,
+                keys=keys,
+                container=container,
+                path=path,
+                clock=clock,
+            )
+            setattr(wrapper, _TRACKED_ATTR, True)
+            setattr(client, method_name, wrapper)
+            # Verify the install: a read-only facade whose __setattr__ drops writes raises
+            # nothing, so without this readback tracking would silently collect nothing.
+            if getattr(getattr(client, method_name, None), _TRACKED_ATTR, False) is not True:
+                _STATS["install_failed"] += 1
+                return client
+        except Exception:
+            # A property that raises, __slots__, a frozen dataclass, a pydantic model whose
+            # __setattr__ refuses: all of them must leave the caller's client working, unwrapped.
+            _STATS["install_failed"] += 1
             return client
-        wrapper = _wrap(
-            original,
-            source_key=source_key,
-            keys=keys,
-            container=container,
-            path=path,
-            clock=clock,
-        )
-        setattr(wrapper, _TRACKED_ATTR, True)
-        setattr(client, method_name, wrapper)
         break
     return client
 
