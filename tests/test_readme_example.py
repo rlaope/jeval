@@ -124,6 +124,15 @@ def test_the_readme_size_claim_matches_the_file() -> None:
     )
 
 
+def test_every_image_the_readme_references_exists() -> None:
+    images = re.findall(r"!\[[^\]]*\]\(([^)]+)\)", _readme())
+    assert images, "the README should show the artifact it quotes"
+    for image in images:
+        target = REPO / image
+        assert target.exists(), f"README references a missing image: {image}"
+        assert target.stat().st_size > 20_000, f"{image} looks too small to be a real screenshot"
+
+
 @pytest.mark.parametrize("token", ["Your threshold is too low.", "0.97"])
 def test_representative_claims_are_present(token: str) -> None:
     assert token in _artifact()

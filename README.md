@@ -113,7 +113,12 @@ degrade a production decision boundary.
 
 ## Open the real thing
 
-The report this README quotes is committed: open
+![The verdict and the reliability curve: "Your threshold is too low", with the curve below the diagonal in the 0.70-0.84 bands](docs/report-verdict.png)
+
+![The cost curve with its minimum and flat region, the impact table showing 0.60 to 0.97, and the threshold slider](docs/report-cost.png)
+
+Those are screenshots of the committed report — verdict and reliability first, then cost and
+impact. The file itself is in the repository: open
 [`examples/report-example.html`](examples/report-example.html) in a browser (one 246 KB file, no
 network, no server), or rebuild it byte-for-byte with:
 
