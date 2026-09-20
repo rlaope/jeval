@@ -98,12 +98,6 @@ a { color: var(--accent); }
 .note, figcaption, .card .s { color: var(--muted); font-size: 12.5px; }
 .num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
 code, kbd, samp { font-family: var(--mono); font-size: 0.94em; }
-nav.report-nav {
-  display: flex; flex-wrap: wrap; gap: 14px;
-  margin: 0 0 18px; font-size: 13px;
-}
-nav.report-nav a { color: var(--muted); text-decoration: none; }
-nav.report-nav a:hover { color: var(--accent); }
 section { margin: 0 0 26px; }
 /* The template emits sections in SECTION_ORDER, so the verdict is already first in the
    document; the rule below keeps it first if a container is ever flexed or reordered. */

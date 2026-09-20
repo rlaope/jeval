@@ -13,7 +13,6 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from html import escape
 from pathlib import Path
 
 from jeval.calibration import CalibrationMetrics
@@ -29,7 +28,7 @@ from jeval.report.model import (
     ThresholdResult,
     dumps,
 )
-from jeval.report.svg import details_table
+from jeval.report.svg import details_table, escape
 
 
 @dataclass(frozen=True)
@@ -268,11 +267,12 @@ def _cost_section(
         for result in thresholds
     )
     splits = ""
+    currency = model.impact.currency if model.impact is not None else "USD"
     if model.segment_thresholds:
         rows = "".join(
             f"<tr><td>{escape(row.label)}</td>"
             f"<td>{'-' if row.threshold != row.threshold else f'{row.threshold:.2f}'}</td>"
-            f"<td>{'-' if row.cost_per_case != row.cost_per_case else f'{row.cost_per_case:,.2f}'}</td>"
+            f"<td>{'-' if row.cost_per_case != row.cost_per_case else f'{currency} {row.cost_per_case:,.2f}'}</td>"
             f"<td>{'-' if row.delta != row.delta else f'{row.delta:+,.2f}'}</td>"
             f"<td>{row.n:,}</td>"
             f"<td>{'split' if row.worth_splitting else escape(row.reason or 'splitting does not pay')}</td></tr>"

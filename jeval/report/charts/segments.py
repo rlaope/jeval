@@ -6,10 +6,9 @@ that cannot support a claim are shown greyed with the reason, not dropped silent
 
 from __future__ import annotations
 
-from html import escape
-
 from jeval.report import svg as S
 from jeval.report.model import HeatmapCell, SegmentBar, SegmentView
+from jeval.report.svg import escape
 
 WIDTH = 660.0
 ROW_HEIGHT = 30.0
@@ -203,7 +202,7 @@ def render_segments_section(view: SegmentView, *, title: str = "Segments") -> st
                 [[cell.x, cell.y, S.fmt(cell.ece), str(cell.n)] for cell in view.heatmap],
                 summary="Too many cells for a grid: the numbers instead",
             )
-    return f"<figure>{chart}{table}</figure>{heat}"
+    return f"<figure>{chart}{table}{heat}</figure>"
 
 
 def _empty(width: float, title: str, message: str) -> str:

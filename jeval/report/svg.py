@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from html import escape
+from html import escape as _html_escape
 
 # Okabe-Ito: distinguishable under the common colour-vision deficiencies. Never rely on a
 # single channel to say good or bad; position and label carry that.
@@ -55,6 +55,38 @@ def fmt(value: float, digits: int = 2) -> str:
     if value != value:  # NaN
         return "n/a"
     return f"{value:.{digits}f}"
+
+
+# Bidirectional and invisible controls let a string render as something other than what it is:
+# a label or model name carrying U+202E can reverse the text a reader sees. They are replaced with
+# a visible marker rather than dropped, so the reader can see that the value contained one.
+_BIDI_CONTROLS = {
+    "\u202a",
+    "\u202b",
+    "\u202c",
+    "\u202d",
+    "\u202e",
+    "\u2066",
+    "\u2067",
+    "\u2068",
+    "\u2069",
+    "\u200e",
+    "\u200f",
+    "\u061c",
+}
+
+
+def escape(value: object) -> str:
+    """Escape for HTML, with invisible direction controls made visible.
+
+    Every module in the report escapes through here, so a value cannot spoof the text around it in
+    one sink while being neutralised in another.
+    """
+    text = "" if value is None else str(value)
+    for control in _BIDI_CONTROLS:
+        if control in text:
+            text = text.replace(control, f"<U+{ord(control):04X}>")
+    return _html_escape(text)
 
 
 def pct(value: float, digits: int = 1) -> str:

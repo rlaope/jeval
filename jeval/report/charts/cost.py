@@ -7,11 +7,9 @@ much as the minimum — it says out loud when the data cannot distinguish neighb
 
 from __future__ import annotations
 
-import json
-from html import escape
-
 from jeval.report import svg as S
 from jeval.report.model import CostPoint, ImpactTable, ThresholdResult
+from jeval.report.svg import escape
 
 WIDTH = 660.0
 HEIGHT = 400.0
@@ -315,51 +313,6 @@ def impact_table_html(
         f'<table class="impact"><thead>{head}</thead><tbody>{body}</tbody></table>'
         f"{note}{volume}{slider}"
     )
-
-
-def embed_cost_payload(
-    result: ThresholdResult, *, impact: ImpactTable | None = None, summary_markdown: str = ""
-) -> str:
-    """Aggregated, slider-ready payload: the sweep, never the raw records."""
-    payload = {
-        "actions": {
-            result.action: {
-                "question": result.question,
-                "when": result.when,
-                "threshold": result.threshold,
-                "curve": [
-                    {
-                        "t": round(point.threshold, 4),
-                        "cost": round(point.expected_cost, 6),
-                        "auto": round(point.auto_rate, 6),
-                        "acc": round(point.accuracy_auto, 6),
-                        "accept": round(point.accept_cost, 6),
-                        "escalate": round(point.escalate_cost, 6),
-                    }
-                    for point in result.curve
-                ],
-                "flat_region": list(result.flat_region) if result.flat_region else None,
-                "ci": [result.ci_low, result.ci_high],
-                "n": result.n_records,
-            }
-        },
-        "impact": (
-            {
-                "rows": [
-                    {"label": row.label, "current": row.current, "recommended": row.recommended}
-                    for row in impact.rows
-                ],
-                "monthly_volume": impact.monthly_volume,
-                "currency": impact.currency,
-                "current_threshold": impact.current_threshold,
-                "recommended_threshold": impact.recommended_threshold,
-            }
-            if impact is not None
-            else None
-        ),
-        "summary_markdown": summary_markdown,
-    }
-    return json.dumps(payload, separators=(",", ":"))
 
 
 def render_cost_section(

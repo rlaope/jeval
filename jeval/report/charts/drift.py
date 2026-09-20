@@ -7,11 +7,10 @@ collapsible table underneath.
 
 from __future__ import annotations
 
-from html import escape
-
 from jeval.calibration import CalibrationMetrics
 from jeval.report import svg as S
 from jeval.report.model import DriftView
+from jeval.report.svg import escape
 
 WIDTH = 660.0
 LEFT = 62.0

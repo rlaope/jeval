@@ -113,8 +113,12 @@ def init(
     force: Annotated[bool, typer.Option("--force", help="Overwrite existing config.")] = False,
 ) -> None:
     """Create the .jeval working directory and its config scaffolding."""
-    config_file = write_default_config(root, force=force)
     directory = Path(root) / DATA_DIR_NAME
+    if directory.exists() and not directory.is_dir():
+        # A file named .jeval used to surface as a FileExistsError traceback.
+        typer.echo(f"{directory} exists and is not a directory: move it aside and run init again")
+        raise typer.Exit(code=1)
+    config_file = write_default_config(root, force=force)
     ingest_map = directory / "ingest-map.yaml"
     if force or not ingest_map.exists():
         ingest_map.write_text(INGEST_SCAFFOLD, encoding="utf-8")
@@ -272,10 +276,48 @@ def ingest(
     _report_ingest(result)
 
 
+def _fmt_target(width: float) -> str:
+    """A target width the reader can actually read: 1e-06 printed as 0.000 is not a target."""
+    return f"{width:.3f}" if width >= 0.0005 else f"{width:.2g}"
+
+
+def _resolve_axes(records: Sequence[DecisionRecord], requested: Sequence[str]) -> tuple[str, ...]:
+    """Requested segment axes, deduped, with the ones the log does not carry named out loud.
+
+    An axis nobody recorded used to render as a segment called "<axis> = unknown", which invents a
+    finding: the report looked like it had measured a breakdown that does not exist.
+    """
+    present: set[str] = set()
+    for record in records:
+        present.update(record.segment)
+    used: list[str] = []
+    for axis in requested:
+        if axis in used:
+            continue
+        if axis in present or not records:
+            used.append(axis)
+            continue
+        typer.echo(f"note: no record carries segment {axis!r}, so it is not broken down")
+    return tuple(used)
+
+
 MIN_BINS = 2
 """One bin aggregates every decision into a single average: ECE collapses toward zero and the
 report reads as 'confidence is trustworthy' whatever the data says. Two is the least that can
 show a direction, so two is the floor."""
+
+
+def _load_records(root: Path) -> list[DecisionRecord]:
+    """Read a project's records, or exit with one readable line.
+
+    Six commands read records directly, so a missing file surfaced as whatever each of them happened
+    to do — one of them as an uncaught FileNotFoundError.
+    """
+    try:
+        return load_records(root)
+    except FileNotFoundError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from None
 
 
 def _report_ingest(result: Any) -> None:
@@ -574,7 +616,9 @@ def _label_plan_rows(
     rows: list[LabelPlanRow] = []
     for item in plan_labels(records, target_ci=0.05, by=(), alpha=alpha):
         needed = (
-            " · ".join(f"{target:.3f}: {count:,}" for target, count in item.labels_for_target)
+            " · ".join(
+                f"{_fmt_target(target)}: {count:,}" for target, count in item.labels_for_target
+            )
             if item.labels_for_target
             else ""
         )
@@ -759,13 +803,19 @@ def report(
 ) -> None:
     """Build the report: reliability, cost, impact, segments, drift, data quality."""
     config = load_config(root)
-    try:
-        records = load_records(root)
-    except FileNotFoundError:
-        typer.echo(f"no decision records under {root}: run `jeval ingest <file>` first")
-        raise typer.Exit(code=1) from None
+    records = _load_records(root)  # the shared loader owns the missing-file message
     if not records:
         typer.echo(f"no records in {records_path(root)}: run `jeval ingest <file>` first")
+        raise typer.Exit(code=1)
+    currency = currency.strip() or "USD"  # a blank code left a leading space before every amount
+    if monthly is not None and monthly < 0:
+        typer.echo(f"--monthly {monthly} is not a volume: monthly cases cannot be negative")
+        raise typer.Exit(code=1)
+    if current is not None and not 0.0 <= current <= 1.0:
+        typer.echo(
+            f"--current {current} is not a confidence: a deployed threshold is a probability "
+            "between 0 and 1"
+        )
         raise typer.Exit(code=1)
     if question:
         records = [record for record in records if record.question_key == question]
@@ -781,7 +831,7 @@ def report(
             f"together, so the curve disappears. Use at least {MIN_BINS}."
         )
         raise typer.Exit(code=1)
-    breakdown = tuple(by) if by else config.by
+    breakdown = _resolve_axes(records, tuple(by) if by else config.by)
     bootstrap = min(200, config.bootstrap_samples)
     if format_ == "md":
         dataset = evaluate(
@@ -829,6 +879,7 @@ def report(
         raise typer.Exit(code=1)
 
     target = out or (Path(root) / "report.html")
+    generated_at = template._stamp(None)
     dataset, thresholds, impact, written = build_and_write_report(
         records,
         root=root,
@@ -844,6 +895,7 @@ def report(
         alpha=config.alpha,
         bootstrap=bootstrap,
         min_segment_size=config.min_segment_size,
+        generated_at=generated_at,
     )
     print_report_summary(dataset)
     for result in thresholds:
@@ -883,7 +935,7 @@ def threshold(
     from jeval.costs import write_thresholds_yaml
 
     config = load_config(root)
-    records = load_records(root)
+    records = _load_records(root)
     actions, costs_note = resolve_cost_actions(costs, root)
     if not actions:
         typer.echo(
@@ -897,6 +949,17 @@ def threshold(
     target = out or (Path(root) / "thresholds.yaml")
     write_thresholds_yaml(results, target, generated_at=template._stamp(None))
     for result in results:
+        if (
+            result.flat_region is not None
+            and result.flat_region[0] <= 0.0
+            and result.flat_region[1] >= 1.0
+        ):
+            typer.echo(
+                f"{result.action}: every threshold costs the same on this data, so the sweep "
+                f"cannot recommend one. {result.n_records} labeled decisions, "
+                f"{result.auto_rate:.0%} would be automated at any line."
+            )
+            continue
         if not result.curve or result.ci_low != result.ci_low:
             typer.echo(
                 f"{result.action}: not enough labeled decisions ({result.n_records}) to recommend "
@@ -991,7 +1054,7 @@ def drift(
     from jeval import baseline as baseline_engine
     from jeval import drift as drift_engine
 
-    records = load_records(root)
+    records = _load_records(root)
     models = sorted({record.model for record in records})
     if save_baseline is not None:
         baseline_engine.write_snapshot(baseline_engine.snapshot(records), save_baseline)
@@ -1242,7 +1305,15 @@ def _harvest_command(
         )
     if report.n_rows_without_label:
         typer.echo(f"{report.n_rows_without_label} label row(s) had no value in {field!r}")
-    typer.echo(f"rewrote {records_file} in place")
+    if report.n_rows_without_key:
+        typer.echo(
+            f"{report.n_rows_without_key} label row(s) carried no {key!r}, so there was nothing "
+            "to join on"
+        )
+    if report.applications:
+        typer.echo(f"rewrote {records_file} in place")
+    else:
+        typer.echo(f"left {records_file} untouched: nothing applied")
     if not report.ok:
         raise typer.Exit(code=1)
 
@@ -1263,7 +1334,7 @@ def plan(
     from jeval.planning import plan_labels
 
     config = load_config(root)
-    records = load_records(root)
+    records = _load_records(root)
     plans = plan_labels(
         records,
         target_ci=target_ci if target_ci is not None else 0.05,
@@ -1281,13 +1352,17 @@ def plan(
                 f"{item.ece:>7.3f} {item.ci_width:>7.3f}  {item.reason}"
             )
             continue
-        wanted = " · ".join(f"{target:.3f}: {count:,}" for target, count in item.labels_for_target)
+        wanted = " · ".join(
+            f"{_fmt_target(target)}: {count:,}" for target, count in item.labels_for_target
+        )
         typer.echo(
             f"{item.scope:<10} {item.key:<20} {item.n_now:>6} "
             f"{item.ece:>7.3f} {item.ci_width:>7.3f}  {wanted}"
         )
+    from jeval.planning import _assumption_note
+
     typer.echo("")
-    typer.echo(plans[0].assumption)
+    typer.echo(_assumption_note(plans[0]))
     typer.echo("this is a projection from your own data, not a measurement")
 
 
@@ -1312,7 +1387,7 @@ def label(
     """Queue the records whose labels would teach the tool the most."""
     from jeval import active
 
-    records = load_records(root)
+    records = _load_records(root)
     if apply_from is not None:
         with Path(apply_from).open(encoding="utf-8", newline="") as handle:
             applied = active.apply_labels(
@@ -1350,6 +1425,9 @@ def label(
         typer.echo(f"fill the label column, then: jeval label --apply {sheet}")
     else:
         typer.echo("")
+        if not records:
+            typer.echo("no decision records yet: run `jeval ingest <file>` first")
+            raise typer.Exit(code=1)
         typer.echo("nothing to queue: every record already has a label")
 
 
@@ -1364,7 +1442,7 @@ def calibrate(
     """Fit a confidence correction and export it, or say plainly that none is needed."""
     from jeval import recalibrate
 
-    records = load_records(root)
+    records = _load_records(root)
     methods = ["temperature", "isotonic"] if method == "both" else [method]
     if any(name not in ("temperature", "isotonic") for name in methods):
         typer.echo(f"unknown --method {method!r}: expected temperature, isotonic or both")
