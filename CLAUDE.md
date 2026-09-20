@@ -42,6 +42,10 @@ and a pull request adding them will be closed:
 | `jeval/costs.py` | cost matrix, threshold sweep, the bootstrap interval on the threshold, impact table |
 | `jeval/drift.py` | slices by model version or period, model-change detection, `--fail-on` checks, CI text block |
 | `jeval/baseline.py` | baseline snapshots: measurements only, never records |
+| `jeval/score.py` | score-type questions: MAE, RMSE, rank correlation, level view — never binary accuracy |
+| `jeval/planning.py` | label-needed projections: interval-width scaling, with an explicit refusal below 200 labels |
+| `jeval/active.py` | the labeling queue: threshold band, flat distributions, sparse bins; CSV sheet round-trip |
+| `jeval/recalibrate.py` | temperature and isotonic fits, cross-validated, exported as YAML; declines when the gain is noise |
 | `jeval/report/model.py` | the frozen data contract every chart and the template render from |
 | `jeval/report/svg.py` | pure SVG primitives: scales, ticks, axes, legends, error bars |
 | `jeval/report/charts/` | one module per chart: reliability, cost, segments, drift |
@@ -75,6 +79,10 @@ uv run jeval demo --out-dir /tmp/jeval-demo
   strict typing because its correctness is the product.
 - User-facing messages explain what was measured and what is missing, never oversell. If a
   number cannot be supported by the sample, say so.
+- Never quote a number in the README that you have not run. `tests/test_readme_example.py` checks
+  the report figures, and `tests/test_documented_features.py` checks that every command, flag and
+  ingest-map key the docs advertise exists and is consumed — if you add a documented surface, make
+  that guard reflect it in the same commit.
 - Never write a stub that looks implemented. A command that is not implemented does not appear
   in the CLI, and the README status table says so.
 
