@@ -216,6 +216,69 @@ class DataQuality:
     no_gold_labels: bool = False
 
 
+@dataclass(frozen=True)
+class ScoreLevelRow:
+    """One predicted-value band and what the actual values were inside it."""
+
+    lo: float
+    hi: float
+    n: int
+    mean_predicted: float
+    mean_actual: float
+
+
+@dataclass(frozen=True)
+class ScoreView:
+    """Score-type questions: error and rank agreement, never right/wrong accuracy."""
+
+    n: int
+    mae: float
+    rmse: float
+    spearman_rho: float
+    levels: tuple[ScoreLevelRow, ...] = ()
+    n_other_type: int = 0
+    n_unlabeled: int = 0
+    n_unparseable: int = 0
+
+
+@dataclass(frozen=True)
+class RecalibrationView:
+    """A fitted correction, only ever shown with the cross-validated gain and the floor."""
+
+    method: str
+    before_ece: float
+    after_ece: float
+    n: int
+    helps: bool
+    note: str = ""
+
+
+@dataclass(frozen=True)
+class LabelPlanRow:
+    """One scope's projection of how many more labels a tighter interval needs."""
+
+    scope: str
+    key: str
+    n_now: int
+    ece: float
+    ci_width: float
+    needed: str = ""
+    reason: str = ""
+
+
+@dataclass(frozen=True)
+class SegmentThresholdRow:
+    """A segment's own optimum, and whether splitting pays for itself."""
+
+    label: str
+    threshold: float
+    cost_per_case: float
+    delta: float
+    n: int
+    worth_splitting: bool
+    reason: str = ""
+
+
 @dataclass
 class ReportModel:
     """Everything one report renders, in reading order."""
@@ -226,6 +289,10 @@ class ReportModel:
     impact: ImpactTable | None = None
     segments: SegmentView | None = None
     drift: DriftView | None = None
+    score: ScoreView | None = None
+    recalibration: RecalibrationView | None = None
+    label_plan: tuple[LabelPlanRow, ...] = ()
+    segment_thresholds: tuple[SegmentThresholdRow, ...] = ()
     data_quality: DataQuality = field(default_factory=DataQuality)
     generated_at: str = ""
     source_note: str = ""

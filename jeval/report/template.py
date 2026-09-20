@@ -138,6 +138,10 @@ def render_document(
     parts.append(_reliability_section(blocks))
     parts.append(_cost_section(model, current_thresholds, thresholds))
     parts.append(_segments_section(model, segment_metrics))
+    if model.score is not None:
+        parts.append(_score_section(model))
+    if model.label_plan or model.recalibration is not None:
+        parts.append(_label_plan_section(model))
     if model.drift is not None and model.drift.slices:
         parts.append(
             '<section id="drift"><h2>Drift</h2>'
@@ -262,11 +266,31 @@ def _cost_section(
         )
         for result in thresholds
     )
+    splits = ""
+    if model.segment_thresholds:
+        rows = "".join(
+            f"<tr><td>{escape(row.label)}</td>"
+            f"<td>{'-' if row.threshold != row.threshold else f'{row.threshold:.2f}'}</td>"
+            f"<td>{'-' if row.cost_per_case != row.cost_per_case else f'{row.cost_per_case:,.2f}'}</td>"
+            f"<td>{'-' if row.delta != row.delta else f'{row.delta:+,.2f}'}</td>"
+            f"<td>{row.n:,}</td>"
+            f"<td>{'split' if row.worth_splitting else escape(row.reason or 'splitting does not pay')}</td></tr>"
+            for row in model.segment_thresholds
+        )
+        splits = (
+            "<h3>Does one threshold fit every segment?</h3>"
+            "<p>A split is recommended only when a segment's own optimum moves by more than one "
+            "sweep step <em>and</em> adopting it changes cost per case by more than 2%. Everything "
+            "else is the same threshold with extra machinery, and this table says so.</p>"
+            '<table class="details"><caption>Segment optimum vs the global optimum</caption>'
+            "<thead><tr><th>segment</th><th>threshold</th><th>cost/case</th><th>vs global</th>"
+            f"<th>n</th><th>verdict</th></tr></thead><tbody>{rows}</tbody></table>"
+        )
     return (
         '<section id="cost"><h2>Cost</h2>'
         "<p>Expected cost per case for every candidate threshold. The minimum is the "
         "recommendation; the flat region is where the data cannot tell neighbouring thresholds "
-        "apart.</p>" + body + "</section>"
+        "apart.</p>" + body + splits + "</section>"
     )
 
 
@@ -299,6 +323,88 @@ def _segments_section(model: ReportModel, segment_metrics: Mapping[str, Calibrat
         + figures
         + "</section>"
     )
+
+
+def _score_section(model: ReportModel) -> str:
+    """Score-type questions: error and rank agreement, deliberately not accuracy."""
+    view = model.score
+    if view is None:  # pragma: no cover - guarded by the caller
+        return ""
+    if view.n < 2:
+        return (
+            '<section id="score"><h2>Score questions</h2><p class="note">This log has '
+            f"{view.n} usable numeric score decision(s): too few to measure error or rank "
+            "agreement. Score answers are never folded into binary accuracy, so they are counted "
+            "and set aside instead.</p></section>"
+        )
+    rows = "".join(
+        f"<tr><td>{level.lo:.2f}-{level.hi:.2f}</td><td>{level.n}</td>"
+        f"<td>{level.mean_predicted:.3f}</td><td>{level.mean_actual:.3f}</td>"
+        f"<td>{level.mean_actual - level.mean_predicted:+.3f}</td></tr>"
+        for level in view.levels
+    )
+    table = (
+        '<table class="details"><caption>Predicted band, and the actual values inside it</caption>'
+        "<thead><tr><th>predicted</th><th>n</th><th>mean predicted</th><th>mean actual</th>"
+        f"<th>gap</th></tr></thead><tbody>{rows}</tbody></table>"
+    )
+    counted = (
+        f" Counted and excluded from this section: {view.n_other_type} non-score, "
+        f"{view.n_unlabeled} unlabeled, {view.n_unparseable} unparseable."
+        if (view.n_other_type or view.n_unlabeled or view.n_unparseable)
+        else ""
+    )
+    rho = "-" if view.spearman_rho != view.spearman_rho else f"{view.spearman_rho:.3f}"
+    note = f'<p class="note">{view.n} usable numeric decision(s).{counted}</p></section>'
+    return (
+        '<section id="score"><h2>Score questions</h2>'
+        "<p>A numeric answer is measured as <strong>error</strong> and <strong>rank "
+        "agreement</strong>, never as right-or-wrong: a model can be monotone and still be off by "
+        "a constant, and binary accuracy would call that a failure at every level while rank "
+        "correlation calls it a success. Read the gap column — a systematically non-zero gap is "
+        "bias, not noise.</p>"
+        f'<p class="metrics">MAE <strong>{view.mae:.3f}</strong> · RMSE '
+        f"<strong>{view.rmse:.3f}</strong> · Spearman rho <strong>{rho}</strong> · n "
+        f"<strong>{view.n}</strong></p>"
+        f"{table}{note}"
+    )
+
+
+def _label_plan_section(model: ReportModel) -> str:
+    """What more labels would buy, and what a correction would (or would not) do."""
+    parts = ['<section id="labels"><h2>Labels and correction</h2>']
+    if model.label_plan:
+        rows = "".join(
+            f"<tr><td>{escape(row.scope)}</td><td>{escape(row.key)}</td><td>{row.n_now:,}</td>"
+            f"<td>{'-' if row.ece != row.ece else f'{row.ece:.3f}'}</td>"
+            f"<td>{'-' if row.ci_width != row.ci_width else f'{row.ci_width:.3f}'}</td>"
+            f"<td>{escape(row.needed or row.reason)}</td></tr>"
+            for row in model.label_plan
+        )
+        parts.append(
+            "<p>An interval is the honest limit of what this sample can say. More labels are the "
+            "only way to narrow it — and the projection below is an estimate from your own data, "
+            "not a measurement.</p>"
+            '<table class="details"><caption>Additional labels needed for a tighter interval'
+            "</caption><thead><tr><th>scope</th><th>key</th><th>n now</th><th>ECE</th>"
+            f"<th>CI width</th><th>needed</th></tr></thead><tbody>{rows}</tbody></table>"
+        )
+    if model.recalibration is not None:
+        view = model.recalibration
+        verdict = (
+            f"a correction is available: {view.method}, ECE {view.before_ece:.3f} -> "
+            f"{view.after_ece:.3f} cross-validated on {view.n:,} labeled decisions. jeval exports "
+            "the map; your application applies it."
+            if view.helps
+            else (
+                f"no correction is warranted: {view.method} would move ECE {view.before_ece:.3f} "
+                f"-> {view.after_ece:.3f} cross-validated, which is not a gain worth shipping. "
+                f"{escape(view.note)}"
+            )
+        )
+        parts.append(f'<p class="note">{verdict}</p>')
+    parts.append("</section>")
+    return "".join(parts)
 
 
 def _data_quality_section(model: ReportModel) -> str:

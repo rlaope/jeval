@@ -84,7 +84,7 @@ def build_verdict(
     """
     recommended = _resolve_recommended(threshold, recommended_threshold)
     current = _resolve_current(threshold, current_threshold, recommended)
-    accuracy, accuracy_sub = _measured_accuracy(threshold, metrics)
+    accuracy, accuracy_sub = _measured_accuracy(threshold, metrics, recommended)
     stats = _stats(metrics, current, recommended, accuracy, accuracy_sub, min_labels)
 
     if metrics.n < min_labels:
@@ -237,11 +237,27 @@ def _observed_accuracy(metrics: CalibrationMetrics) -> float:
     return sum(bin_.accuracy * bin_.n for bin_ in metrics.bins) / total
 
 
-def _measured_accuracy(threshold: object | None, metrics: CalibrationMetrics) -> tuple[str, str]:
-    """The middle headline figure: the accuracy the numbers actually support."""
+def _measured_accuracy(
+    threshold: object | None,
+    metrics: CalibrationMetrics,
+    recommended: float | None = None,
+) -> tuple[str, str]:
+    """The middle headline figure: the accuracy the numbers actually support.
+
+    The caption names the line the figure belongs to. "Measured accuracy 95.7%" on its own reads
+    like the model's overall accuracy, when it is really the accuracy of what stays automated once
+    the recommended threshold is in place — a difference of eleven points in the example report.
+    """
     auto = _as_float(_attribute(threshold, "accuracy_auto"))
     if auto is not None:
-        return (pct(auto), "of auto decisions")
+        # Captions stay under 24 characters (a HUD-width rule the tests enforce), so the
+        # threshold is named compactly rather than dropped.
+        caption = (
+            f"auto decisions at {fmt(recommended, 2)}"
+            if recommended is not None
+            else "of auto decisions"
+        )
+        return (pct(auto), caption)
     return (pct(_observed_accuracy(metrics)), f"of {metrics.n:,} labels")
 
 

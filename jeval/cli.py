@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import csv
 import json
 from collections.abc import Sequence
 from pathlib import Path
@@ -12,6 +13,7 @@ import typer
 from jeval import __version__
 from jeval.calibration import compute_calibration
 from jeval.config import load_config, load_ingest_map, write_default_config
+from jeval.costs import CostAction
 from jeval.evaluate import DatasetReport, evaluate
 from jeval.ingest import ingest_files
 from jeval.report import template
@@ -20,11 +22,17 @@ from jeval.report.model import (
     DataQuality,
     HeatmapCell,
     ImpactTable,
+    LabelPlanRow,
+    RecalibrationView,
     ReportModel,
+    ScoreLevelRow,
+    ScoreView,
+    SegmentThresholdRow,
     SegmentView,
     ThresholdResult,
 )
 from jeval.report.verdict import build_verdict
+from jeval.schema import DecisionRecord
 from jeval.store import DATA_DIR_NAME, load_records, records_path, write_records
 from jeval.synth import demo_dataset
 
@@ -130,8 +138,58 @@ def ingest(
         typer.Option("--mapping", help="Ingest map file (default .jeval/ingest-map.yaml)."),
     ] = None,
     append: Annotated[bool, typer.Option("--append", help="Append instead of replacing.")] = False,
+    labels: Annotated[
+        Path | None,
+        typer.Option(
+            "--labels",
+            help="Resolution log to harvest human labels from (the free labels you already have).",
+        ),
+    ] = None,
+    label_field: Annotated[
+        str | None,
+        typer.Option("--label-field", help="Field in the resolution log holding the answer."),
+    ] = None,
+    label_source: Annotated[
+        str | None,
+        typer.Option("--label-source", help="human_review | human_override | silver."),
+    ] = None,
+    join_on: Annotated[
+        str | None,
+        typer.Option("--join-on", help="Join key shared by the log and the resolution log."),
+    ] = None,
+    overwrite: Annotated[
+        bool,
+        typer.Option("--overwrite", help="Let harvested labels replace existing ones."),
+    ] = False,
+    label_question: Annotated[
+        str | None,
+        typer.Option(
+            "--label-question",
+            help="Restrict the harvest to this question (one join key is usually shared by all "
+            "of a request's questions).",
+        ),
+    ] = None,
+    allow_unlisted: Annotated[
+        bool,
+        typer.Option(
+            "--allow-unlisted-labels",
+            help="Accept a choice label that is not among the record's own probabilities.",
+        ),
+    ] = False,
 ) -> None:
-    """Turn raw logs into decision records."""
+    """Turn raw logs into decision records, and optionally harvest labels you already have."""
+    if labels is not None:
+        _harvest_command(
+            root=root,
+            labels=labels,
+            label_field=label_field,
+            label_source=label_source,
+            join_on=join_on,
+            overwrite=overwrite,
+            label_question=label_question,
+            allow_unlisted=allow_unlisted,
+        )
+        return
     config = load_config(root)
     map_path = mapping or (Path(root) / DATA_DIR_NAME / config.ingest_map)
     ingest_map = load_ingest_map(map_path)
@@ -357,6 +415,115 @@ def _write_demo_costs(out_dir: Path) -> Path:
     return target
 
 
+def _score_view(records: Sequence[DecisionRecord]) -> ScoreView | None:
+    """Score metrics for the report, or nothing at all when the log has no score records."""
+    from jeval.score import measure_score
+
+    metrics = measure_score(records)
+    if metrics.n_records == metrics.n_other_type:
+        return None  # a binary-only log gets no score section rather than an empty one
+    return ScoreView(
+        n=metrics.n,
+        mae=metrics.mae,
+        rmse=metrics.rmse,
+        spearman_rho=metrics.spearman_rho,
+        levels=tuple(
+            ScoreLevelRow(
+                lo=level.lo,
+                hi=level.hi,
+                n=level.n,
+                mean_predicted=level.mean_predicted,
+                mean_actual=level.mean_actual,
+            )
+            for level in metrics.levels
+        ),
+        n_other_type=metrics.n_other_type,
+        n_unlabeled=metrics.n_unlabeled,
+        n_unparseable=metrics.n_unparseable,
+    )
+
+
+def _recalibration_view(
+    records: Sequence[DecisionRecord], *, alpha: float
+) -> RecalibrationView | None:
+    """One cheap temperature fit for the report; `jeval calibrate` does the thorough version."""
+    from jeval import recalibrate
+
+    if sum(1 for record in records if record.label is not None) < 30:
+        return None
+    fit = recalibrate.fit_temperature(
+        records, grid=(0.5, 0.75, 1.0, 1.25, 1.5, 2.0), folds=3, repeats=2
+    )
+    return RecalibrationView(
+        method=fit.method,
+        before_ece=fit.before_ece,
+        after_ece=fit.after_ece,
+        n=fit.n,
+        helps=fit.helps,
+        note=fit.note,
+    )
+
+
+def _label_plan_rows(
+    records: Sequence[DecisionRecord], *, by: Sequence[str], alpha: float
+) -> tuple[LabelPlanRow, ...]:
+    """Project the labels needed for the tightest useful interval, per question."""
+    from jeval.planning import plan_labels
+
+    rows: list[LabelPlanRow] = []
+    for item in plan_labels(records, target_ci=0.05, by=(), alpha=alpha):
+        needed = (
+            " · ".join(f"{target:.3f}: {count:,}" for target, count in item.labels_for_target)
+            if item.labels_for_target
+            else ""
+        )
+        rows.append(
+            LabelPlanRow(
+                scope=item.scope,
+                key=item.key,
+                n_now=item.n_now,
+                ece=item.ece,
+                ci_width=item.ci_width,
+                needed=needed,
+                reason="" if needed else item.reason,
+            )
+        )
+    return tuple(rows)
+
+
+def _segment_threshold_rows(
+    actions: Sequence[CostAction],
+    records: Sequence[DecisionRecord],
+    *,
+    by: Sequence[str],
+    steps: int,
+    min_records: int,
+) -> tuple[SegmentThresholdRow, ...]:
+    """Per-segment optima for the first cost axis, so the report can say if splitting pays."""
+    from jeval.costs import sweep_by_segment
+
+    if not by:
+        return ()
+    axis = by[0]
+    rows: list[SegmentThresholdRow] = []
+    for action in actions:
+        for segment in sweep_by_segment(
+            action, records, segment_key=axis, min_records=min_records, steps=steps
+        ):
+            rows.append(
+                SegmentThresholdRow(
+                    label=f"{action.name} {segment.label}",
+                    threshold=segment.threshold,
+                    cost_per_case=segment.expected_cost_per_case,
+                    delta=segment.cost_delta_vs_global,
+                    n=segment.n_records,
+                    worth_splitting=segment.worth_splitting,
+                    reason=segment.reason,
+                )
+            )
+    return tuple(rows)
+
+
 def build_and_write_report(
     records: Sequence[Any],
     *,
@@ -418,6 +585,16 @@ def build_and_write_report(
         impact=impact,
         segments=segments_view,
         drift=compare_view,
+        score=_score_view(records),
+        recalibration=_recalibration_view(records, alpha=alpha),
+        label_plan=_label_plan_rows(records, by=by, alpha=alpha),
+        segment_thresholds=(
+            _segment_threshold_rows(
+                actions, records, by=by, steps=101, min_records=min_segment_size
+            )
+            if actions and thresholds and by
+            else ()
+        ),
         data_quality=quality,
         generated_at=generated_at,
         source_note=f"source: {records_path(root)}" + (f" · {costs_note}" if costs_note else ""),
@@ -578,6 +755,13 @@ def threshold(
     bootstrap: Annotated[
         int, typer.Option("--bootstrap", help="Bootstrap resamples for the interval.")
     ] = 200,
+    by: Annotated[
+        str | None,
+        typer.Option("--by", help="Segment axis: does one threshold fit everyone?"),
+    ] = None,
+    min_records: Annotated[
+        int, typer.Option("--min-records", help="Smallest segment worth sweeping.")
+    ] = 100,
 ) -> None:
     """Turn a cost matrix into per-action thresholds, with confidence intervals."""
     from jeval.costs import write_thresholds_yaml
@@ -615,6 +799,58 @@ def threshold(
             )
     typer.echo(f"wrote {target}")
     typer.echo("your application reads this file; jeval never sits in the request path.")
+    if by:
+        typer.echo("")
+        _print_segment_sweep(actions, results, records, by, min_records=min_records, steps=steps)
+
+
+def _print_segment_sweep(
+    actions: Sequence[CostAction],
+    results: Sequence[ThresholdResult],
+    records: Sequence[DecisionRecord],
+    axis: str,
+    *,
+    min_records: int,
+    steps: int,
+) -> None:
+    """Print whether giving each segment its own threshold pays for itself."""
+    from jeval.costs import sweep_by_segment
+
+    swept = {result.action: result for result in results}
+    stated = 0
+    for action in actions:
+        result = swept.get(action.name)
+        if result is None or not result.curve:
+            continue
+        segments = sweep_by_segment(
+            action, records, segment_key=axis, min_records=min_records, steps=steps
+        )
+        if not segments:
+            continue
+        if stated:
+            typer.echo("")
+        stated += 1
+        typer.echo(f"{result.action} by {axis}: global threshold {result.threshold:.2f}")
+        typer.echo(
+            f"  {'segment':<18} {'threshold':>9} {'cost/case':>10} "
+            f"{'vs global':>10} {'n':>6}  verdict"
+        )
+        for segment in segments:
+            if segment.threshold != segment.threshold:  # NaN: never swept
+                typer.echo(
+                    f"  {segment.label:<18} {'—':>9} {'—':>10} {'—':>10} {segment.n_records:>6}  "
+                    f"{segment.reason}"
+                )
+                continue
+            verdict = "split" if segment.worth_splitting else segment.reason
+            typer.echo(
+                f"  {segment.label:<18} {segment.threshold:>9.2f} "
+                f"{segment.expected_cost_per_case:>10,.2f} {segment.cost_delta_vs_global:>10,.2f} "
+                f"{segment.n_records:>6}  {verdict}"
+            )
+    if not stated:
+        typer.echo("")
+        typer.echo("no action had enough labeled decisions for a segment sweep.")
 
 
 @app.command()
@@ -657,6 +893,13 @@ def drift(
     if view is None or not view.slices:
         typer.echo("no drift comparison available: need two model versions or --by-period")
         raise typer.Exit(code=0)
+    # Costs turn the block from "something changed" into "the line you should draw moved" — the
+    # line a reviewer actually acts on.
+    actions, costs_note = resolve_cost_actions(None, root)
+    if actions:
+        view = drift_engine.attach_thresholds(view, records, actions)
+        if costs_note:
+            typer.echo(costs_note)
     checks = drift_engine.parse_fail_on(fail_on or [])
     failures = drift_engine.run_checks(view, checks) if checks else ()
     typer.echo(drift_engine.format_ci_block(view, failures), nl=False)
@@ -717,7 +960,6 @@ def demo(
 
 
 def demo_question_lines(dataset: Any) -> list[str]:
-    from jeval.schema import DecisionRecord
     from jeval.synth import DemoDataset, accuracy_of
 
     if not isinstance(dataset, DemoDataset):
@@ -762,6 +1004,235 @@ def labels_for_tighter_interval(n: int, span: float, target_span: float = 0.05) 
     if n <= 0 or span != span or span <= target_span:
         return 0
     return max(0, int(n * ((span / target_span) ** 2 - 1)))
+
+
+def _harvest_command(
+    *,
+    root: Path,
+    labels: Path,
+    label_field: str | None,
+    label_source: str | None,
+    join_on: str | None,
+    overwrite: bool,
+    label_question: str | None = None,
+    allow_unlisted: bool = False,
+) -> None:
+    """Apply an external resolution log onto existing records, atomically."""
+    from jeval.ingest import harvest_file, iter_rows
+
+    config = load_config(root)
+    mapping = load_ingest_map(Path(root) / DATA_DIR_NAME / config.ingest_map)
+    spec = None
+    try:
+        spec = mapping.label_spec()
+    except ValueError as exc:
+        if label_field is None or label_source is None or join_on is None:
+            typer.echo(f"ingest map: {exc}")
+            raise typer.Exit(code=1) from None
+    field = label_field or (spec.field if spec else None)
+    source = label_source or (spec.source if spec else None)
+    key = join_on or (spec.join_on if spec else None)
+    scope = label_question or (spec.question if spec else None)
+    if not (field and source and key):
+        typer.echo(
+            "harvesting needs --label-field, --label-source and --join-on, or a complete "
+            "label_from block in .jeval/ingest-map.yaml"
+        )
+        raise typer.Exit(code=1)
+    records_file = records_path(root)
+    if not records_file.exists():
+        typer.echo(f"no decision records at {records_file}: run `jeval ingest <file>` first")
+        raise typer.Exit(code=1)
+    try:
+        report = harvest_file(
+            records_file,
+            iter_rows(labels),
+            field=field,
+            source=source,  # type: ignore[arg-type]
+            join_on=key,
+            overwrite=overwrite,
+            question=scope,
+            allow_unlisted=allow_unlisted,
+        )
+    except ValueError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=1) from None
+    typer.echo(f"read {report.n_label_rows} label rows from {labels}")
+    where = f" to the {scope!r} question" if scope else ""
+    typer.echo(f"applied {report.n_applied} labels to {report.n_records} records{where}")
+    if report.n_other_question:
+        typer.echo(
+            f"left {report.n_other_question} record(s) of other questions alone: {field!r} answers "
+            "one question, and a request's other questions share the same key"
+            + ("" if scope else " — set label_from.question (or --label-question) to name it")
+        )
+    if report.n_unlisted_label:
+        named = ", ".join(report.unlisted_labels[:3])
+        typer.echo(
+            f"refused {report.n_unlisted_label} label(s) that the record's own question cannot "
+            f"produce ({named}) — a wrong label is worse than a missing one; pass "
+            "--allow-unlisted-labels only if your probabilities list top candidates only"
+        )
+    if report.n_kept_existing:
+        typer.echo(
+            f"kept {report.n_kept_existing} existing label(s) — a harvested label never replaces "
+            "one that is already there unless you pass --overwrite"
+        )
+    if report.n_unmatched:
+        named = ", ".join(report.unmatched_keys[:5])
+        typer.echo(f"{report.n_unmatched} label row(s) matched no record: {named}")
+    if report.n_skipped_without_key:
+        typer.echo(
+            f"{report.n_skipped_without_key} record(s) carry no {key!r}, so nothing could be "
+            "joined to them"
+        )
+    if report.n_rows_without_label:
+        typer.echo(f"{report.n_rows_without_label} label row(s) had no value in {field!r}")
+    typer.echo(f"rewrote {records_file} in place")
+    if not report.ok:
+        raise typer.Exit(code=1)
+
+
+@app.command()
+def plan(
+    root: Annotated[Path, typer.Option("--root", help="Project root holding .jeval/.")] = Path("."),
+    target_ci: Annotated[
+        float | None,
+        typer.Option("--target-ci", help="Interval width you want (0.05 means +/-0.025)."),
+    ] = None,
+    by: Annotated[
+        list[str] | None,
+        typer.Option("--by", help="Break the plan down by a segment axis (repeatable)."),
+    ] = None,
+) -> None:
+    """Say how many more labels each question needs for a tighter interval."""
+    from jeval.planning import plan_labels
+
+    config = load_config(root)
+    records = load_records(root)
+    plans = plan_labels(
+        records,
+        target_ci=target_ci if target_ci is not None else 0.05,
+        by=tuple(by) if by else config.by,
+        alpha=config.alpha,
+    )
+    if not plans:
+        typer.echo("no labeled decisions to plan from: labels first, then a plan")
+        raise typer.Exit(code=1)
+    typer.echo(f"{'scope':<10} {'key':<20} {'n':>6} {'ECE':>7} {'CI':>7}  needed")
+    for item in plans:
+        if item.labels_for_target is None:
+            typer.echo(
+                f"{item.scope:<10} {item.key:<20} {item.n_now:>6} "
+                f"{item.ece:>7.3f} {item.ci_width:>7.3f}  {item.reason}"
+            )
+            continue
+        wanted = " · ".join(f"{target:.3f}: {count:,}" for target, count in item.labels_for_target)
+        typer.echo(
+            f"{item.scope:<10} {item.key:<20} {item.n_now:>6} "
+            f"{item.ece:>7.3f} {item.ci_width:>7.3f}  {wanted}"
+        )
+    typer.echo("")
+    typer.echo(plans[0].assumption)
+    typer.echo("this is a projection from your own data, not a measurement")
+
+
+@app.command()
+def label(
+    root: Annotated[Path, typer.Option("--root", help="Project root holding .jeval/.")] = Path("."),
+    costs: Annotated[
+        Path | None, typer.Option("--costs", help="Cost matrix, so the queue knows the band.")
+    ] = None,
+    limit: Annotated[int, typer.Option("--limit", help="Records to queue.")] = 20,
+    out: Annotated[
+        Path | None, typer.Option("-o", "--out", help="Where to write the labeling sheet.")
+    ] = None,
+    apply_from: Annotated[
+        Path | None,
+        typer.Option("--apply", help="Apply a filled-in labeling sheet you exported earlier."),
+    ] = None,
+    source: Annotated[
+        str, typer.Option("--source", help="Label source for applied answers.")
+    ] = "human_review",
+) -> None:
+    """Queue the records whose labels would teach the tool the most."""
+    from jeval import active
+
+    records = load_records(root)
+    if apply_from is not None:
+        with Path(apply_from).open(encoding="utf-8", newline="") as handle:
+            applied = active.apply_labels(
+                records,
+                csv.DictReader(handle),
+                key=active.KEY_COLUMN,
+                label=active.LABEL_COLUMN,
+                source=source,  # type: ignore[arg-type]
+            )
+        write_records(records, records_path(root))
+        typer.echo(f"applied {applied} label(s) from {apply_from}")
+        if applied == 0:
+            typer.echo("no rows carried a label: fill the label column and try again")
+            raise typer.Exit(code=1)
+        return
+
+    actions, _ = resolve_cost_actions(costs, root)
+    thresholds: dict[str, ThresholdResult] = {}
+    if actions:
+        swept, _ = sweep_actions(actions, records, n_boot=60, alpha=load_config(root).alpha)
+        thresholds = {result.question: result for result in swept if result.curve}
+    queue = active.build_queue(records, thresholds=thresholds, limit=limit)
+    typer.echo(active.format_queue(queue))
+    breakdown = active.priority_breakdown(queue)
+    if breakdown:
+        typer.echo("")
+        typer.echo("what this queue buys:")
+        for name, count in breakdown.items():
+            typer.echo(f"  {name:<24} {count}")
+    sheet = out or (Path(root) / "labels.csv")
+    if queue:
+        active.export_session(queue, sheet)
+        typer.echo("")
+        typer.echo(f"labeling sheet: {sheet}")
+        typer.echo(f"fill the label column, then: jeval label --apply {sheet}")
+    else:
+        typer.echo("")
+        typer.echo("nothing to queue: every record already has a label")
+
+
+@app.command()
+def calibrate(
+    root: Annotated[Path, typer.Option("--root", help="Project root holding .jeval/.")] = Path("."),
+    method: Annotated[str, typer.Option("--method", help="temperature | isotonic | both")] = "both",
+    out: Annotated[
+        Path | None, typer.Option("-o", "--out", help="Where to write the correction map.")
+    ] = None,
+) -> None:
+    """Fit a confidence correction and export it, or say plainly that none is needed."""
+    from jeval import recalibrate
+
+    records = load_records(root)
+    methods = ["temperature", "isotonic"] if method == "both" else [method]
+    if any(name not in ("temperature", "isotonic") for name in methods):
+        typer.echo(f"unknown --method {method!r}: expected temperature, isotonic or both")
+        raise typer.Exit(code=1)
+    for name in methods:
+        fit = (
+            recalibrate.fit_temperature(records)
+            if name == "temperature"
+            else recalibrate.fit_isotonic(records)
+        )
+        typer.echo(
+            f"{fit.method}: ECE {fit.before_ece:.3f} -> {fit.after_ece:.3f} "
+            f"(cross-validated, n={fit.n})"
+        )
+        if not fit.helps:
+            typer.echo(f"  {fit.note}")
+            typer.echo("  no correction exported: shipping an unearned map would make it worse")
+            continue
+        target = out or (Path(root) / f"calibration-{fit.method}.yaml")
+        written = recalibrate.export_yaml(fit, target)
+        typer.echo(f"  wrote {written}")
+        typer.echo("  your application applies this map; jeval stays out of the request path")
 
 
 def main() -> None:
