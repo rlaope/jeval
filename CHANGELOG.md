@@ -41,6 +41,78 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   a decision API returns (`{"response": {"answers": {...}}}`) rather than a list of questions.
 
 ### Fixed
+Four adversarial QA passes over the whole tool found and closed the following. Release-blocking
+first.
+
+Silent data loss and host-service risk:
+
+- A decision-API response without a `model` field dropped **every** answer (the record failed
+  validation and was counted as dropped). The model now falls back to `JEVAL_MODEL`, then `unknown`.
+- `track()` raised out of the module for clients whose attributes cannot be set (pydantic models,
+  `__slots__`, frozen dataclasses, raising properties). It now leaves the client working, counts the
+  refusal in `stats()["install_failed"]`, and verifies the install by readback.
+- `JEVAL_COLLECT=0` did not stop a call site that passed `path=`, and an unrecognised value such as
+  `JEVAL_COLLECT=enabled` created a file named `enabled` in the working directory. The off switch now
+  wins over everything, and only a value that looks like a path is used as one.
+- `track()` called twice recorded every call twice, doubling the weight of the entire log. It is now
+  idempotent.
+
+Numbers a record was not allowed to claim:
+
+- A `choice` record stored the top-1 mass as its confidence even when the stored prediction was a
+  different class (0.85 confidence for a class the map gave 0.08). The confidence is now the
+  probability of the prediction, and a prediction absent from its own distribution is refused.
+- A `noul` probability of 1.5 was stored verbatim, and a NaN became a maximally confident answer.
+  Values are clamped to [0, 1] and non-finite input is refused.
+- Reductions over finite score inputs could overflow to `inf`, which the report printed as `MAE inf`.
+  A non-finite result is now reported as unmeasurable.
+- A `CostAction` with a NaN cost produced an invented threshold, because every NaN comparison is
+  False and the first grid point "won". Costs must be finite and non-negative at construction.
+
+Numbers the data could not support:
+
+- The ECE bootstrap interval could exclude the ECE printed beside it, and excluded zero for a
+  calibrated log. A percentile interval on a convex statistic sits above its own point estimate, so
+  the interval is now widened to contain it, and a degenerate resample distribution reports no
+  interval instead of `[x, x]`.
+- `diagnose()` claimed over- or under-confidence from a bin whose own Wilson interval contained the
+  confidence it contradicted: a calibrated log was flagged in 20 of 20 seeds at three sample sizes.
+  A direction is now claimed only when the bin's interval excludes the claim.
+- `jeval plan --target-ci 1e-160` crashed with `OverflowError`; projections are now computed in log
+  space and refused past 1e9 labels.
+- A labelled record with no `label_source` counted as gold for ECE while costs, drift, baseline and
+  the segment bars excluded it — two definitions of one word in one report. Anything that is not a
+  gold source now counts as silver everywhere.
+
+Claims the report made without evidence:
+
+- The threshold in use was substituted with the recommendation when nothing was deployed, so the
+  report said "the 0.99 threshold in use" and compared it with itself. With nothing deployed the
+  report now says so, and no impact table is built.
+- Every action's cost section rendered the **first** action's impact table (wrong threshold, wrong
+  cost, wrong auto-rate under another action's heading), and three sections shared one DOM id. Each
+  action now gets its own table and its own control ids.
+- A period comparison printed `model changed: 2026-W36 -> 2026-W37`, and comparing a slice with
+  itself printed `model changed: new -> new` with a +0.000 delta. The block now names a period as a
+  period and reports that there is nothing to compare.
+- The drift note and failure detail were the only unescaped sinks in the report: a question key or
+  model name containing `<script>` executed. Both are escaped, and the embedded JSON payload escapes
+  every `<` so a `<!--<script` value can no longer swallow the report's own script and kill every
+  interactive control.
+
+Corrupting operations on the user's own files:
+
+- Several questions of one request shared a single `id`, so one harvested answer was written onto
+  every question of that request and the labeling sheet applied an answer to an arbitrary sibling.
+  Each record now gets its own id.
+- Harvesting one label silently rewrote every CRLF line ending in `records.jsonl`, contradicting the
+  promise that only label fields change. The rewrite now reads bytes.
+- `jeval ingest log.jsonl --labels resolutions.jsonl` — the README's own example — ingested nothing
+  and said nothing. Both steps now run, in order; `--preset` together with `--labels` is refused
+  with the reason instead of silently skipping the harvest.
+- A malformed log line surfaced as a rich traceback; it is now one message with `file:line`.
+- A `label` inside a native answer object was dropped with no counter; the preset keeps it.
+
 - A label harvest joined on a shared key no longer writes one question's answer onto another
   question's records (found by running the documented flow against a two-question log).
 

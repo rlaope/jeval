@@ -209,6 +209,13 @@ mapping. `jeval ingest --list-presets` shows what is available; `--response-fiel
 - **Without labels, jeval measures nothing.** Read "Getting labels for free" below before
   concluding the tool is unusable — you are probably already producing labels without
   noticing.
+- The report marks the threshold **in use** only when your project says what that is: pass
+  `--current`, or keep a `thresholds.yaml`. With nothing deployed it says so instead of comparing
+  the recommendation with itself.
+- `--bins 1` is refused. One bin averages every decision together, so ECE collapses toward zero and
+  the report reads as "confidence is trustworthy" whatever the data says.
+- A label with no `label_source` counts as **silver**, never as gold: a label whose provenance is
+  unknown is not evidence of accuracy.
 - `jeval calibrate` exports a correction map; **jeval never applies it**. Adapters, gateways,
   routers and request-path libraries stay out of scope — that is your application's job.
 - The collector is a **recorder, not a proxy**. It never calls a model, never chooses one, never

@@ -305,15 +305,17 @@ def test_agreeing_thresholds_reuse_clear_with_the_cost_minimum_headline() -> Non
     assert "within one sweep step of the 0.70 cost minimum" in verdict.detail
 
 
-def test_a_lone_recommendation_is_treated_as_agreement() -> None:
-    # One threshold and nothing to compare against is agreement, not evidence of a problem.
+def test_a_lone_recommendation_is_not_reported_as_the_deployed_threshold() -> None:
+    # Adversarial QA: with nothing deployed, the recommendation was substituted for the current
+    # threshold, so the report claimed "the 0.70 threshold in use" and compared it with itself.
     verdict = build_verdict(
         make_metrics(ece=0.05, mce=0.09),
         threshold=make_threshold_result(threshold=0.70, curve=()),
     )
 
     assert verdict.status == CLEAR
-    assert verdict.headline == HEADLINE_NEAR_MINIMUM
+    assert verdict.headline == HEADLINE_NO_THRESHOLD
+    assert "in use" not in verdict.detail
 
 
 def test_miscalibrated_with_no_threshold_says_so_instead_of_claiming_a_minimum() -> None:
