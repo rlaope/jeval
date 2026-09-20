@@ -36,7 +36,15 @@ ENV_MODEL = "JEVAL_MODEL"
 _OFF = frozenset({"0", "off", "false", "no"})
 _ON = frozenset({"1", "on", "true", "yes"})
 
-_STATS: dict[str, int] = {"written": 0, "dropped": 0, "unsupported": 0, "calls": 0}
+_TRACKED_ATTR = "_jeval_tracked"
+
+_STATS: dict[str, int] = {
+    "written": 0,
+    "dropped": 0,
+    "unsupported": 0,
+    "calls": 0,
+    "already_tracked": 0,
+}
 
 
 def stats() -> dict[str, int]:
@@ -288,27 +296,32 @@ def track(
     be joined back onto the decision.
 
     The client is patched in place and returned, so ``client = track(Client())`` and
-    ``track(client)`` both work. Nothing here imports a vendor SDK: the wrapper looks for a method
-    that takes questions and returns typed answers.
+    ``track(client)`` both work. Tracking is **idempotent**: a client that is already tracked is
+    left alone, because wrapping twice would record every call twice and silently double-weight
+    the whole log. The second call is counted in ``stats()["already_tracked"]``. Nothing here
+    imports a vendor SDK: the wrapper looks for a method that takes questions and returns typed
+    answers.
     """
     if not enabled():
         return client
     for method_name in method_names:
         original = getattr(client, method_name, None)
-        if callable(original):
-            setattr(
-                client,
-                method_name,
-                _wrap(
-                    original,
-                    source_key=source_key,
-                    keys=keys,
-                    container=container,
-                    path=path,
-                    clock=clock,
-                ),
-            )
-            break
+        if not callable(original):
+            continue
+        if getattr(original, _TRACKED_ATTR, False):
+            _STATS["already_tracked"] += 1
+            return client
+        wrapper = _wrap(
+            original,
+            source_key=source_key,
+            keys=keys,
+            container=container,
+            path=path,
+            clock=clock,
+        )
+        setattr(wrapper, _TRACKED_ATTR, True)
+        setattr(client, method_name, wrapper)
+        break
     return client
 
 

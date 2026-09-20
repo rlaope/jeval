@@ -266,3 +266,27 @@ def test_the_stats_expose_what_was_dropped(tmp_path: Path) -> None:
 
     assert collect.stats()["written"] == 2
     assert collect.stats()["dropped"] == 0
+
+
+def test_tracking_twice_records_one_record_per_call(tmp_path: Path) -> None:
+    """Wrapping twice would double every record and silently double-weight the whole log."""
+    target = tmp_path / "records.jsonl"
+    once = collect.track(FakeClient(), path=target)
+    twice = collect.track(once, path=target)
+
+    assert twice is once
+    twice.system_one(state="payouts failing", questions={})
+
+    stored = read_records(target)
+    assert len(stored) == 3  # one per answer, not six
+    assert collect.stats()["already_tracked"] == 1
+
+
+def test_tracking_twice_under_another_method_name_is_counted(tmp_path: Path) -> None:
+    target = tmp_path / "records.jsonl"
+    client = collect.track(FakeClient(), path=target)
+
+    collect.track(client, path=target, method_names=("system_one", "systemOne", "systemone"))
+
+    assert collect.stats()["already_tracked"] == 1
+    assert not target.exists()  # and nothing was recorded by a second wrapper
