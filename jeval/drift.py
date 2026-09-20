@@ -1,0 +1,886 @@
+"""Drift detection: model-version and period comparison with CI exit codes.
+
+The question here is not "did the model change" — that is a deploy event. It is "did a measured
+decision boundary move when it did", and whether the movement is large enough to fail a build.
+
+A **slice** is the unit of that measurement: a group of gold-labeled decision records that share
+one ``model`` value, or, when grouping by period, one calendar period. Four rules are deliberate
+and everything below follows from them:
+
+1. **One edge set per comparison.** ``calibration.compute_calibration`` picks its bin edges from
+   the sample it is handed, so calling it once per slice would move the bins between slices and
+   part of any ECE difference would be a difference in binning rather than in the data. The edges
+   are therefore fixed once, on the pooled population of the comparison, and every slice is
+   measured over exactly that edge set.
+2. **Small slices are omitted, never reported as a finding.** A slice below ``min_slice``
+   gold-labeled records is dropped from the comparison and named in the view note. A movement
+   measured on twelve records is not evidence.
+3. **Gold labels only, and only what can be measured.** Silver labels are an agreement rate, not
+   accuracy, and ``score`` records live on a different scale, so neither enters a slice: ``n``
+   counts exactly the records an ECE can be computed from. A slice whose ``n`` is zero is kept
+   with a NaN ECE rather than dropped, because "this model has no measurable evidence" is itself
+   information.
+4. **Checks never guess.** A check with no number to compare — an automation rate that was never
+   computed because no cost matrix was applied — is skipped, not treated as a pass.
+
+The workflow is ``split_models``/``split_by_period`` for the population views, ``compare`` for the
+comparison, ``parse_fail_on`` for the CI threshold spec, ``run_checks`` for the verdict, and
+``format_ci_block`` for the text a CI job prints.
+"""
+
+from __future__ import annotations
+
+import math
+from collections.abc import Sequence
+from dataclasses import dataclass
+from datetime import date, datetime, timezone
+from typing import Literal
+
+import numpy as np
+
+from jeval import calibration
+from jeval.calibration import DEFAULT_N_BINS
+from jeval.report.model import DriftFailure, DriftSlice, DriftView, ModelChange
+from jeval.schema import DecisionRecord
+
+#: A slice needs at least this many measurable gold records to take part in a comparison.
+DEFAULT_MIN_SLICE = 30
+DEFAULT_ALPHA = 0.05
+DEFAULT_N_BOOT = 200
+DEFAULT_SEED = 0
+
+CHECK_ECE_INCREASE = "ece-increase"
+CHECK_AUTO_RATE_DROP = "auto-rate-drop"
+CHECK_ECE_ABOVE = "ece-above"
+
+#: The only keys ``--fail-on`` accepts.
+CHECK_KEYS: tuple[str, ...] = (CHECK_ECE_INCREASE, CHECK_AUTO_RATE_DROP, CHECK_ECE_ABOVE)
+
+#: Accepted period groupings: ISO week, calendar month.
+PERIOD_CODES: tuple[str, ...] = ("W", "M")
+
+PeriodCode = Literal["W", "M"]
+
+
+@dataclass(frozen=True)
+class DriftCheck:
+    """One ``--fail-on`` condition: a check key and the limit above which it fails."""
+
+    key: str
+    limit: float
+
+
+@dataclass(frozen=True)
+class _Unit:
+    """One baseline/current pair, which is what a check and a table row operate on."""
+
+    label: str
+    before: DriftSlice
+    after: DriftSlice
+
+
+def split_models(records: Sequence[DecisionRecord]) -> tuple[DriftSlice, ...]:
+    """One slice per model value, ordered by each model's first-seen timestamp.
+
+    This is the coarse view a report charts: each population that served, measured on its own.
+    Every slice is measured over one edge set pooled from the whole input, so two of these slices
+    can be compared directly. A model whose gold records cannot be measured (no labels, or only
+    ``score`` records) is kept with ``n=0`` and a NaN ECE; no intervals are computed here.
+    """
+    grouped = _group_by_model(records)
+    if not grouped:
+        return ()
+    edges = _shared_edges(records)
+    slices: list[DriftSlice] = []
+    for model in sorted(grouped, key=lambda name: (_first_seen(grouped[name]), name)):
+        measured, _ = _build_slice(
+            grouped[model],
+            label=model,
+            model=model,
+            edges=edges,
+            alpha=DEFAULT_ALPHA,
+            n_boot=0,
+            seed=DEFAULT_SEED,
+        )
+        slices.append(measured)
+    return tuple(slices)
+
+
+def split_by_period(
+    records: Sequence[DecisionRecord], *, period: PeriodCode = "W"
+) -> tuple[DriftSlice, ...]:
+    """One slice per calendar period, ordered by period start.
+
+    ``period='W'`` groups by ISO week (``2026-W38``, Monday-based and keyed on the ISO year), and
+    ``period='M'`` by calendar month (``2026-09``). A slice's ``model`` is the model serving at the
+    end of that period, which is what a timeline shows when a release lands mid-period. All slices
+    share one edge set pooled from the whole input.
+    """
+    groups = _period_groups(records, period)
+    if not groups:
+        return ()
+    edges = _shared_edges(records)
+    slices: list[DriftSlice] = []
+    for key, group in groups:
+        measured, _ = _build_slice(
+            group,
+            label=key,
+            model=_serving_model(group),
+            edges=edges,
+            alpha=DEFAULT_ALPHA,
+            n_boot=0,
+            seed=DEFAULT_SEED,
+        )
+        slices.append(measured)
+    return tuple(slices)
+
+
+def detect_model_changes(records: Sequence[DecisionRecord]) -> tuple[ModelChange, ...]:
+    """Record every point where the serving ``model`` changed.
+
+    Records are ordered by timestamp, read in UTC, and the input order breaks ties, so a log that
+    already arrives in order is reported as-is. A change is recorded at the first timestamp whose
+    model differs from the previous record's, and labelled ``previous -> new``. The first record
+    of a log is not a change: it is the only model that has served so far.
+    """
+    ordered = sorted(records, key=_stamp)
+    if not ordered:
+        return ()
+    changes: list[ModelChange] = []
+    previous = ordered[0].model
+    for record in ordered[1:]:
+        if record.model == previous:
+            continue
+        changes.append(
+            ModelChange(
+                model=record.model,
+                at=_stamp(record).isoformat(),
+                label=f"{previous} -> {record.model}",
+            )
+        )
+        previous = record.model
+    return tuple(changes)
+
+
+def compare(
+    records: Sequence[DecisionRecord],
+    *,
+    baseline: str | None = None,
+    current: str | None = None,
+    min_slice: int = DEFAULT_MIN_SLICE,
+    by_period: PeriodCode | None = None,
+    alpha: float = DEFAULT_ALPHA,
+    n_boot: int = DEFAULT_N_BOOT,
+    seed: int = DEFAULT_SEED,
+    n_bins: int = DEFAULT_N_BINS,
+    equal_width: bool = False,
+) -> DriftView:
+    """Compare two populations of the same decision: a model change, or a period split.
+
+    ``baseline`` and ``current`` select the compared populations — model values in a model
+    comparison, period labels such as ``2026-W38`` in a period comparison. With neither given, the
+    two most recent model versions by first-seen timestamp are used and the newest is ``current``;
+    ties break by model name so the choice is deterministic. When no model is newer than an
+    explicitly named ``baseline``, ``current`` falls back to that baseline and every movement is
+    zero.
+
+    Slices are emitted at the granularity the comparison needs. A model comparison gives every
+    compared question its own pair of slices — all baseline-model slices in question order, then
+    all current-model slices — so a movement can be attributed to a question rather than to a
+    change in the mix of questions. A period comparison gives one slice per included period in
+    start order.
+
+    ``min_slice``, ``n_bins`` and ``equal_width`` apply to the whole comparison: slices below
+    ``min_slice`` measurable gold records on either side of a change (or in a period) are omitted
+    and named in the resulting note, and one edge set built with the caller's binning is used for
+    every slice.
+
+    With fewer than two model values and no ``by_period``, the result is an empty
+    :class:`~jeval.report.model.DriftView` whose note says what is missing: drift needs two model
+    versions or a period split.
+    """
+    if min_slice < 0:
+        raise ValueError(f"min_slice must be >= 0, got {min_slice}")
+    changes = detect_model_changes(records)
+    if by_period is None:
+        return _compare_models(
+            records,
+            baseline=baseline,
+            current=current,
+            min_slice=min_slice,
+            alpha=alpha,
+            n_boot=n_boot,
+            seed=seed,
+            n_bins=n_bins,
+            equal_width=equal_width,
+            changes=changes,
+        )
+    return _compare_periods(
+        records,
+        baseline=baseline,
+        current=current,
+        period=by_period,
+        min_slice=min_slice,
+        alpha=alpha,
+        n_boot=n_boot,
+        seed=seed,
+        n_bins=n_bins,
+        equal_width=equal_width,
+        changes=changes,
+    )
+
+
+def parse_fail_on(specs: Sequence[str]) -> tuple[DriftCheck, ...]:
+    """Parse ``--fail-on`` specs into checks, e.g. ``'ece-increase=0.05'``.
+
+    An unknown key or a limit that is not a finite, non-negative number raises ``ValueError``
+    naming the offending spec: a typo in a CI gate must fail the build loudly, not silently
+    disable a check.
+    """
+    checks: list[DriftCheck] = []
+    allowed = ", ".join(CHECK_KEYS)
+    for spec in specs:
+        key, separator, raw = spec.partition("=")
+        key = key.strip()
+        raw = raw.strip()
+        if not separator:
+            raise ValueError(f"invalid drift check {spec!r}: expected KEY=LIMIT, one of {allowed}")
+        if key not in CHECK_KEYS:
+            raise ValueError(f"unknown drift check {spec!r}: expected one of {allowed}")
+        try:
+            limit = float(raw)
+        except ValueError:
+            raise ValueError(
+                f"invalid limit in drift check {spec!r}: {raw!r} is not a number"
+            ) from None
+        if not math.isfinite(limit) or limit < 0:
+            raise ValueError(
+                f"invalid limit in drift check {spec!r}: expected a finite number >= 0"
+            )
+        checks.append(DriftCheck(key=key, limit=limit))
+    return tuple(checks)
+
+
+def run_checks(view: DriftView, checks: Sequence[DriftCheck]) -> tuple[DriftFailure, ...]:
+    """Evaluate each check against the baseline and current side of every compared unit.
+
+    - ``ece-increase``: fails when the ECE rose by more than its limit; ``value`` is the rise.
+    - ``auto-rate-drop``: fails when the automation rate fell by more than its limit; ``value`` is
+      the drop. A unit without an automation rate — no cost matrix was applied to those slices —
+      is skipped, so a number nobody computed never becomes a silent pass.
+    - ``ece-above``: fails when the *current* slice's ECE is above its limit, which catches a
+      replacement model that is worse than the one it replaced even when the movement itself is
+      small.
+
+    A unit whose ECE is NaN cannot produce a numerical verdict and is skipped; ``compare`` already
+    names those in the view note. Failures come back in check order, then unit order, and each
+    detail starts with its unit's label so :func:`format_ci_block` can attribute it to a row.
+    """
+    units = _comparison_units(view)
+    failures: list[DriftFailure] = []
+    for check in checks:
+        if check.key == CHECK_ECE_INCREASE:
+            for unit in units:
+                rise = unit.after.ece - unit.before.ece
+                if not math.isfinite(rise) or rise <= check.limit:
+                    continue
+                failures.append(
+                    DriftFailure(
+                        check=check.key,
+                        detail=(
+                            f"{unit.label}: ECE {_ece(unit.before.ece)} -> "
+                            f"{_ece(unit.after.ece)} ({_delta(rise)}), limit "
+                            f"{check.limit:.3f}"
+                        ),
+                        value=rise,
+                        limit=check.limit,
+                    )
+                )
+        elif check.key == CHECK_AUTO_RATE_DROP:
+            for unit in units:
+                before_rate = unit.before.auto_rate
+                after_rate = unit.after.auto_rate
+                if before_rate is None or after_rate is None:
+                    continue
+                drop = before_rate - after_rate
+                if drop <= check.limit:
+                    continue
+                failures.append(
+                    DriftFailure(
+                        check=check.key,
+                        detail=(
+                            f"{unit.label}: auto-rate {before_rate:.0%} -> {after_rate:.0%} "
+                            f"({drop:.0%} drop), limit {check.limit:.0%}"
+                        ),
+                        value=drop,
+                        limit=check.limit,
+                    )
+                )
+        elif check.key == CHECK_ECE_ABOVE:
+            for measured in _current_slices(view):
+                if not math.isfinite(measured.ece) or measured.ece <= check.limit:
+                    continue
+                failures.append(
+                    DriftFailure(
+                        check=check.key,
+                        detail=(
+                            f"{measured.label}: current ECE {_ece(measured.ece)}, limit "
+                            f"{check.limit:.3f}"
+                        ),
+                        value=measured.ece,
+                        limit=check.limit,
+                    )
+                )
+        else:
+            allowed = ", ".join(CHECK_KEYS)
+            raise ValueError(f"unknown drift check {check.key!r}; expected one of {allowed}")
+    return tuple(failures)
+
+
+def format_ci_block(view: DriftView, failures: Sequence[DriftFailure]) -> str:
+    """The block a CI job prints, as plain column-aligned text.
+
+    No colour and no decoration, because this string is read in a CI log, pasted into a bug report
+    and diffed between runs. It is, in order: a header naming the change, an indented table with
+    the before/after ECE and the delta per compared unit and its PASS/FAIL verdict, the threshold
+    and automation-rate movement when the slices carry one, the view's note when there is one, and
+    the exit code the block implies.
+    """
+    if not view.baseline_label and not view.current_label:
+        return _with_exit(view.note or "no drift comparison available", failures)
+    header = f"model changed: {view.baseline_label} -> {view.current_label}"
+    when = _change_date(view)
+    if when:
+        header += f" ({when})"
+    lines = [header]
+    units = _comparison_units(view)
+    if units:
+        lines.extend(_table_lines(view, units, failures))
+    lines.extend(_threshold_lines(units))
+    if view.note:
+        lines.append(f"note: {view.note}")
+    return _with_exit("\n".join(lines), failures)
+
+
+def _compare_models(
+    records: Sequence[DecisionRecord],
+    *,
+    baseline: str | None,
+    current: str | None,
+    min_slice: int,
+    alpha: float,
+    n_boot: int,
+    seed: int,
+    n_bins: int,
+    equal_width: bool,
+    changes: tuple[ModelChange, ...],
+) -> DriftView:
+    """Model-version comparison: one slice per compared question per model."""
+    grouped = _group_by_model(records)
+    if len(grouped) < 2:
+        listed = ", ".join(sorted(grouped)) or "none"
+        return DriftView(
+            baseline_label="",
+            current_label="",
+            changes=changes,
+            note=(
+                "drift needs either two model versions or a period split: found "
+                f"{len(grouped)} model value(s) ({listed})."
+            ),
+        )
+
+    baseline_model, current_model = _select_models(grouped, baseline=baseline, current=current)
+    questions = sorted(
+        {record.question_key for record in grouped[baseline_model]}
+        | {record.question_key for record in grouped[current_model]}
+    )
+
+    included: list[tuple[str, list[DecisionRecord], list[DecisionRecord]]] = []
+    omitted: list[str] = []
+    for key in questions:
+        before = [record for record in grouped[baseline_model] if record.question_key == key]
+        after = [record for record in grouped[current_model] if record.question_key == key]
+        before_n = len(_participants(before))
+        after_n = len(_participants(after))
+        if before_n < min_slice or after_n < min_slice:
+            omitted.append(f"{key} ({before_n} vs {after_n})")
+            continue
+        included.append((key, before, after))
+
+    notes: list[str] = []
+    if omitted:
+        notes.append(
+            f"omitted {len(omitted)} question(s) with fewer than min_slice={min_slice} "
+            "gold-labeled records on either side: " + ", ".join(omitted) + "."
+        )
+    if not included:
+        notes.append(
+            "no question had enough gold-labeled records on both sides of the change to compare."
+        )
+        return DriftView(
+            baseline_label=baseline_model,
+            current_label=current_model,
+            changes=changes,
+            note=" ".join(notes),
+        )
+
+    pooled: list[DecisionRecord] = []
+    for _, before, after in included:
+        pooled.extend(before)
+        pooled.extend(after)
+    edges = _shared_edges(pooled, n_bins=n_bins, equal_width=equal_width, alpha=alpha)
+
+    before_slices: list[DriftSlice] = []
+    after_slices: list[DriftSlice] = []
+    interval_bits: list[str] = []
+    for key, before, after in included:
+        before_slice, before_interval = _build_slice(
+            before,
+            label=key,
+            model=baseline_model,
+            edges=edges,
+            alpha=alpha,
+            n_boot=n_boot,
+            seed=seed,
+        )
+        after_slice, after_interval = _build_slice(
+            after,
+            label=key,
+            model=current_model,
+            edges=edges,
+            alpha=alpha,
+            n_boot=n_boot,
+            seed=seed,
+        )
+        before_slices.append(before_slice)
+        after_slices.append(after_slice)
+        if math.isfinite(before_interval[0]) and math.isfinite(after_interval[0]):
+            interval_bits.append(
+                f"{key} {before_interval[0]:.3f}-{before_interval[1]:.3f} -> "
+                f"{after_interval[0]:.3f}-{after_interval[1]:.3f}"
+            )
+    if interval_bits:
+        notes.append("ECE 95% bootstrap intervals per question: " + "; ".join(interval_bits) + ".")
+
+    return DriftView(
+        baseline_label=baseline_model,
+        current_label=current_model,
+        slices=tuple([*before_slices, *after_slices]),
+        changes=changes,
+        note=" ".join(notes),
+    )
+
+
+def _compare_periods(
+    records: Sequence[DecisionRecord],
+    *,
+    baseline: str | None,
+    current: str | None,
+    period: PeriodCode,
+    min_slice: int,
+    alpha: float,
+    n_boot: int,
+    seed: int,
+    n_bins: int,
+    equal_width: bool,
+    changes: tuple[ModelChange, ...],
+) -> DriftView:
+    """Period comparison: one slice per included period, ordered by period start."""
+    groups = _period_groups(records, period)
+    if not groups:
+        return DriftView(
+            baseline_label="",
+            current_label="",
+            changes=changes,
+            note=f"no records fall into a {period!r} period, so there is nothing to compare.",
+        )
+
+    included: list[tuple[str, list[DecisionRecord]]] = []
+    omitted: list[str] = []
+    for key, group in groups:
+        count = len(_participants(group))
+        if count < min_slice:
+            omitted.append(f"{key} ({count})")
+            continue
+        included.append((key, group))
+
+    notes: list[str] = []
+    if omitted:
+        notes.append(
+            f"omitted {len(omitted)} period(s) with fewer than min_slice={min_slice} "
+            "gold-labeled records: " + ", ".join(omitted) + "."
+        )
+    if len(included) < 2:
+        notes.append(
+            f"period grouping by {period!r} produced fewer than two comparable periods; "
+            "drift needs at least two."
+        )
+        return DriftView(
+            baseline_label="",
+            current_label="",
+            changes=changes,
+            note=" ".join(notes),
+        )
+
+    labels = [key for key, _ in included]
+    for label in (baseline, current):
+        if label is not None and label not in labels:
+            raise ValueError(f"unknown period {label!r}; comparable periods: {', '.join(labels)}")
+    baseline_label = baseline if baseline is not None else labels[0]
+    current_label = current if current is not None else labels[-1]
+
+    pooled: list[DecisionRecord] = []
+    for _, group in included:
+        pooled.extend(group)
+    edges = _shared_edges(pooled, n_bins=n_bins, equal_width=equal_width, alpha=alpha)
+
+    slices: list[DriftSlice] = []
+    interval_bits: list[str] = []
+    for key, group in included:
+        measured, interval = _build_slice(
+            group,
+            label=key,
+            model=_serving_model(group),
+            edges=edges,
+            alpha=alpha,
+            n_boot=n_boot,
+            seed=seed,
+        )
+        slices.append(measured)
+        if math.isfinite(interval[0]):
+            interval_bits.append(f"{key} {interval[0]:.3f}-{interval[1]:.3f}")
+    if interval_bits:
+        notes.append("ECE 95% bootstrap intervals per period: " + "; ".join(interval_bits) + ".")
+
+    return DriftView(
+        baseline_label=baseline_label,
+        current_label=current_label,
+        slices=tuple(slices),
+        changes=changes,
+        note=" ".join(notes),
+    )
+
+
+def _select_models(
+    grouped: dict[str, list[DecisionRecord]], *, baseline: str | None, current: str | None
+) -> tuple[str, str]:
+    """Resolve the compared model values, defaulting to the two most recent by first-seen."""
+    order = sorted(grouped, key=lambda name: (_first_seen(grouped[name]), name))
+    for label in (baseline, current):
+        if label is not None and label not in grouped:
+            raise ValueError(f"unknown model {label!r}; known models: {', '.join(order)}")
+    current_model = current if current is not None else order[-1]
+    if baseline is not None:
+        return baseline, current_model
+    rank = {name: (_first_seen(grouped[name]), name) for name in order}
+    older = [name for name in order if rank[name] < rank[current_model]]
+    return (older[-1] if older else current_model), current_model
+
+
+def _group_by_model(records: Sequence[DecisionRecord]) -> dict[str, list[DecisionRecord]]:
+    grouped: dict[str, list[DecisionRecord]] = {}
+    for record in records:
+        grouped.setdefault(record.model, []).append(record)
+    return grouped
+
+
+def _period_groups(
+    records: Sequence[DecisionRecord], period: PeriodCode
+) -> list[tuple[str, list[DecisionRecord]]]:
+    """Records grouped by period key, ordered by period start."""
+    if period not in PERIOD_CODES:
+        raise ValueError(f"unknown period {period!r}; expected one of {', '.join(PERIOD_CODES)}")
+    grouped: dict[str, list[DecisionRecord]] = {}
+    starts: dict[str, date] = {}
+    for record in records:
+        key, start = _period_of(_stamp(record), period)
+        grouped.setdefault(key, []).append(record)
+        starts[key] = min(start, starts.get(key, start))
+    return [(key, grouped[key]) for key in sorted(grouped, key=lambda name: starts[name])]
+
+
+def _period_of(ts: datetime, period: PeriodCode) -> tuple[str, date]:
+    """Period key and its start date for a timestamp (ISO week or calendar month)."""
+    if period == "W":
+        iso = ts.isocalendar()
+        return f"{iso.year}-W{iso.week:02d}", date.fromisocalendar(iso.year, iso.week, 1)
+    return f"{ts.year}-{ts.month:02d}", date(ts.year, ts.month, 1)
+
+
+def _participants(records: Sequence[DecisionRecord]) -> list[DecisionRecord]:
+    """The records of a group that can take part in a binary calibration measurement.
+
+    Gold labels only: agreement with another model is not accuracy. And ``score`` records only:
+    they are excluded because they are measured on a different scale, exactly as they are in
+    ``jeval.evaluate``.
+    """
+    return [
+        record for record in records if record.is_gold and record.calibration_point() is not None
+    ]
+
+
+def _points(records: Sequence[DecisionRecord]) -> tuple[list[float], list[bool]]:
+    confidences: list[float] = []
+    correct: list[bool] = []
+    for record in records:
+        point = record.calibration_point()
+        if point is None:
+            continue
+        confidences.append(point[0])
+        correct.append(point[1])
+    return confidences, correct
+
+
+def _shared_edges(
+    records: Sequence[DecisionRecord],
+    *,
+    n_bins: int = DEFAULT_N_BINS,
+    equal_width: bool = False,
+    alpha: float = DEFAULT_ALPHA,
+) -> list[float]:
+    """The one edge set every slice in a comparison is measured over.
+
+    The edges come from ``calibration.compute_calibration`` run once on the pooled population of
+    the comparison — the same construction rule, the same automatic bin reduction, the caller's
+    binning — and are then reused for every slice. The bootstrap is not run here because it cannot
+    move the edges; the per-slice intervals are computed where they are reported.
+    """
+    confidences, correct = _points(records)
+    if not confidences:
+        return []
+    metrics = calibration.compute_calibration(
+        confidences,
+        correct,
+        n_bins=n_bins,
+        equal_width=equal_width,
+        alpha=alpha,
+        n_boot=0,
+    )
+    bins = metrics.bins
+    if not bins:
+        return []
+    return [bins[0].lo, *(calibration_bin.hi for calibration_bin in bins)]
+
+
+def _build_slice(
+    group: Sequence[DecisionRecord],
+    *,
+    label: str,
+    model: str,
+    edges: Sequence[float],
+    alpha: float,
+    n_boot: int,
+    seed: int,
+) -> tuple[DriftSlice, tuple[float, float]]:
+    """Measure one slice over the comparison's shared edges, with its bootstrap interval.
+
+    ``n`` counts the records the ECE is actually computed from, so a slice that looks large
+    because it is full of silver labels or ``score`` records cannot lie with its sample size.
+    ``start``/``end`` still describe the whole group, so the window reads as the span the slice
+    covers even when nothing in it can be measured.
+    """
+    measured = _participants(group)
+    confidences, correct = _points(measured)
+    n = len(confidences)
+    if n and len(edges) >= 2:
+        confidence_array = np.asarray(confidences, dtype=float)
+        correct_array = np.asarray(correct, dtype=bool)
+        bins = calibration.bins_from_edges(confidence_array, correct_array, list(edges), alpha)
+        ece = calibration.expected_calibration_error(bins, n)
+        interval = calibration.bootstrap_ece_ci(
+            confidence_array,
+            correct_array,
+            list(edges),
+            n_boot=n_boot,
+            alpha=alpha,
+            seed=seed,
+        )
+    else:
+        ece = float("nan")
+        interval = (float("nan"), float("nan"))
+    stamps = [_stamp(record) for record in group]
+    return (
+        DriftSlice(
+            label=label,
+            model=model,
+            start=min(stamps).isoformat() if stamps else "",
+            end=max(stamps).isoformat() if stamps else "",
+            n=n,
+            ece=ece,
+        ),
+        interval,
+    )
+
+
+def _stamp(record: DecisionRecord) -> datetime:
+    """A record's timestamp in UTC; a naive timestamp is read as UTC, as the schema implies."""
+    ts = record.ts
+    return ts.astimezone(timezone.utc) if ts.tzinfo is not None else ts.replace(tzinfo=timezone.utc)
+
+
+def _first_seen(group: Sequence[DecisionRecord]) -> datetime:
+    return min(_stamp(record) for record in group)
+
+
+def _serving_model(group: Sequence[DecisionRecord]) -> str:
+    """The model serving at the end of a period, which is what a timeline shows."""
+    return max(group, key=_stamp).model
+
+
+def _is_model_comparison(view: DriftView) -> bool:
+    """A model comparison labels its slices with model values; a period one does not."""
+    if not view.baseline_label or not view.current_label:
+        return False
+    models = {measured.model for measured in view.slices}
+    return view.baseline_label in models and view.current_label in models
+
+
+def _comparison_units(view: DriftView) -> tuple[_Unit, ...]:
+    """Pair the slices of a view into the units the checks and the table read.
+
+    A model comparison pairs a question at the baseline model with the same question at the
+    current model. A period comparison pairs consecutive periods across the selected range, so the
+    table reads as a trend. A unit's label is the label of its later slice, and every failure
+    detail starts with it — that is how the CI block attributes a FAIL to a row.
+    """
+    if _is_model_comparison(view):
+        after_by_label = {
+            measured.label: measured
+            for measured in view.slices
+            if measured.model == view.current_label
+        }
+        return tuple(
+            _Unit(label=measured.label, before=measured, after=after_by_label[measured.label])
+            for measured in view.slices
+            if measured.model == view.baseline_label and measured.label in after_by_label
+        )
+    labels = [measured.label for measured in view.slices]
+    if view.baseline_label not in labels or view.current_label not in labels:
+        return ()
+    start = labels.index(view.baseline_label)
+    end = labels.index(view.current_label)
+    window = view.slices[start : end + 1]
+    return tuple(
+        _Unit(label=window[index].label, before=window[index - 1], after=window[index])
+        for index in range(1, len(window))
+    )
+
+
+def _current_slices(view: DriftView) -> tuple[DriftSlice, ...]:
+    """The slices on the current side of the comparison, which ``ece-above`` is judged on."""
+    if _is_model_comparison(view):
+        return tuple(measured for measured in view.slices if measured.model == view.current_label)
+    return tuple(measured for measured in view.slices if measured.label == view.current_label)
+
+
+def _table_lines(
+    view: DriftView, units: Sequence[_Unit], failures: Sequence[DriftFailure]
+) -> list[str]:
+    """The indented before/after table, column-aligned on its widest cell."""
+    failed = _failed_labels(failures)
+    first_column = "question" if _is_model_comparison(view) else "period"
+    label_width = max(len(first_column), *(len(unit.label) for unit in units))
+    before_width = max(len("ECE before"), *(len(_ece(unit.before.ece)) for unit in units))
+    after_width = max(len("ECE after"), *(len(_ece(unit.after.ece)) for unit in units))
+    delta_width = max(
+        len("delta"), *(len(_delta(unit.after.ece - unit.before.ece)) for unit in units)
+    )
+    lines = [
+        "  "
+        + first_column.ljust(label_width)
+        + "  "
+        + "ECE before".rjust(before_width)
+        + "  "
+        + "ECE after".rjust(after_width)
+        + "  "
+        + "delta".rjust(delta_width)
+    ]
+    for unit in units:
+        delta = unit.after.ece - unit.before.ece
+        lines.append(
+            "  "
+            + unit.label.ljust(label_width)
+            + "  "
+            + _ece(unit.before.ece).rjust(before_width)
+            + "  "
+            + _ece(unit.after.ece).rjust(after_width)
+            + "  "
+            + _delta(delta).rjust(delta_width)
+            + "   "
+            + ("FAIL" if unit.label in failed else "ok")
+        )
+    return lines
+
+
+def _threshold_lines(units: Sequence[_Unit]) -> list[str]:
+    """Recommended-threshold movement, when the compared slices carry one.
+
+    Costs are the caller's: a slice has a threshold only if a cost matrix was applied to it
+    (``DriftSlice.threshold`` and ``DriftSlice.auto_rate``). When none was, the block says so
+    rather than printing a threshold nobody computed.
+    """
+    lines: list[str] = []
+    for unit in units:
+        before_threshold = unit.before.threshold
+        after_threshold = unit.after.threshold
+        before_rate = unit.before.auto_rate
+        after_rate = unit.after.auto_rate
+        if (
+            before_threshold is None
+            or after_threshold is None
+            or before_rate is None
+            or after_rate is None
+        ):
+            continue
+        lines.append(
+            f"recommended threshold ({unit.label}): {before_threshold:.2f} -> {after_threshold:.2f}"
+        )
+        lines.append(
+            f"  at the current {before_threshold:.2f}: "
+            f"auto-rate {before_rate:.0%} -> {after_rate:.0%}"
+        )
+    if not lines:
+        lines.append(
+            "recommended threshold: not available (no cost matrix was applied to this comparison)"
+        )
+    return lines
+
+
+def _failed_labels(failures: Sequence[DriftFailure]) -> frozenset[str]:
+    """The unit labels the given failures belong to; a detail always starts with its label."""
+    labels = (failure.detail.partition(":")[0].strip() for failure in failures)
+    return frozenset(label for label in labels if label)
+
+
+def _change_date(view: DriftView) -> str:
+    """Short date of the change into the current population, for the block's first line."""
+    for change in reversed(view.changes):
+        if change.model == view.current_label:
+            return _short_date(change.at)
+    units = _comparison_units(view)
+    return _short_date(units[-1].after.end) if units else ""
+
+
+def _short_date(value: str) -> str:
+    """``Sep 18`` for an ISO timestamp; the input itself when it cannot be read as one."""
+    try:
+        stamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return value
+    if stamp.tzinfo is not None:
+        stamp = stamp.astimezone(timezone.utc)
+    return f"{stamp:%b %d}"
+
+
+def _ece(value: float) -> str:
+    """Three decimals, or ``nan`` — never a fake zero for a slice with no measurable records."""
+    return f"{value:.3f}"
+
+
+def _delta(value: float) -> str:
+    return f"{value:+.3f}" if math.isfinite(value) else "n/a"
+
+
+def _with_exit(block: str, failures: Sequence[DriftFailure]) -> str:
+    """Close the block with the exit code it implies."""
+    return block + ("\nexit 1" if failures else "\nexit 0")
