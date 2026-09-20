@@ -18,8 +18,10 @@ from __future__ import annotations
 import re
 from dataclasses import fields
 from pathlib import Path
+from typing import Any
 
 import pytest
+from typer import main as typer_main
 from typer.testing import CliRunner
 
 from jeval.cli import app
@@ -65,11 +67,43 @@ def _registered_commands() -> set[str]:
     return names
 
 
+def _ansi_free(text: str) -> str:
+    """Drop ANSI styling.
+
+    Under CI (``GITHUB_ACTIONS=true``) rich forces colour on, and its highlighter splits an option
+    name into separately styled spans, so the literal text ``--out-dir`` is not contiguous in the
+    byte stream. Anything that searches rendered help must strip styling first.
+    """
+    return re.sub(r"\x1b\[[0-9;]*m", "", text)
+
+
+def _declared_flags(command: str | None = None) -> set[str]:
+    """The options a command really declares.
+
+    Read from Click's command objects rather than from rendered help: help text is a rendering
+    (colour, wrapping, width) and the rendering is not the contract.
+    """
+    group = typer_main.get_command(app)
+    target: Any = group if command is None else group.commands[command]
+    flags: set[str] = set()
+    for param in target.params:
+        for opt in (*getattr(param, "opts", ()), *getattr(param, "secondary_opts", ())):
+            if opt.startswith("--"):
+                flags.add(opt)
+    flags.add("--help")  # Click always provides it, and never lists it as a parameter
+    return flags
+
+
 def _help_flags(command: str | None = None) -> set[str]:
+    """Declared flags, with `--help` checked as a live smoke test of the help path."""
     args = [command, "--help"] if command else ["--help"]
     result = runner.invoke(app, args)
     assert result.exit_code == 0, f"`jeval {' '.join(args)}` failed: {result.stdout}"
-    return set(re.findall(r"--[a-z][a-z-]*", result.stdout))
+    rendered = _ansi_free(result.stdout)
+    assert re.search(r"(Usage|Options)", rendered), (
+        f"`jeval {' '.join(args)}` rendered no usage text; stripped output was {rendered[:200]!r}"
+    )
+    return _declared_flags(command)
 
 
 def _invocations() -> list[tuple[str, set[str]]]:
