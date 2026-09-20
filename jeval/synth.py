@@ -44,6 +44,7 @@ class SynthSpec:
     classes: tuple[str, ...] = DEFAULT_CLASSES
     accuracy_target: float = 0.95
     constant_confidence: float = 0.99
+    score_bias: float = 0.0  # systematic optimism for score questions, in answer units
     label_fraction: float = 1.0
     silver_fraction: float = 0.0
     model: str = "jev-1.13.0"
@@ -127,6 +128,30 @@ def generate(spec: SynthSpec) -> list[DecisionRecord]:
                     confidence=abs(p_yes - 0.5) * 2,
                     probabilities={"yes": p_yes, "no": 1.0 - p_yes},
                     label=label,
+                    label_source=label_source,  # type: ignore[arg-type]
+                    segment=segment,
+                    state_tokens=state_tokens,
+                )
+            )
+            continue
+
+        if spec.question_type == "score":
+            # A numeric answer fails by being *off*, not by naming the wrong class, so the
+            # injected miscalibration here is a systematic offset plus small noise. Rank
+            # correlation survives an offset; MAE and the gap column do not.
+            actual = float(rng.uniform(0.05, 0.95))
+            offset = spec.score_bias if spec.mode != "calibrated" else 0.0
+            noise = float(rng.normal(0.0, 0.04))
+            predicted = min(1.0, max(0.0, actual + offset + noise))
+            records.append(
+                DecisionRecord(
+                    ts=ts,
+                    model=spec.model,
+                    question_key=spec.question_key,
+                    question_type="score",
+                    prediction=f"{predicted:.3f}",
+                    confidence=predicted,
+                    label=f"{actual:.3f}" if label_known else None,
                     label_source=label_source,  # type: ignore[arg-type]
                     segment=segment,
                     state_tokens=state_tokens,
@@ -231,9 +256,10 @@ def demo_dataset(seed: int = 11, scale: float = 1.0) -> DemoDataset:
         ),
         SynthSpec(
             n=size(220),
-            mode="constant_high",
+            mode="inflated",
             question_key="satisfaction",
             question_type="score",
+            score_bias=0.18,  # answers run 0.18 optimistic, on purpose
             seed=seed + 3,
             label_fraction=0.8,
             model="jev-1.13.0",
@@ -246,6 +272,7 @@ def demo_dataset(seed: int = 11, scale: float = 1.0) -> DemoDataset:
         f"{len(records)} synthetic decisions across 4 questions "
         "(2 choice, 1 noul, 1 score), generated with seed "
         f"{seed}. Two of the answered questions are miscalibrated on purpose, so the report "
-        "has something real to find."
+        "has something real to find, and one numeric score question whose answers run 0.18 "
+        "optimistic on purpose."
     )
     return DemoDataset(records=records, description=description)

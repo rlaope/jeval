@@ -105,3 +105,48 @@ def test_unlabeled_and_silver_fractions_are_respected() -> None:
 def test_unknown_mode_is_rejected() -> None:
     with pytest.raises(ValueError, match="unknown mode"):
         generate(SynthSpec(n=10, mode="nonsense", seed=1))
+
+
+# --- numeric score questions -----------------------------------------------------------------
+# A score question fails by being *off*, not by naming the wrong class. The generator must be able
+# to inject that known failure, or the score section has nothing true to be tested against.
+
+
+def test_a_score_question_produces_numeric_predictions_and_labels() -> None:
+    from jeval.score import measure_score
+
+    records = generate(
+        SynthSpec(
+            n=400, mode="calibrated", question_key="satisfaction", question_type="score", seed=5
+        )
+    )
+    metrics = measure_score(records)
+
+    assert metrics.n == 400  # every record is a usable numeric pair, none unparseable
+    assert metrics.n_unparseable == 0
+    assert metrics.mae < 0.08  # calibrated: small noise, no offset
+    assert abs(metrics.bias) < 0.02
+
+
+def test_an_injected_score_bias_is_recovered_in_the_direction_it_was_injected() -> None:
+    from jeval.score import measure_score
+
+    records = generate(
+        SynthSpec(
+            n=800,
+            mode="inflated",
+            question_key="satisfaction",
+            question_type="score",
+            score_bias=0.18,
+            seed=6,
+        )
+    )
+    metrics = measure_score(records)
+
+    # The whole point of measuring score questions this way: an offset barely touches rank
+    # agreement and lands squarely in MAE and bias.
+    assert metrics.spearman_rho > 0.95
+    assert abs(metrics.mae - 0.18) < 0.03
+    assert metrics.bias > 0.15
+    assert metrics.levels  # the level view is populated, not empty
+    assert sum(level.n for level in metrics.levels) == metrics.n
