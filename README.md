@@ -1,7 +1,7 @@
 # jeval
 
-**Does your Jev's 0.9 mean 90%? jeval measures it, and sets the human hand-off line from what a
-mistake costs.**
+**jeval measures what your Jev classifier's confidence is really worth, and sets the human
+hand-off line from what a mistake costs.**
 
 Your classifier answers with a label and a confidence. jeval answers the two questions that
 follow: *when it says 0.9, how often is it actually right?* and *given what a mistake costs,
@@ -16,19 +16,37 @@ tool sits above all of them.
 
 ## What the number actually means
 
-A confidence is a claim. Here is the shape of the report — illustrative numbers, so you can
-see what the output looks like before installing anything:
+A confidence is a claim. Here is the curve's own table, five of its ten rows copied out of the
+report in [`examples/report-example.html`](examples/report-example.html) — a real generated
+report, over synthetic data, committed so you can check every claim in this README against the
+artifact itself:
 
 ```
-confidence   actual accuracy   n
-0.5-0.6          48%          120
-0.7-0.8          71%          298
-0.8-0.9          77%          354   <-- you were treating this as "80%+"
-0.9-1.0          93%          395
+Confidence bin      n   Stated   Observed   Wilson 95%      Gap
+0.61-0.70          27     66%       56%     [37%, 72%]   -0.104
+0.74-0.77          27     76%       74%     [55%, 87%]   -0.016
+0.82-0.84          26     83%       77%     [58%, 89%]   -0.064
+0.90-0.94          27     92%       85%     [68%, 94%]   -0.070
+0.97-1.00          27     98%      100%     [88%, 100%]  +0.017
 ```
 
-Nothing here is a screenshot, because a table is more honest and easier to check. The claim
-"0.8-0.9 means 80%+" was wrong by three points in the band where most of your volume sits.
+Read the third row: the model said 83% and was right 77% of the time, and the interval around
+that number spans 58% to 89% — which is what a 26-record bin can actually support.
+
+That report's own verdict, for the threshold the demo treats as deployed:
+
+> **Your threshold is too low.** Band 0.03-0.45 measures 69.4% accuracy on 72 decisions (of 713 labels); the threshold belongs at 0.97, above the 0.60 in use.
+
+| | now | recommended | change |
+| --- | --- | --- | --- |
+| confidence threshold | 0.60 | 0.97 | +0.37 |
+| auto rate | 100% | 55% | -45.2 pt |
+| accuracy (auto) | 84% | 96% | +11.5 pt |
+| cost per case | KRW 7,936.51 | KRW 2,095.24 | -73.6% |
+| monthly cost | KRW 158,730,158.73 | KRW 41,904,761.90 | -73.6% |
+
+No screenshot, because a table is easier to check — and no invented numbers, because the artifact
+is right there in the repository.
 
 ## You could write this yourself with 30 lines of pandas
 
@@ -92,6 +110,19 @@ $ echo $?
 That is a captured run, not a mock-up: 1,800 synthetic decisions where the newer model version
 is deliberately overconfident. Wire the same command into CI and a model swap cannot silently
 degrade a production decision boundary.
+
+## Open the real thing
+
+The report this README quotes is committed: open
+[`examples/report-example.html`](examples/report-example.html) in a browser (one 246 KB file, no
+network, no server), or rebuild it byte-for-byte with:
+
+```sh
+uv run jeval demo --out-dir examples/report-example --seed 11 --scale 0.5
+```
+
+Synthetic data and synthetic costs, seeded, so the artifact is reproducible rather than a
+one-off screenshot anyone could have made up.
 
 ## Try it in five minutes
 
