@@ -1,0 +1,51 @@
+name: Bug report
+description: Report a defect in jeval
+title: "bug: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. A minimal reproduction with synthetic data is worth more than a
+        long description, especially for anything involving the statistics.
+  - type: input
+    id: version
+    attributes:
+      label: jeval version
+      description: Output of `jeval --version`, or the commit you are running.
+      placeholder: "0.1.0"
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: The observed behavior, including the exact numbers if it is a metrics issue.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected instead
+      description: If you can, include the value you computed by hand or with another tool.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: |
+        The command you ran, plus a small synthetic JSONL snippet if the input matters.
+        Redact anything real: do not paste production decision logs.
+      render: shell
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before opening
+      options:
+        - label: I searched existing issues for this problem.
+          required: true
+        - label: This report contains no production data, secrets, or customer text.
+          required: true

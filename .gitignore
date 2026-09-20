@@ -1,0 +1,55 @@
+# --- Agent harness & scratch (never commit) ---
+.omo/
+.omc/
+.omh/
+omo.*
+omc.*
+*.omo
+*.omc
+.agent/
+.agents/
+.scratch/
+scratch/
+.plan/
+.notes/
+*.local.md
+TODO.local.md
+.claude/settings.local.json
+
+# --- jeval runtime data (user data, never commit) ---
+.jeval/
+*.jsonl
+# Small synthetic samples are the one deliberate exception.
+!examples/*.jsonl
+report.html
+demo-report.html
+thresholds.yaml
+costs.yaml
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+dist/
+build/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# --- Editors / OS ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+
+# --- Secrets ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key

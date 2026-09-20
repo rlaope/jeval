@@ -1,0 +1,40 @@
+name: Feature request
+description: Suggest a capability for jeval
+title: "feat: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        jeval deliberately stays small. Before writing, check the non-goals in `CLAUDE.md`:
+        gateways, routers, provider adapters, dashboards, servers, accounts, and databases are
+        out of scope by design.
+  - type: textarea
+    id: problem
+    attributes:
+      label: The operational problem
+      description: What can you not decide or detect today? Describe the situation, not the API.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you would like jeval to do
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you do instead today
+      description: Including the notebook, spreadsheet, or script you currently use.
+    validations:
+      required: true
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope check
+      options:
+        - label: This does not require a server, gateway, database, or provider-specific behavior.
+          required: true
+        - label: This keeps jeval provider-neutral and its artifacts in English.
+          required: true
