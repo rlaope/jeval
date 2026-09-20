@@ -435,8 +435,10 @@ def test_sweep_by_segment_rejects_an_unusable_segment_key() -> None:
 
 
 def test_sweep_by_segment_rejects_unusable_parameters() -> None:
-    with pytest.raises(ValueError, match="min_records must be >= 1"):
-        sweep_by_segment(ACTION, two_segment_log(), segment_key="lang", min_records=0)
+    # A sub-floor min_records is raised to the module floor, which is what the docstring promises
+    # ("never fewer than MIN_GOLD_RECORDS, whatever the caller asks"); it used to raise instead.
+    clamped = sweep_by_segment(ACTION, two_segment_log(), segment_key="lang", min_records=0)
+    assert clamped == sweep_by_segment(ACTION, two_segment_log(), segment_key="lang", min_records=1)
     with pytest.raises(ValueError, match="steps must be >= 2"):
         sweep_by_segment(ACTION, two_segment_log(), segment_key="lang", steps=1)
     with pytest.raises(ValueError, match="alpha must be in"):

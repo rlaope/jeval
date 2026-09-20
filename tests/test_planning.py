@@ -69,7 +69,7 @@ def test_plan_measures_every_question_and_projects_only_where_it_can() -> None:
     assert big.ci_width > 0.0
     assert big.labels_for_target is not None
     assert big.reason == ""
-    assert "sqrt(n)" in big.assumption
+    assert "n**a" in big.assumption
 
     small = _plan(plans, "question", "is_urgent", "noul")
     assert small.n_now == 120

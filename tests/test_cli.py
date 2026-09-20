@@ -93,7 +93,8 @@ def test_ingest_then_report_round_trip(tmp_path: Path) -> None:
 def test_report_without_records_fails_with_a_pointer(tmp_path: Path) -> None:
     result = runner.invoke(app, ["report", "--root", str(tmp_path)])
     assert result.exit_code == 1
-    assert "jeval ingest" in result.stdout
+    # The pointer is an error, so every command emits it on stderr through one shared loader.
+    assert "jeval ingest" in result.stdout + getattr(result, "stderr", "")
 
 
 def test_ingest_reports_unlabeled_records_and_the_free_label_hint(tmp_path: Path) -> None:

@@ -128,7 +128,8 @@ def test_a_line_the_preset_cannot_read_is_counted_with_the_location_searched(
 
     assert report.n_records == 2
     assert report.n_skipped == 1
-    assert "no response object found" in report.errors[0]
+    # One message per cause, in the terms the preset looks in.
+    assert "no response object at 'response'" in report.errors[0]
     assert "'answers'" in report.errors[0]
 
 

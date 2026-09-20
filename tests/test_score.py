@@ -121,10 +121,10 @@ def test_a_constant_label_also_leaves_rho_undefined() -> None:
     assert metrics.mae == pytest.approx(2.0)
 
 
-def test_fewer_than_two_usable_pairs_returns_nan_with_n_recorded() -> None:
+def test_fewer_than_three_usable_pairs_returns_nan_with_n_recorded() -> None:
     metrics = measure_score(records_from([(3.0, 4.0)]))
 
-    assert MIN_USABLE_PAIRS == 2
+    assert MIN_USABLE_PAIRS == 3  # two pairs always give rho = +/-1, which is arithmetic
     assert metrics.n == 1
     assert metrics.levels == ()
     assert metrics.n_records == 1

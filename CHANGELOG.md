@@ -40,6 +40,62 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `questions_field` accepts a container keyed by question name and a dotted path, which is the shape
   a decision API returns (`{"response": {"answers": {...}}}`) rather than a list of questions.
 
+### Fixed — second pass over the remaining QA findings
+
+Observability and degenerate inputs:
+
+- A token count that arrives as a string (`"input_tokens": "312"`) no longer vanishes: numeric
+  strings are accepted, and a value that is not a count is counted as dropped.
+- `record()` refuses a negative latency or cost and a boolean confidence instead of storing them,
+  and a sink that is not a regular file (`/dev/null`) is no longer counted as a written record.
+- A call that raises is counted as an attempt: the counter moved to the wrapper, before the call
+  it wraps can raise, so `stats()` can tell "raised" from "never called".
+- A second `track()` with a path or key is counted in `retrack_ignored`, because the first install
+  wins and a silently dropped path looks like a log that went missing.
+- Each preset skip cause now has its own message; one sentence previously told six different
+  problems that the response object was missing, which was false for five of them.
+- Harvest output reports label rows that carried no join key, and no longer claims the records
+  file was rewritten when nothing was applied.
+
+Degenerate inputs and honest defaults:
+
+- Every distinct preset skip reason is reported (missing response, missing container, non-object
+  container, empty container, unusable answers).
+- `--by` on an axis the log does not carry is named instead of rendering a segment called
+  `<axis> = unknown`, which invented a breakdown that was never measured. Duplicate axes are
+  deduplicated.
+- A blank `--currency` means USD rather than a leading space before every amount.
+
+Engine edges:
+
+- The label projection now fits the scaling **exponent** as well as the constant, from the observed
+  interval width at n, n/2 and n/4, and reports the worst deviation of that fit. A fixed `a = 0.5`
+  was optimistic: measured k drifted 1.32 -> 1.52 between n=200 and n=3200, so projections
+  under-counted the labels a target needs.
+- A flat cost curve (every threshold costs the same) reports no interval instead of `[1.0, 1.0]`,
+  and the CLI says the sweep cannot recommend a threshold instead of quoting a tie-break as a
+  finding. A narrow-but-real interval is left alone: every resample agreeing is stability, not a
+  claim of exactness.
+- `sweep_by_segment(min_records=0)` clamps to the module floor as its docstring promises, instead of
+  raising.
+- Two score pairs are no longer a measurement: a rank correlation from two points is always ±1.
+
+Report and CLI:
+
+- Every string in the report escapes through one boundary that also replaces invisible direction
+  controls with a visible marker, so a label cannot reverse the text a reader sees.
+- The report prints when it was generated; it printed an empty timestamp field.
+- `--monthly -5` and `--current 1.5` are refused with the reason instead of rendering negative costs
+  and quoting an impossible threshold as the deployed one.
+- The segment table uses the same money format as the impact table.
+- Dead markup is gone: unused nav CSS, an unused payload builder, and the heatmap moved inside its
+  figure.
+- `jeval label` on a project with no records says to ingest first instead of claiming every record
+  already has a label; every command now loads records through one helper, so a missing records file
+  is one readable line rather than an uncaught `FileNotFoundError`.
+- `jeval init` over a file named `.jeval` explains the conflict instead of raising
+  `FileExistsError`.
+
 ### Fixed
 Four adversarial QA passes over the whole tool found and closed the following. Release-blocking
 first.
