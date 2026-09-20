@@ -1,0 +1,21 @@
+# Ingest map for examples/sample-decisions.jsonl (synthetic data).
+#
+# Each row carries two questions under `questions`; every one of them becomes its own
+# decision record. The row-level fields below are shared by both records.
+version: 1
+
+field_map:
+  model: model
+  segment: context
+  state_tokens: state_tokens
+  ts: ts
+
+questions_field: questions
+
+# Labels for this sample already live inside each question payload. In a real log this is
+# where the free-label harvest goes: point `field` at the human answer that already exists
+# in your own records, and `join_on` at the key that ties it back to the request.
+label_from: {}
+  # field: resolution.final_department
+  # source: human_override
+  # join_on: ticket_id
