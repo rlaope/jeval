@@ -182,6 +182,7 @@ def ingest_preset_files(
     Rows that carry no recognizable response are skipped and counted with the location the preset
     looked in, rather than being forced into a record that would measure the wrong thing.
     """
+    from jeval import presets as preset_module
     from jeval.presets import rows_to_payloads
 
     report = IngestReport(out_path=Path(out_path))
@@ -202,9 +203,8 @@ def ingest_preset_files(
                 report.n_skipped += 1
                 if len(report.errors) < 10:
                     report.errors.append(
-                        f"{Path(source).name} row {report.n_rows}: no response object found "
-                        f"(looked for {preset.response_field!r} with answers under "
-                        f"{preset.container!r})"
+                        f"{Path(source).name} row {report.n_rows}: "
+                        f"{preset_module.skip_reason(preset, row)}"
                     )
                 continue
             for payload in payloads:

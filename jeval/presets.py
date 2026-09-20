@@ -46,6 +46,7 @@ class IngestPreset:
         if self.response_field:
             candidates.append(self.response_field)
         candidates.extend(self.nesting)
+        fallback: Mapping[str, Any] | None = None
         for key in candidates:
             candidate: Any = row
             for part in key.split("."):
@@ -53,9 +54,15 @@ class IngestPreset:
                     candidate = None
                     break
                 candidate = candidate[part]
-            if isinstance(candidate, Mapping) and self.container in candidate:
+            if not isinstance(candidate, Mapping):
+                continue
+            if self.container in candidate:
                 return candidate
-        return None
+            if fallback is None and key:
+                # Kept so a response that exists but lacks the answers container can be reported
+                # as exactly that, rather than as a missing response.
+                fallback = candidate
+        return fallback
 
 
 JEV_NATIVE = IngestPreset(
@@ -116,6 +123,31 @@ def rows_to_payloads(
         source_key=source_key,
         keys=dict(keys) if keys is not None else dict(preset.keys),
         container=preset.container,
+    )
+
+
+def skip_reason(preset: IngestPreset, row: Mapping[str, Any]) -> str:
+    """Why a log line produced nothing, in the terms this preset looks in.
+
+    One message for six causes told the user the response was missing even when it was present and
+    only its container had the wrong shape.
+    """
+    response = preset.response_of(row)
+    if response is None:
+        return (
+            f"no response object at {preset.response_field!r} with answers under "
+            f"{preset.container!r}"
+        )
+    container = response.get(preset.container)
+    if container is None:
+        return f"response has no {preset.container!r}"
+    if not isinstance(container, Mapping):
+        return f"{preset.container!r} is a {type(container).__name__}, not an object of answers"
+    if not container:
+        return f"{preset.container!r} is empty"
+    return (
+        f"every answer under {preset.container!r} was unusable: no recognizable type, answer or "
+        "probability"
     )
 
 

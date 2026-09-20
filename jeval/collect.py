@@ -20,6 +20,7 @@ from __future__ import annotations
 import functools
 import inspect
 import json
+import math
 import os
 from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime, timezone
@@ -46,6 +47,9 @@ _STATS: dict[str, int] = {
     "already_tracked": 0,
     "install_failed": 0,
     "unknown_flag_value": 0,
+    "retrack_ignored": 0,
+    "sink_not_a_file": 0,
+    "invalid_value": 0,
 }
 
 
@@ -99,6 +103,30 @@ def enabled() -> bool:
     return os.environ.get(ENV_FLAG, "").strip().lower() not in _OFF
 
 
+def _as_count(value: Any) -> int | None:
+    """A token count, whether the API sent a number or a numeric string."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if value >= 0 else None
+    if isinstance(value, str) and value.strip().isdigit():
+        return int(value.strip())
+    return None
+
+
+def _as_finite(value: Any, *, minimum: float | None = None) -> float | None:
+    """A finite number, refused when it is below ``minimum``."""
+    if isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(number) or (minimum is not None and number < minimum):
+        return None
+    return number
+
+
 def _now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -133,19 +161,30 @@ def record(
     }
     if question_type:
         payload["question_type"] = question_type
+    # Every number a caller can hand in is checked here: a negative latency, a boolean confidence
+    # or a NaN cost would otherwise corrupt every aggregate built on it.
     for name, value in (
         ("confidence", confidence),
-        ("probabilities", dict(probabilities) if probabilities else None),
-        ("source_key", source_key),
-        ("segment", dict(segment) if segment else None),
         ("state_tokens", state_tokens),
         ("latency_ms", latency_ms),
         ("cost_usd", cost_usd),
+    ):
+        if value is None:
+            continue
+        number = _as_finite(value, minimum=0.0)
+        if number is None:
+            _STATS["invalid_value"] += 1
+            return False
+        payload[name] = int(number) if name == "state_tokens" else number
+    for name, raw in (
+        ("probabilities", dict(probabilities) if probabilities else None),
+        ("source_key", source_key),
+        ("segment", dict(segment) if segment else None),
         ("label", label),
         ("label_source", label_source),
     ):
-        if value is not None:
-            payload[name] = value
+        if raw is not None:
+            payload[name] = raw
     try:
         built = normalize_record(payload)
     except Exception:
@@ -179,6 +218,11 @@ def _append(record: DecisionRecord, destination: Path) -> bool:
             handle.write(record.model_dump_json() + "\n")
     except Exception:
         _STATS["dropped"] += 1
+        return False
+    if not destination.is_file():
+        # /dev/null keeps nothing: counting those bytes as written would hide a log that never
+        # existed.
+        _STATS["sink_not_a_file"] += 1
         return False
     _STATS["written"] += 1
     return True
@@ -221,7 +265,10 @@ def answer_payloads(
     payloads: list[dict[str, Any]] = []
     for question_key, raw in answers.items():
         answer = dict(raw) if isinstance(raw, Mapping) else {}
-        question_type = str(answer.get(type_key, "choice")).strip().lower()
+        raw_type = answer.get(type_key)
+        # A provider that omits the type asks the default question shape; str(None) used to reach
+        # the error message as an answer type called "none".
+        question_type = "choice" if raw_type is None else str(raw_type).strip().lower()
         probabilities = answer.get(probability_key)
         common: dict[str, Any] = {
             "question_key": str(question_key),
@@ -238,8 +285,9 @@ def answer_payloads(
             common["latency_ms"] = latency_ms
         if isinstance(usage, Mapping):
             tokens = usage.get("input_tokens") or usage.get("prompt_tokens")
-            if isinstance(tokens, int):
-                common["state_tokens"] = tokens
+            numeric = _as_count(tokens)
+            if numeric is not None:
+                common["state_tokens"] = numeric
         if isinstance(probabilities, Mapping) and probabilities:
             common["probabilities"] = dict(probabilities)
         for schema_name, default_key in (("label", "label"), ("label_source", "label_source")):
@@ -334,6 +382,10 @@ def track(
                 continue
             if getattr(original, _TRACKED_ATTR, False) is True:
                 _STATS["already_tracked"] += 1
+                if path is not None or source_key is not None or keys is not None:
+                    # The first install wins and this configuration is dropped: counted, because a
+                    # silently ignored path looks like a log that went missing.
+                    _STATS["retrack_ignored"] += 1
                 return client
             wrapper = _wrap(
                 original,
@@ -372,6 +424,7 @@ def _wrap(
 
         @functools.wraps(original)
         async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
+            _STATS["calls"] += 1  # counted here, so a call that raises is still an attempt
             started = clock()
             response = await original(*args, **kwargs)
             _capture(response, args, kwargs, source_key, keys, container, path, started, clock)
@@ -381,6 +434,7 @@ def _wrap(
 
     @functools.wraps(original)
     def wrapper(*args: Any, **kwargs: Any) -> Any:
+        _STATS["calls"] += 1  # counted here, so a call that raises is still an attempt
         started = clock()
         response = original(*args, **kwargs)
         _capture(response, args, kwargs, source_key, keys, container, path, started, clock)
@@ -401,7 +455,7 @@ def _capture(
     clock: Callable[[], datetime],
 ) -> None:
     """Record one call's answers. Every failure mode is counted, none is raised."""
-    _STATS["calls"] += 1
+    # The attempt itself is counted by the wrapper, before the call it wraps can raise.
     try:
         if hasattr(response, "model_dump"):
             response = response.model_dump()
