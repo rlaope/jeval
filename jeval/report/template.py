@@ -73,11 +73,11 @@ def render_document(
 
     segment_metrics = dict(segment_metrics or {})
     thresholds = list(model.thresholds)
-    current_thresholds = {
-        result.action: result.point_at(result.threshold).threshold  # type: ignore[union-attr]
-        for result in thresholds
-        if result.curve
-    }
+    # "now" means what is deployed, never the recommendation: marking the recommended threshold
+    # as the current one would show the gap as zero and quietly flatter the report.
+    current_thresholds: dict[str, float] = {}
+    if thresholds and model.impact is not None and model.impact.current_threshold:
+        current_thresholds[thresholds[0].action] = model.impact.current_threshold
     summary = markdown_summary(model)
     payload = dumps(
         {

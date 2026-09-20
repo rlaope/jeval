@@ -66,6 +66,10 @@ def render_cost_curve(
 
     if result.flat_region is not None:
         flat_lo, flat_hi = result.flat_region
+        # Keep the label inside the plot: a flat region near either edge would otherwise push its
+        # caption past the axis, where it collides with the marker or gets clipped.
+        centre = (x(flat_lo) + x(flat_hi)) / 2.0
+        caption_x = min(max(centre, LEFT + 105), width - RIGHT - 105)
         parts.append(
             S.shaded_region(
                 x(flat_lo),
@@ -74,8 +78,8 @@ def render_cost_curve(
                 y1=height - BOTTOM,
                 fill="#f4f4f4",
                 label="flat region — anything here is fine",
-                label_x=(x(flat_lo) + x(flat_hi)) / 2.0,
-                label_y=TOP + 14,
+                label_x=caption_x,
+                label_y=TOP + 26,
             )
         )
 

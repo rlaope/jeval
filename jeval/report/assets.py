@@ -288,6 +288,36 @@ footer {
   .stats { grid-template-columns: repeat(3, 1fr); gap: 2mm; }
   .card .v { font-size: 13pt; }
 }
+
+/* Slider figures: the report's script rewrites [data-jeval-value], so the label and the value
+   must be visually separate at a glance. */
+.figures {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 24px;
+  margin: 10px 0 6px;
+}
+.figures .figure {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+.figures .k {
+  color: var(--muted);
+  font-size: 13px;
+}
+.figures .v {
+  font-size: 14px;
+  font-weight: 600;
+  font-family: var(--mono);
+}
+[data-jeval-segment] {
+  cursor: pointer;
+}
+[data-jeval-segment]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
 """
 
 REPORT_JS = """\
