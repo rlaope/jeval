@@ -24,17 +24,18 @@ and everything below follows from them:
    computed because no cost matrix was applied — is skipped, not treated as a pass.
 
 The workflow is ``split_models``/``split_by_period`` for the population views, ``compare`` for the
-comparison, ``parse_fail_on`` for the CI threshold spec, ``run_checks`` for the verdict, and
-``format_ci_block`` for the text a CI job prints.
+comparison, ``attach_thresholds`` to put a cost-derived threshold on each slice, ``parse_fail_on``
+for the CI threshold spec, ``run_checks`` for the verdict, and ``format_ci_block`` for the text a
+CI job prints.
 """
 
 from __future__ import annotations
 
 import math
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, timezone
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 
@@ -43,11 +44,23 @@ from jeval.calibration import DEFAULT_N_BINS
 from jeval.report.model import DriftFailure, DriftSlice, DriftView, ModelChange
 from jeval.schema import DecisionRecord
 
+if TYPE_CHECKING:  # pragma: no cover - imported for the type checker only
+    from jeval.costs import CostAction
+
 #: A slice needs at least this many measurable gold records to take part in a comparison.
 DEFAULT_MIN_SLICE = 30
 DEFAULT_ALPHA = 0.05
 DEFAULT_N_BOOT = 200
 DEFAULT_SEED = 0
+
+#: Sweep grid resolution for an attached threshold; mirrors ``jeval.costs.DEFAULT_STEPS`` and is
+#: kept as a literal so this module does not depend on the costs engine at import time.
+DEFAULT_SWEEP_STEPS = 101
+
+#: Written by :func:`attach_thresholds` into a view note whenever a cost matrix was applied, so
+#: :func:`_threshold_lines` can tell "no cost matrix at all" apart from "a cost matrix whose sweep
+#: withheld every threshold" without a new field on the view.
+COST_MATRIX_NOTE = "cost matrix applied"
 
 CHECK_ECE_INCREASE = "ece-increase"
 CHECK_AUTO_RATE_DROP = "auto-rate-drop"
@@ -77,6 +90,16 @@ class _Unit:
     label: str
     before: DriftSlice
     after: DriftSlice
+
+
+@dataclass(frozen=True)
+class _Candidate:
+    """One action's recommendation for one slice, with the cost that ranked it."""
+
+    action: str
+    threshold: float
+    auto_rate: float
+    cost_per_case: float
 
 
 def split_models(records: Sequence[DecisionRecord]) -> tuple[DriftSlice, ...]:
@@ -337,6 +360,131 @@ def run_checks(view: DriftView, checks: Sequence[DriftCheck]) -> tuple[DriftFail
     return tuple(failures)
 
 
+def attach_thresholds(
+    view: DriftView,
+    records: Sequence[DecisionRecord],
+    actions: Sequence[CostAction],
+    *,
+    steps: int = DEFAULT_SWEEP_STEPS,
+    alpha: float = DEFAULT_ALPHA,
+) -> DriftView:
+    """Put a cost-derived threshold on every slice the cost matrix can speak for.
+
+    A comparison on its own only says that calibration moved. The line a reviewer acts on is the
+    one the money moves, so each slice is swept with the action whose ``question`` matches the
+    slice's label: in a model comparison that label is the question key, so ``intent`` at the
+    baseline model is swept over the baseline model's own ``intent`` records and set against the
+    same question at the current model. A period comparison labels its slices by period instead,
+    so no action matches those and they keep ``None`` — a threshold attributed to the wrong
+    population is worse than no threshold.
+
+    Where several actions share a slice's question, the cheapest recommendation wins and a tie
+    goes to the first action in the caller's order; the view note names the action reported.
+
+    Nothing is invented. A slice that cannot be swept — fewer gold-labeled records than
+    ``jeval.costs.MIN_GOLD_RECORDS``, no action on its label, or no record of that question at
+    that model — keeps ``threshold`` and ``auto_rate`` at ``None``, and the note names it with the
+    count and the reason, so the CI block can say why instead of printing a number. The caller's
+    own note is preserved, and the sentence this function writes is rewritten rather than
+    appended to if it is already there, so attaching twice cannot stack two claims.
+
+    With no actions at all there is no cost matrix, and the view comes back untouched — note
+    included — so the block keeps its "no cost matrix was applied" wording instead of claiming a
+    sweep that never ran.
+
+    ``steps`` is the sweep grid and ``alpha`` the interval level; both are validated here exactly
+    as :func:`jeval.costs.sweep` validates them.
+    """
+    if steps < 2:
+        raise ValueError(f"steps must be >= 2 to sweep a range, got {steps}")
+    if not 0.0 < alpha < 1.0:
+        raise ValueError(f"alpha must be in (0, 1), got {alpha}")
+    if not actions:
+        # No cost matrix is the caller's way of saying "measure only what moved". The view comes
+        # back untouched, note included, so the block keeps its "no cost matrix" wording.
+        return view
+
+    # The costs engine is owned elsewhere and is imported, never edited, here. The import is local
+    # so that a call is what needs it, not every use of drift detection.
+    from jeval.costs import MIN_GOLD_RECORDS, sweep
+
+    base_note = view.note.partition(COST_MATRIX_NOTE)[0].strip()
+    if not view.slices:
+        sentence = f"{COST_MATRIX_NOTE}: the comparison has no slice to sweep."
+        return replace(view, note=" ".join(part for part in (base_note, sentence) if part))
+
+    groups = _question_model_groups(records)
+    updated: list[DriftSlice] = []
+    withheld: list[str] = []
+    ambiguous: list[str] = []
+    attached = 0
+    for measured in view.slices:
+        matched = [action for action in actions if action.question == measured.label]
+        group = groups.get((measured.label, measured.model))
+        if not matched:
+            withheld.append(f"{measured.label} at {measured.model} (no cost action on this label)")
+            updated.append(measured)
+            continue
+        if group is None:
+            withheld.append(
+                f"{measured.label} at {measured.model} (no record of this question at this model)"
+            )
+            updated.append(measured)
+            continue
+        candidates: list[_Candidate] = []
+        n_records = 0
+        for action in matched:
+            result = sweep(action, group, steps=steps, alpha=alpha)
+            n_records = max(n_records, result.n_records)
+            # A threshold without an automation rate would print as a NaN in the block, so the two
+            # are kept together: both or neither.
+            if not (math.isfinite(result.threshold) and math.isfinite(result.auto_rate)):
+                continue
+            candidates.append(
+                _Candidate(
+                    action=action.name,
+                    threshold=result.threshold,
+                    auto_rate=result.auto_rate,
+                    cost_per_case=result.expected_cost_per_case,
+                )
+            )
+        if not candidates:
+            withheld.append(
+                f"{measured.label} at {measured.model} ({n_records} gold-labeled record(s), "
+                f"under the {MIN_GOLD_RECORDS} a sweep needs)"
+            )
+            updated.append(measured)
+            continue
+        chosen = min(candidates, key=lambda candidate: candidate.cost_per_case)
+        if len(candidates) > 1:
+            ambiguous.append(
+                f"{measured.label} at {measured.model} matched {len(candidates)} cost actions; "
+                f"the cheapest recommendation ({chosen.action}) is reported."
+            )
+        attached += 1
+        updated.append(replace(measured, threshold=chosen.threshold, auto_rate=chosen.auto_rate))
+
+    total = len(view.slices)
+    if attached:
+        headline = (
+            f"{COST_MATRIX_NOTE}: cost-derived thresholds attached to {attached} of "
+            f"{total} slice(s)"
+        )
+    else:
+        headline = (
+            f"{COST_MATRIX_NOTE}: no cost-derived threshold could be attached to any of "
+            f"{total} slice(s)"
+        )
+    if withheld:
+        headline += "; withheld for " + "; ".join(withheld)
+    sentences = [f"{headline}.", *ambiguous]
+    return replace(
+        view,
+        slices=tuple(updated),
+        note=" ".join(part for part in (base_note, *sentences) if part),
+    )
+
+
 def format_ci_block(view: DriftView, failures: Sequence[DriftFailure]) -> str:
     """The block a CI job prints, as plain column-aligned text.
 
@@ -356,7 +504,7 @@ def format_ci_block(view: DriftView, failures: Sequence[DriftFailure]) -> str:
     units = _comparison_units(view)
     if units:
         lines.extend(_table_lines(view, units, failures))
-    lines.extend(_threshold_lines(units))
+    lines.extend(_threshold_lines(view, units))
     if view.note:
         lines.append(f"note: {view.note}")
     return _with_exit("\n".join(lines), failures)
@@ -582,6 +730,21 @@ def _group_by_model(records: Sequence[DecisionRecord]) -> dict[str, list[Decisio
     for record in records:
         grouped.setdefault(record.model, []).append(record)
     return grouped
+
+
+def _question_model_groups(
+    records: Sequence[DecisionRecord],
+) -> dict[tuple[str, str], list[DecisionRecord]]:
+    """Records keyed by ``(question, model)``, which is what a model-comparison slice is keyed by.
+
+    That pair is exactly what ``compare`` gives a model-comparison slice, so a cost sweep runs over
+    the records the slice was measured on and no others: pooling the question across models would
+    report the same threshold for a model that degraded and one that did not.
+    """
+    groups: dict[tuple[str, str], list[DecisionRecord]] = {}
+    for record in records:
+        groups.setdefault((record.question_key, record.model), []).append(record)
+    return groups
 
 
 def _period_groups(
@@ -812,12 +975,15 @@ def _table_lines(
     return lines
 
 
-def _threshold_lines(units: Sequence[_Unit]) -> list[str]:
+def _threshold_lines(view: DriftView, units: Sequence[_Unit]) -> list[str]:
     """Recommended-threshold movement, when the compared slices carry one.
 
-    Costs are the caller's: a slice has a threshold only if a cost matrix was applied to it
-    (``DriftSlice.threshold`` and ``DriftSlice.auto_rate``). When none was, the block says so
-    rather than printing a threshold nobody computed.
+    Costs are the caller's: a slice carries a threshold only if :func:`attach_thresholds` measured
+    one for it (``DriftSlice.threshold`` and ``DriftSlice.auto_rate``). A unit with a threshold on
+    one side only prints nothing, because a movement needs both numbers. When no unit has one, the
+    block says so rather than printing a threshold nobody computed — and it says which of the two
+    reasons applies: no cost matrix at all, or one whose sweep withheld every threshold, in which
+    case the view note names the slices and why.
     """
     lines: list[str] = []
     for unit in units:
@@ -840,9 +1006,16 @@ def _threshold_lines(units: Sequence[_Unit]) -> list[str]:
             f"auto-rate {before_rate:.0%} -> {after_rate:.0%}"
         )
     if not lines:
-        lines.append(
-            "recommended threshold: not available (no cost matrix was applied to this comparison)"
-        )
+        if COST_MATRIX_NOTE in view.note:
+            lines.append(
+                "recommended threshold: not available "
+                "(a cost matrix was applied but the sweep produced no threshold)"
+            )
+        else:
+            lines.append(
+                "recommended threshold: not available "
+                "(no cost matrix was applied to this comparison)"
+            )
     return lines
 
 
