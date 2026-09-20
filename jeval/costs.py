@@ -28,6 +28,18 @@ Two rules keep the output honest rather than merely plausible:
 
 Every function here is pure and deterministic given its inputs: the sweep is exhaustive over a
 fixed grid, the bootstrap draws from a seeded generator, and nothing is read from the network.
+
+Segments
+--------
+
+:func:`sweep_by_segment` answers the follow-up question a report raises as soon as its segments
+disagree -- one threshold per segment -- and it is allowed to answer *no*. Each segment is swept
+on its own gold records and compared with the global optimum, and adopting the segment's own
+threshold only counts as worth it when the two optima are more than one sweep step apart *and*
+the change in cost per case exceeds :data:`SPLIT_COST_TOLERANCE` of the global cost per case. A
+segment that cannot be swept comes back with ``nan`` figures and a ``reason``, never as a missing
+row: a segment silently dropped from the answer is indistinguishable from one that was measured
+and found uninteresting.
 """
 
 from __future__ import annotations
@@ -49,21 +61,39 @@ from jeval.schema import DecisionRecord
 
 __all__ = [
     "DEFAULT_FLAT_TOLERANCE",
+    "DEFAULT_MIN_SEGMENT_RECORDS",
     "DEFAULT_N_BOOT",
     "DEFAULT_STEPS",
     "MIN_GOLD_RECORDS",
+    "NOT_WORTH_SPLITTING",
+    "SEGMENT_UNKNOWN",
+    "SPLIT_COST_TOLERANCE",
     "CostAction",
+    "SegmentThreshold",
     "bootstrap_threshold_ci",
     "build_impact",
     "evaluate_point",
     "flat_region",
     "load_cost_actions",
     "sweep",
+    "sweep_by_segment",
     "write_thresholds_yaml",
 ]
 
 DEFAULT_STEPS = 101
 """Sweep points from 0.0 to 1.0 inclusive, so one step is 0.01 of confidence."""
+
+DEFAULT_MIN_SEGMENT_RECORDS = 100
+"""Gold records a segment needs before it is swept on its own instead of being reported as thin."""
+
+SPLIT_COST_TOLERANCE = 0.02
+"""A segment pays off only if its own threshold moves cost per case by more than this share."""
+
+NOT_WORTH_SPLITTING = "splitting does not pay"
+"""Every reason of a segment that was swept and should keep the global threshold starts here."""
+
+SEGMENT_UNKNOWN = "unknown"
+"""Segment value of a record that does not carry the segment key at all."""
 
 DEFAULT_N_BOOT = 200
 """Bootstrap resamples for the threshold interval."""
@@ -573,6 +603,233 @@ def sweep(
 def _has_silver(action: CostAction, records: Sequence[DecisionRecord]) -> bool:
     """Whether the question has silver labels but no gold ones: agreement, not measurement."""
     return any(record.question_key == action.question and record.is_silver for record in records)
+
+
+@dataclass(frozen=True)
+class SegmentThreshold:
+    """One segment's own cost-optimal threshold, and whether adopting it pays.
+
+    ``threshold``, ``expected_cost_per_case`` and ``auto_rate`` are measured on this segment's
+    gold records alone and are ``nan`` when the segment could not be swept, in which case
+    ``reason`` says why. ``cost_delta_vs_global`` is the signed change in cost per case *inside
+    the segment* from replacing the global threshold with the segment's own: zero or negative
+    whenever the segment was swept, since the segment's optimum is the cheapest point of its own
+    curve. ``reason`` is empty exactly when the segment was swept and splitting pays, and starts
+    with :data:`NOT_WORTH_SPLITTING` whenever the segment was swept and does not.
+    """
+
+    segment_key: str
+    segment_value: str
+    threshold: float
+    expected_cost_per_case: float
+    auto_rate: float
+    n_records: int
+    cost_delta_vs_global: float
+    worth_splitting: bool
+    reason: str = ""
+
+    @property
+    def label(self) -> str:
+        """``segment_key = segment_value``, for messages that must say what was measured."""
+        return f"{self.segment_key} = {self.segment_value}"
+
+
+def sweep_by_segment(
+    action: CostAction,
+    records: Sequence[DecisionRecord],
+    *,
+    segment_key: str,
+    min_records: int = DEFAULT_MIN_SEGMENT_RECORDS,
+    steps: int = DEFAULT_STEPS,
+    alpha: float = DEFAULT_ALPHA,
+) -> tuple[SegmentThreshold, ...]:
+    """Sweep one action per segment value and say, per segment, whether splitting pays.
+
+    The global line comes from :func:`sweep` on the action's gold records. Each segment is then
+    swept on its own records with exactly the same rule and compared with that line twice:
+
+    - **movement**: the segment's optimum differs from the global one by more than one sweep step
+      (``1 / (steps - 1)``), so the two genuinely disagree about where the line goes; a single
+      step apart is grid noise.
+    - **materiality**: adopting the segment's own threshold instead of the global one changes
+      cost per case by more than :data:`SPLIT_COST_TOLERANCE` of the global cost per case.
+
+    Both are required before ``worth_splitting`` becomes true. A segment can move the threshold
+    without moving money, and it can move money without moving the threshold; either way the
+    report should keep one line. ``cost_delta_vs_global`` is that change, signed, and is zero or
+    negative for every swept segment.
+
+    Segments are the distinct ``segment[segment_key]`` values of the action's gold records, in
+    sorted order. A record that does not carry the key at all is counted under
+    :data:`SEGMENT_UNKNOWN` rather than dropped, so the segments keep adding up to the global
+    figure. Records of other questions and silver-labeled records belong to no segment, exactly
+    as in :func:`sweep`.
+
+    A segment that cannot be swept is returned with ``nan`` figures and a ``reason``: fewer than
+    ``min_records`` gold records (and never fewer than :data:`MIN_GOLD_RECORDS`, whatever the
+    caller asks for), or no case on either side of ``when`` -- if nothing is predicted as the
+    action's class no threshold routes anything, and if nothing is labeled as it there is no case
+    the action was meant to decide. Segments are never omitted, and a segment below the floor
+    keeps its ``n_records`` so the caller can see how thin it is.
+    """
+    if not isinstance(segment_key, str) or not segment_key.strip():
+        raise ValueError("segment_key must be a non-empty string")
+    if min_records < 1:
+        raise ValueError(f"min_records must be >= 1, got {min_records}")
+    if steps < 2:
+        raise ValueError(f"steps must be >= 2 to sweep a range, got {steps}")
+    if not 0.0 < alpha < 1.0:
+        raise ValueError(f"alpha must be in (0, 1), got {alpha}")
+
+    grouped: dict[str, list[DecisionRecord]] = {}
+    for record in _gold_records(action, records):
+        grouped.setdefault(record.segment.get(segment_key, SEGMENT_UNKNOWN), []).append(record)
+
+    floor = max(min_records, MIN_GOLD_RECORDS)
+    step = 1.0 / float(steps - 1)
+    global_result = sweep(action, records, steps=steps, alpha=alpha)
+
+    results: list[SegmentThreshold] = []
+    for value in sorted(grouped):
+        segment = grouped[value]
+        reason = _unsweepable_reason(action, segment, floor=floor)
+        if reason is None and not math.isfinite(global_result.threshold):
+            # Unreachable while the floor is at least MIN_GOLD_RECORDS, since the global sweep
+            # sees at least as many gold records as any one of its segments. Kept so a segment
+            # can never be compared against a global threshold that does not exist.
+            reason = (
+                f"the action's {global_result.n_records} gold records are below "
+                f"{MIN_GOLD_RECORDS}, so there is no global threshold to split from"
+            )
+        if reason is not None:
+            results.append(_unswept_segment(segment_key, value, len(segment), reason))
+            continue
+        results.append(
+            _swept_segment(
+                action,
+                segment,
+                segment_key=segment_key,
+                segment_value=value,
+                steps=steps,
+                alpha=alpha,
+                global_result=global_result,
+                step=step,
+            )
+        )
+    return tuple(results)
+
+
+def _unsweepable_reason(
+    action: CostAction, segment: Sequence[DecisionRecord], *, floor: int
+) -> str | None:
+    """Why this segment cannot carry a threshold of its own, or ``None`` when it can."""
+    if len(segment) < floor:
+        return (
+            f"only {len(segment)} gold records, below the {floor} a segment needs before a "
+            "threshold is recommended for it"
+        )
+    if not any(record.prediction == action.when for record in segment):
+        return (
+            f"no record in this segment is predicted as the action's class {action.when!r}, so "
+            "no threshold routes anything and none can be chosen"
+        )
+    if not any(record.label == action.when for record in segment):
+        return (
+            f"no record in this segment is labeled as the action's class {action.when!r}, so "
+            "the segment holds no case the action was meant to decide"
+        )
+    return None
+
+
+def _unswept_segment(segment_key: str, value: str, n_records: int, reason: str) -> SegmentThreshold:
+    """The row a segment gets when it cannot be swept: counts kept, figures ``nan``, reason set."""
+    return SegmentThreshold(
+        segment_key=segment_key,
+        segment_value=value,
+        threshold=_NAN,
+        expected_cost_per_case=_NAN,
+        auto_rate=_NAN,
+        n_records=n_records,
+        cost_delta_vs_global=_NAN,
+        worth_splitting=False,
+        reason=reason,
+    )
+
+
+def _swept_segment(
+    action: CostAction,
+    segment: Sequence[DecisionRecord],
+    *,
+    segment_key: str,
+    segment_value: str,
+    steps: int,
+    alpha: float,
+    global_result: ThresholdResult,
+    step: float,
+) -> SegmentThreshold:
+    """Sweep one segment and compare its optimum with the global line, in money and in steps."""
+    result = sweep(action, segment, steps=steps, alpha=alpha)
+    at_global = evaluate_point(action, segment, global_result.threshold)
+    delta = result.expected_cost_per_case - at_global.expected_cost
+    moved = abs(result.threshold - global_result.threshold) > step + _STEP_EPSILON
+    material = abs(delta) > SPLIT_COST_TOLERANCE * global_result.expected_cost_per_case
+    worth_splitting = moved and material
+    reason = ""
+    if not worth_splitting:
+        reason = _not_worth_reason(
+            moved=moved,
+            material=material,
+            segment_threshold=result.threshold,
+            global_threshold=global_result.threshold,
+            cost_delta=delta,
+            global_cost=global_result.expected_cost_per_case,
+            step=step,
+        )
+    return SegmentThreshold(
+        segment_key=segment_key,
+        segment_value=segment_value,
+        threshold=result.threshold,
+        expected_cost_per_case=result.expected_cost_per_case,
+        auto_rate=result.auto_rate,
+        n_records=result.n_records,
+        cost_delta_vs_global=delta,
+        worth_splitting=worth_splitting,
+        reason=reason,
+    )
+
+
+def _not_worth_reason(
+    *,
+    moved: bool,
+    material: bool,
+    segment_threshold: float,
+    global_threshold: float,
+    cost_delta: float,
+    global_cost: float,
+    step: float,
+) -> str:
+    """Why a swept segment keeps the global line, naming whichever of the two tests it failed."""
+    if moved:
+        threshold_clause = (
+            f"its optimum {segment_threshold:.2f} differs from the global {global_threshold:.2f}"
+        )
+    else:
+        threshold_clause = (
+            f"its optimum {segment_threshold:.2f} is within one sweep step ({step:.2f}) of the "
+            f"global {global_threshold:.2f}"
+        )
+    if material:
+        share = abs(cost_delta) / global_cost if global_cost > 0.0 else _NAN
+        cost_clause = (
+            f"the cost change of {abs(cost_delta):.4g} per case is {share:.1%} of the global "
+            f"figure, more than the {SPLIT_COST_TOLERANCE:.0%} bar on its own"
+        )
+    else:
+        cost_clause = (
+            f"the cost change of {abs(cost_delta):.4g} per case is under the "
+            f"{SPLIT_COST_TOLERANCE:.0%} bar"
+        )
+    return f"{NOT_WORTH_SPLITTING}: {threshold_clause} and {cost_clause}."
 
 
 def _fmt_threshold(value: float) -> str:
