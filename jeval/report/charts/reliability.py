@@ -181,9 +181,9 @@ def reliability_table_rows(metrics: CalibrationMetrics) -> list[list[str]]:
             [
                 cal_bin.label,
                 f"{cal_bin.n}",
-                S.fmt(cal_bin.mean_confidence),
-                S.fmt(cal_bin.accuracy),
-                f"[{S.fmt(cal_bin.ci_low)}, {S.fmt(cal_bin.ci_high)}]",
+                S.pct(cal_bin.mean_confidence, 0),
+                S.pct(cal_bin.accuracy, 0),
+                f"[{S.pct(cal_bin.ci_low, 0)}, {S.pct(cal_bin.ci_high, 0)}]",
                 f"{cal_bin.gap:+.3f}",
             ]
         )
