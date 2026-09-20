@@ -158,12 +158,8 @@ def test_mismatched_lengths_are_rejected() -> None:
 
 def test_a_tiny_bin_does_not_hijack_the_one_line_diagnosis() -> None:
     """A 4-record bin with a huge gap must not outrank a large bin with a real gap."""
-    confidences = np.concatenate(
-        [np.full(1000, 0.80), np.full(4, 0.20)]
-    )
-    correct = np.concatenate(
-        [np.zeros(1000, dtype=bool), np.ones(4, dtype=bool)]
-    )
+    confidences = np.concatenate([np.full(1000, 0.80), np.full(4, 0.20)])
+    correct = np.concatenate([np.zeros(1000, dtype=bool), np.ones(4, dtype=bool)])
     metrics = compute_calibration(confidences, correct, n_bins=2, n_boot=20, seed=0)
     worst = metrics.worst_bin
     assert worst is not None
