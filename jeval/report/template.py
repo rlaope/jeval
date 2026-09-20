@@ -25,10 +25,8 @@ from jeval.report.charts import reliability as reliability_charts
 from jeval.report.charts import segments as segment_charts
 from jeval.report.model import (
     DEFAULT_LIMITATIONS,
-    ImpactTable,
     ReportModel,
     ThresholdResult,
-    Verdict,
     dumps,
 )
 from jeval.report.svg import details_table
@@ -46,26 +44,16 @@ class ReliabilityBlock:
     silver_note: str = ""
 
 
-def markdown_summary(verdict: Verdict, impact: ImpactTable | None) -> str:
-    """The paste-into-Slack summary: the verdict and the impact table, nothing else.
+def markdown_summary(model: ReportModel) -> str:
+    """The paste-into-Slack summary, formatted in exactly one place.
 
-    This is the text the report's copy button hands out, so it carries the conclusion and the
-    persuasion numbers and deliberately nothing that needs a browser to interpret.
+    Delegates to :func:`jeval.report.verdict.markdown_summary`, because the copy button, the
+    embedded payload and ``--format md`` must all hand out the same text: a second formatter here
+    would quietly drift from the one that has the tests.
     """
-    lines = [f"**{verdict.headline}**", "", verdict.detail]
-    if impact is not None and impact.rows:
-        lines.extend(
-            [
-                "",
-                "| metric | current | recommended | change |",
-                "| --- | --- | --- | --- |",
-            ]
-        )
-        lines.extend(
-            f"| {row.label} | {row.current} | {row.recommended} | {row.change} |"
-            for row in impact.rows
-        )
-    return "\n".join(lines) + "\n"
+    from jeval.report.verdict import markdown_summary as _verdict_summary
+
+    return _verdict_summary(model)
 
 
 def _stamp(value: datetime | None) -> str:
@@ -81,7 +69,7 @@ def render_document(
     current_metrics: CalibrationMetrics | None = None,
 ) -> str:
     """Render the whole report as one self-contained HTML document."""
-    from jeval.report.assets import REPORT_CSS, REPORT_JS
+    from jeval.report.assets import REPORT_CSS, REPORT_JS, minify
 
     segment_metrics = dict(segment_metrics or {})
     thresholds = list(model.thresholds)
@@ -90,7 +78,7 @@ def render_document(
         for result in thresholds
         if result.curve
     }
-    summary = markdown_summary(model.verdict, model.impact)
+    summary = markdown_summary(model)
     payload = dumps(
         {
             "actions": {
@@ -127,7 +115,7 @@ def render_document(
         '<meta charset="utf-8">',
         '<meta name="viewport" content="width=device-width, initial-scale=1">',
         "<title>jeval report</title>",
-        f"<style>{REPORT_CSS}</style>",
+        f"<style>{minify(REPORT_CSS)}</style>",
         "</head>",
         "<body>",
         '<main class="report">',
@@ -170,7 +158,7 @@ def render_document(
     )
     parts.append("</main>")
     parts.append(S.embed_json(payload, element_id="jeval-data"))
-    parts.append(f"<script>{REPORT_JS}</script>")
+    parts.append(f"<script>{minify(REPORT_JS)}</script>")
     parts.append("</body></html>")
     return "".join(parts)
 
@@ -206,7 +194,7 @@ def _verdict_section(model: ReportModel, summary: str) -> str:
         + f'<p class="headline">{escape(verdict.headline)}</p>'
         + f'<p class="detail">{escape(verdict.detail)}</p>'
         + (f'<div class="stats">{cards}</div>' if cards else "")
-        + '<button type="button" id="copy-summary" class="copy" '
+        + '<button type="button" id="copy-summary" class="copy" data-jeval-copy-summary '
         + 'data-copy-target="jeval-data">Copy summary</button>'
         + "</section>"
     )
@@ -222,7 +210,7 @@ def _reliability_section(blocks: Sequence[ReliabilityBlock]) -> str:
             '<div class="tabs" role="tablist">'
             + "".join(
                 f'<button type="button" role="tab" class="tab{" is-active" if index == 0 else ""}" '
-                f'data-question="{escape(block.question_key)}" '
+                f'data-jeval-tab="{escape(block.question_key)}" '
                 f'aria-selected="{"true" if index == 0 else "false"}">{escape(block.question_key)}</button>'
                 for index, block in enumerate(blocks)
             )
@@ -245,7 +233,7 @@ def _reliability_section(blocks: Sequence[ReliabilityBlock]) -> str:
             body.append(f'<p class="note">{escape(block.silver_note)}</p>')
         figures.append(
             f'<div class="question-block{" is-active" if index == 0 else ""}" '
-            f'data-question="{escape(block.question_key)}">' + "".join(body) + "</div>"
+            f'data-jeval-question="{escape(block.question_key)}">' + "".join(body) + "</div>"
         )
     return (
         '<section id="reliability"><h2>Reliability</h2>'
@@ -298,7 +286,8 @@ def _segments_section(model: ReportModel, segment_metrics: Mapping[str, Calibrat
         if metrics is None:
             continue
         figures += (
-            f'<figure class="seg-figure" id="seg-fig-{escape(slug)}" hidden>'
+            f'<figure class="seg-figure" id="seg-fig-{escape(slug)}" '
+            f'data-jeval-segment-chart="{escape(slug)}" hidden>'
             f"{reliability_charts.render_reliability(metrics, title=f'{bar.label}')}"
             "</figure>"
         )

@@ -8,6 +8,7 @@ much as the minimum — it says out loud when the data cannot distinguish neighb
 from __future__ import annotations
 
 import json
+from html import escape
 
 from jeval.report import svg as S
 from jeval.report.model import CostPoint, ImpactTable, ThresholdResult
@@ -19,6 +20,15 @@ RIGHT = 150.0
 TOP = 40.0
 BOTTOM = 66.0
 CURRENT_COLOUR = "#B00020"
+
+# Impact-row label -> the key the report's JavaScript recomputes for that figure.
+FIGURE_KEYS: dict[str, str] = {
+    "auto rate": "auto_rate",
+    "accuracy (auto)": "accuracy_auto",
+    "cost per case": "cost_per_case",
+    "monthly cost": "cost_per_month",
+    "cost per month": "cost_per_month",
+}
 MIN_COLOUR = "#111111"
 
 
@@ -207,33 +217,95 @@ COST_HEADERS: tuple[str, ...] = (
 )
 
 
-def impact_table_html(impact: ImpactTable, *, slider_id: str = "threshold-slider") -> str:
-    """The persuasion table plus the slider scaffolding the inline JS drives."""
-    head = '<tr><th>Metric</th><th class="num">current</th><th class="num">recommended</th><th class="num">change</th></tr>'
+def _slider_figures(
+    result: ThresholdResult | None, impact: ImpactTable
+) -> tuple[tuple[str, str, str], ...]:
+    """The figures the report's slider recomputes, as ``(label, key, initial value)``.
+
+    Driven by the threshold result rather than by whichever impact rows happen to exist: the
+    script updates every ``data-jeval-value`` it finds, so a figure that is never emitted is a
+    control that silently does nothing.
+    """
+    volume = impact.monthly_volume
+    figures: list[tuple[str, str, str]] = []
+    if result is not None and result.curve:
+        per_case = result.expected_cost_per_case
+        figures.append(("auto rate", "auto_rate", S.pct(result.auto_rate, 0)))
+        figures.append(("accuracy (auto)", "accuracy_auto", S.pct(result.accuracy_auto, 0)))
+        figures.append(("cost per case", "cost_per_case", S.money(per_case)))
+        if volume:
+            figures.append(("cost per month", "cost_per_month", S.money(per_case * volume)))
+            figures.append(("auto per month", "auto_per_month", S.money(result.auto_rate * volume)))
+            figures.append(
+                (
+                    "escalations per month",
+                    "escalations_per_month",
+                    S.money((1 - result.auto_rate) * volume),
+                )
+            )
+    if figures:
+        return tuple(figures)
+    return tuple(
+        (row.label, key, row.recommended)
+        for row, key in ((row, FIGURE_KEYS.get(row.label.strip().lower())) for row in impact.rows)
+        if key
+    )
+
+
+def impact_table_html(
+    impact: ImpactTable,
+    *,
+    action: str = "",
+    result: ThresholdResult | None = None,
+    slider_id: str = "threshold-slider",
+) -> str:
+    """The persuasion table plus the slider scaffolding the inline JavaScript drives.
+
+    The markup is the contract: ``data-jeval-action`` marks the box, ``[data-jeval-threshold]``
+    is the slider's own label, and each figure carries ``data-jeval-value`` with the key the
+    script recomputes. Renaming any of them silently disables the interaction, which is why
+    ``tests/test_report_wiring.py`` asserts the hooks exist in a rendered document.
+    """
+    head = (
+        '<tr><th>Metric</th><th class="num">current</th>'
+        '<th class="num">recommended</th><th class="num">change</th></tr>'
+    )
     body = "".join(
         "<tr"
         + (' class="impact-monthly"' if row.label.lower().startswith("monthly") else "")
-        + f'><td>{row.label}</td><td class="num">{row.current}</td>'
-        + f'<td class="num">{row.recommended}</td><td class="num">{row.change}</td></tr>'
+        + f'><td>{escape(row.label)}</td><td class="num">{escape(row.current)}</td>'
+        + f'<td class="num">{escape(row.recommended)}</td>'
+        + f'<td class="num">{escape(row.change)}</td></tr>'
         for row in impact.rows
     )
-    note = f'<p class="note">{impact.paradox_note}</p>' if impact.paradox_note else ""
+    figures_markup = "".join(
+        '<div class="figure"><span class="k">'
+        + escape(label)
+        + '</span><span class="v num" data-jeval-value="'
+        + key
+        + '">'
+        + escape(value)
+        + "</span></div>"
+        for label, key, value in _slider_figures(result, impact)
+    )
+    note = f'<p class="note">{escape(impact.paradox_note)}</p>' if impact.paradox_note else ""
     volume = (
-        f'<label class="volume">monthly cases '
+        '<label class="volume">monthly cases '
         f'<input type="number" min="0" step="100" value="{int(impact.monthly_volume or 0)}" '
-        f'id="volume-input" data-currency="{impact.currency}"></label>'
+        f'id="volume-input" data-currency="{escape(impact.currency)}"></label>'
         if impact.monthly_volume is not None
         else ""
     )
     slider = (
-        f'<div class="slider-block">'
-        f'<label for="{slider_id}">try another threshold: '
-        f'<output id="{slider_id}-value">{S.fmt(impact.recommended_threshold)}</output></label>'
-        f'<input type="range" id="{slider_id}" min="0" max="1" step="0.01" '
-        f'value="{impact.recommended_threshold:.2f}" '
-        f'data-action="threshold">'
-        f'<p class="note">Exploration only: the report never writes thresholds.yaml. '
-        f"Confirm a value with <code>jeval threshold</code>.</p></div>"
+        f'<div class="slider-block" data-jeval-action="{escape(action)}">'
+        f'<label for="{escape(slider_id)}">try another threshold: '
+        f'<output data-jeval-threshold for="{escape(slider_id)}" class="num">'
+        f"{S.fmt(impact.recommended_threshold)}</output></label>"
+        f'<input type="range" id="{escape(slider_id)}" min="0" max="1" step="0.01" '
+        f'value="{impact.recommended_threshold:.2f}" data-action="threshold">'
+        + (f'<div class="figures">{figures_markup}</div>' if figures_markup else "")
+        + '<p class="note">Exploration only: the report never writes thresholds.yaml. '
+        "Confirm a value with <code>jeval threshold</code>.</p></div>"
     )
     return (
         f'<table class="impact"><thead>{head}</thead><tbody>{body}</tbody></table>'
@@ -299,7 +371,9 @@ def render_cost_section(
     table = S.details_table(
         COST_HEADERS, cost_table_rows(result), summary="Every threshold in the sweep"
     )
-    impact_html = impact_table_html(impact) if impact is not None else ""
+    impact_html = (
+        impact_table_html(impact, action=result.action, result=result) if impact is not None else ""
+    )
     ci_note = (
         f'<p class="note">Recommended threshold {S.fmt(result.threshold)} '
         f"(95% CI {S.fmt(result.ci_low)}-{S.fmt(result.ci_high)}). "

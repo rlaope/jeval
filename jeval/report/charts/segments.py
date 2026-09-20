@@ -55,9 +55,10 @@ def render_segments(view: SegmentView, *, title: str = "Segments", width: float 
         if bar.too_few_samples:
             parts.append(S.rect(BAR_X, y + 3, width_px, 14, fill=colour))
         else:
-            target = segment_target(bar)
+            slug = segment_slug(bar.key, bar.value)
             parts.append(
-                f'<g class="seg-bar" role="button" tabindex="0" data-target="{escape(target)}" '
+                f'<g class="seg-bar" role="button" tabindex="0" data-jeval-segment="{escape(slug)}" '
+                f'data-target="{escape(segment_target(bar))}" aria-expanded="false" '
                 f'aria-label="show the reliability curve for {escape(bar.label)}">'
                 f"{S.rect(BAR_X, y + 3, width_px, 14, fill=colour)}</g>"
             )

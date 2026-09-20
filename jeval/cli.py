@@ -407,6 +407,7 @@ def build_and_write_report(
     )
     verdict = build_verdict(
         dataset.overall,
+        threshold=thresholds[0] if thresholds else None,
         current_threshold=impact.current_threshold if impact else None,
         recommended_threshold=thresholds[0].threshold if thresholds else None,
     )
@@ -514,10 +515,21 @@ def report(
         )
         verdict = build_verdict(
             dataset.overall,
+            threshold=thresholds[0] if thresholds else None,
             current_threshold=impact.current_threshold if impact else None,
             recommended_threshold=thresholds[0].threshold if thresholds else None,
         )
-        typer.echo(template.markdown_summary(verdict, impact), nl=False)
+        typer.echo(
+            template.markdown_summary(
+                ReportModel(
+                    verdict=verdict,
+                    thresholds=thresholds,
+                    impact=impact,
+                    data_quality=template.data_quality_from(dataset),  # type: ignore[arg-type]
+                )
+            ),
+            nl=False,
+        )
         raise typer.Exit(code=0)
     if format_ != "html":
         typer.echo(f"unknown --format {format_!r}: expected html or md")
