@@ -1,7 +1,7 @@
 # jeval
 
-**jeval measures the calibration of probabilistic AI classifiers and puts the human/AI
-hand-off line where the cost says it belongs.**
+**Does your Jev's 0.9 mean 90%? jeval measures it, and sets the human hand-off line from what a
+mistake costs.**
 
 Your classifier answers with a label and a confidence. jeval answers the two questions that
 follow: *when it says 0.9, how often is it actually right?* and *given what a mistake costs,
@@ -80,19 +80,18 @@ jeval turns all four into one command with an exit code.
 A notebook measures once. Drift detection is what happens when the thing you measured changes:
 
 ```
-$ jeval drift --baseline .jeval/baseline.json --fail-on ece-increase=0.05
-model changed: jev-1.13.0 -> jev-1.14.0 (Sep 18)
-  question      ECE before   ECE after   delta
-  department        0.061       0.142   +0.081   FAIL
-  intent            0.044       0.049   +0.005   ok
-recommended threshold (auto_refund): 0.89 -> 0.82
-  at the current 0.89: auto-rate 58% -> 41%
-exit 1
+$ jeval drift --fail-on ece-increase=0.05
+model changed: jev-1.13.0 -> jev-1.14.0 (Sep 17)
+  question    ECE before  ECE after   delta
+  department       0.018      0.144  +0.126   FAIL
+note: ECE 95% bootstrap intervals per question: department 0.019-0.054 -> 0.118-0.164.
+$ echo $?
+1
 ```
 
-Wire that into CI and a model swap cannot silently degrade a production decision boundary.
-**`jeval drift` is not implemented yet** — it is milestone M2 (see Status), and the output
-above is its specified behavior, not a captured run.
+That is a captured run, not a mock-up: 1,800 synthetic decisions where the newer model version
+is deliberately overconfident. Wire the same command into CI and a model swap cannot silently
+degrade a production decision boundary.
 
 ## Try it in five minutes
 
@@ -133,18 +132,69 @@ Map those fields in `.jeval/ingest-map.yaml` and labeling cost drops to a mappin
 
 ## Status
 
-v0.1 is milestones M0–M2. Anything not listed as implemented below is not implemented; the
-repository does not ship stubs that look finished.
+v0.1 is milestones M0–M2 plus the report extension (R0–R4). Anything not listed as implemented
+below is not implemented; the repository does not ship stubs that look finished.
 
 | Command | Purpose | Status |
 | --- | --- | --- |
 | `jeval init` | scaffold `.jeval/` config and ingest map | implemented (M0) |
 | `jeval ingest` | JSONL/CSV logs to decision records | implemented (M0) |
-| `jeval report` | reliability curve, ECE/MCE/Brier, Wilson and bootstrap intervals, one HTML file | implemented (M0) |
-| `jeval demo` | synthetic log with known miscalibration | implemented (M0) |
-| `jeval threshold` | cost matrix to per-action optimal threshold with a CI | milestone M1 |
-| `jeval drift` | model-version and period comparison with CI exit codes | milestone M2 |
+| `jeval report` | the argument document: verdict, reliability, cost, impact, segments, drift, data quality — one HTML file, or `--format md` for a paste-ready summary | implemented |
+| `jeval demo` | synthetic log with known miscalibration, rendered through the same report path | implemented |
+| `jeval threshold` | cost matrix to per-action threshold with a bootstrap interval, written to `thresholds.yaml` | implemented |
+| `jeval drift` | model-version and period comparison, baseline snapshots, and `--fail-on` exit codes | implemented |
 | `jeval label` | active-learning labeling queue | milestone M4 |
+
+## The report is an argument, not a dashboard
+
+A terminal summary cannot show the shape of a curve, and it cannot be pasted into a thread when
+you are trying to move a threshold. So `jeval report` writes one self-contained HTML file that
+reads top to bottom as a single case:
+
+| Section | What it settles |
+| --- | --- |
+| ① Verdict | the conclusion in one sentence, with a Copy summary button for the thread |
+| ② Reliability | the curve, with dot size by sample count, Wilson intervals, and a density strip showing where your traffic sits |
+| ③ Cost | expected cost per case for every candidate threshold, with the minimum and the flat region marked |
+| ④ Impact | what changes if you move: auto rate, accuracy of what stays automated, cost per case, monthly |
+| ⑤ Segments | which slice is misfiring, worst first, small segments greyed rather than dropped |
+| ⑥ Drift | before/after curves, model-change markers, and the threshold staircase (when there is something to compare) |
+| ⑦ Data quality | labeled vs unlabeled, label sources, bin counts, and the limitations in plain words |
+
+No chart library, no server, no external request of any kind: every chart is inline SVG built by
+jeval, and the file opens offline. The threshold slider in ④ is exploration only — the report
+never writes `thresholds.yaml`, because a browser should not be editing your configuration.
+
+```sh
+jeval report                          # report.html
+jeval report -o out/week38.html       # somewhere specific
+jeval report --by lang --by tier      # segment breakdown, two axes gives a grid
+jeval report --question intent        # one question only
+jeval report --compare .jeval/baseline.json   # activate ⑥ Drift
+jeval report --format md              # verdict + impact as markdown, for a PR comment
+jeval report --open                   # open it when it is done
+```
+
+`--format md` prints only the verdict and the impact table. That is deliberate: it is what a CI
+job pastes into a pull request when `jeval drift` fails, so a reviewer learns what happened
+without opening a file. jeval itself never posts it — that needs a token, and jeval does not
+handle tokens.
+
+`jeval threshold` writes the file your application reads:
+
+```yaml
+generated_at: 2026-09-20T11:00:00Z
+model: jev-1.13.0
+n_records: 1240
+actions:
+  auto_refund:
+    threshold: 0.91
+    expected_cost_per_case: 1830
+    auto_rate: 0.62
+    ci: {low: 0.87, high: 0.94}
+```
+
+Wide interval? That is a label problem, not an analysis problem, and the command says so.
 
 ## Install
 

@@ -21,6 +21,9 @@ and a pull request adding them will be closed:
 - SaaS dashboards, servers, background daemons, account systems
 - Databases, ORMs, migrations — storage is JSONL files
 - Plotting libraries: the report is hand-written inline SVG
+- Any chart that carries meaning in colour alone, or any chart without `<title>`/`<desc>`
+- A report that writes configuration (`thresholds.yaml` belongs to `jeval threshold`), fetches
+  anything at runtime, or posts to a PR (jeval never holds a token)
 - Vendor-specific behavior of any kind: jeval must work for anything that returns a probability
 - Non-English artifacts: no i18n, no translated docs, no localized CLI strings
 - `score`-type records folded into binary accuracy (they are excluded and counted)
@@ -36,7 +39,15 @@ and a pull request adding them will be closed:
 | `jeval/calibration.py` | binning, ECE/MCE/Brier, Wilson and bootstrap intervals — pure functions |
 | `jeval/evaluate.py` | record set to report-ready structures; gold/silver separation |
 | `jeval/synth.py` | synthetic logs with known miscalibration; shared by tests and `jeval demo` |
-| `jeval/report/` | inline SVG and the single-file HTML document |
+| `jeval/costs.py` | cost matrix, threshold sweep, the bootstrap interval on the threshold, impact table |
+| `jeval/drift.py` | slices by model version or period, model-change detection, `--fail-on` checks, CI text block |
+| `jeval/baseline.py` | baseline snapshots: measurements only, never records |
+| `jeval/report/model.py` | the frozen data contract every chart and the template render from |
+| `jeval/report/svg.py` | pure SVG primitives: scales, ticks, axes, legends, error bars |
+| `jeval/report/charts/` | one module per chart: reliability, cost, segments, drift |
+| `jeval/report/verdict.py` | verdict branching and the markdown summary |
+| `jeval/report/assets.py` | inline CSS and JavaScript |
+| `jeval/report/template.py` | section assembly in the fixed reading order |
 | `jeval/cli.py` | the Typer command surface; thin, no statistics logic |
 
 Statistics belong in `calibration.py`. If a metric needs to be computed anywhere else, it

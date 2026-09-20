@@ -24,9 +24,28 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   must report the inflation, and high confidence with low accuracy must be flagged as
   overconfident.
 
+- `jeval threshold` turns a cost matrix into a per-action threshold with a bootstrap interval and
+  writes `thresholds.yaml`; a wide interval is reported as a label problem rather than hidden.
+- `jeval drift` compares model versions or periods, supports baseline snapshots
+  (`--save-baseline` / `--baseline`), and fails a build with `--fail-on ece-increase=0.05`.
+- `jeval report` now writes an argument document rather than a metrics dump, in a fixed reading
+  order: verdict, reliability, cost, impact, segments, drift, data quality.
+- Charts are hand-written inline SVG with no plotting dependency, colour-blind-safe and never
+  colour-only: reliability curves with sample-sized dots and Wilson intervals, a cost curve with
+  its minimum and flat region, segment bars with a per-segment curve on click, and a drift view
+  with model-change markers.
+- The report embeds only aggregates (never raw records), stays under 1 MB, works offline, prints
+  to a single A4 page, and follows `prefers-color-scheme` for dark mode.
+- `jeval report --format md` prints the verdict and impact table as markdown for a PR comment.
+- Accessibility: `<title>`/`<desc>` on every chart, collapsible data tables under each chart, and
+  a no-JavaScript reading path.
+
 ### Notes
 
 - `score`-type records are excluded from binary accuracy and counted separately in the report.
-- `jeval threshold` (M1), `jeval drift` (M2), and `jeval label` (M4) are not implemented yet.
+- The report explores thresholds with a slider but never writes `thresholds.yaml`; only
+  `jeval threshold` writes configuration.
+- jeval prints markdown for CI but never posts it: it does not handle tokens.
+- `jeval label` (M4) is not implemented yet.
 
 [Unreleased]: https://github.com/rlaope/jeval/commits/main
