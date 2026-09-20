@@ -589,6 +589,15 @@ def sweep(
     curve = _points_from(series, grid)
     best = curve[_argmin_high(series.cost)]
     ci_low, ci_high = _bootstrap(action, sample, steps=steps, n_boot=n_boot, alpha=alpha, seed=seed)
+    region = flat_region(curve)
+    if region is not None and region[0] <= 0.0 and region[1] >= 1.0:
+        # Every threshold costs the same, so the sweep cannot separate them and a "recommendation"
+        # is the documented tie-break rather than a finding. The interval goes with it, because a
+        # zero-width interval printed beside a flat region contradicts the region it sits next to.
+        ci_low = ci_high = _NAN
+    # A narrow-but-real interval is left alone: every resample agreeing on one threshold is
+    # information about stability, not a claim of exactness, and the flat region is printed with
+    # it.
     return ThresholdResult(
         action=action.name,
         question=action.question,
@@ -600,7 +609,7 @@ def sweep(
         ci_low=ci_low,
         ci_high=ci_high,
         curve=curve,
-        flat_region=flat_region(curve),
+        flat_region=region,
         n_records=n_records,
         models=models,
         cost_false_accept=action.cost_false_accept,
@@ -684,8 +693,9 @@ def sweep_by_segment(
     """
     if not isinstance(segment_key, str) or not segment_key.strip():
         raise ValueError("segment_key must be a non-empty string")
-    if min_records < 1:
-        raise ValueError(f"min_records must be >= 1, got {min_records}")
+    # Clamped rather than refused, which is what the docstring promises: a sub-floor request is
+    # raised to the module's own floor.
+    min_records = max(1, int(min_records))
     if steps < 2:
         raise ValueError(f"steps must be >= 2 to sweep a range, got {steps}")
     if not 0.0 < alpha < 1.0:

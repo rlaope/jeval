@@ -53,9 +53,22 @@ MIN_LABELS_FOR_PROJECTION = 200
 TARGET_WIDTH_FRACTIONS: tuple[float, ...] = (0.5, 0.25)
 
 ASSUMPTION = (
-    "Estimate, not a measurement: assumes the bootstrap ECE interval width scales as k/sqrt(n), "
-    "with k fitted from the observed width at n and at the first n/2 records of this scope."
+    "Estimate, not a measurement: assumes the bootstrap ECE interval width scales as k / n**a, "
+    "with k and a fitted from the observed width at n, n/2 and n/4 records of this scope, and a "
+    "fixed a = 0.5 when three widths could not be measured."
 )
+
+
+def _assumption_note(plan: LabelPlan) -> str:
+    """The assumption, with the fit that carried it and how far the fit drifted."""
+    if plan.exponent is None:
+        return ASSUMPTION
+    drift = "" if plan.residual is None else f", worst deviation {plan.residual:.1%}"
+    return (
+        f"{ASSUMPTION} Fitted here: a = {plan.exponent:.3f}{drift}. The width shrinks slower than "
+        "1/sqrt(n) at these sample sizes, so a projection using the fixed exponent would ask for "
+        "fewer labels than the target really needs."
+    )
 
 
 @dataclass(frozen=True)
@@ -83,6 +96,8 @@ class LabelPlan:
     reason: str = ""
     fit_k: float | None = None
     n_half: int = 0
+    exponent: float | None = None
+    residual: float | None = None
 
 
 def _calibration_points(records: Sequence[DecisionRecord]) -> tuple[list[float], list[bool]]:
@@ -136,6 +151,44 @@ def _fit_width_constant(n: int, width: float, n_half: int, width_half: float) ->
     return fitted
 
 
+def _fit_scaling(
+    n: int, width: float, n_half: int, width_half: float, n_quarter: int, width_quarter: float
+) -> tuple[float, float, float] | None:
+    """Fit ``width = k / n**a`` across three subsample sizes, and measure the residual.
+
+    A fixed ``a = 0.5`` was optimistic: measured k drifted 1.32 -> 1.52 between n=200 and n=3200 on
+    this tool's own generator, so a projection built on the assumption under-counted the labels a
+    target needs. Three points give both the exponent and a residual, so the caller can say how well
+    the law held over the range it is extrapolating from.
+    """
+    points = [(n, width), (n_half, width_half), (n_quarter, width_quarter)]
+    if any(size <= 0 for size, _ in points):
+        return None
+    if not all(math.isfinite(value) and value > 0.0 for _, value in points):
+        return None
+    xs = [math.log(size) for size, _ in points]
+    ys = [math.log(value) for _, value in points]
+    mean_x = sum(xs) / 3.0
+    mean_y = sum(ys) / 3.0
+    sxx = sum((x - mean_x) ** 2 for x in xs)
+    sxy = sum((x - mean_x) * (y - mean_y) for x, y in zip(xs, ys, strict=True))
+    if sxx <= 0.0:
+        return None
+    slope = sxy / sxx
+    intercept = mean_y - slope * mean_x
+    exponent = -slope
+    if not math.isfinite(exponent) or not (0.05 <= exponent <= 2.0):
+        return None
+    k = math.exp(intercept)
+    if not math.isfinite(k) or k <= 0.0:
+        return None
+    residual = max(
+        abs(math.exp(intercept + slope * x) - value) / value
+        for x, (_, value) in zip(xs, points, strict=True)
+    )
+    return k, exponent, residual
+
+
 def _target_widths(ci_width: float, target_ci: float) -> tuple[float, ...]:
     """The widths one plan reports: the caller's target, plus fractions of the measured width."""
     widths = [target_ci]
@@ -144,13 +197,13 @@ def _target_widths(ci_width: float, target_ci: float) -> tuple[float, ...]:
     return tuple(sorted(set(widths)))
 
 
-def _labels_needed(k: float, target: float, n_now: int) -> int | None:
+def _labels_needed(k: float, target: float, n_now: int, *, exponent: float = 0.5) -> int | None:
     """Additional labels to reach ``target``, or ``None`` when the fit gives an absurd number."""
     if target <= 0.0 or k <= 0.0:
         return None
     # Decided in log space: `(k / target) ** 2` raises OverflowError long before it returns
     # inf, so a tiny target crashed the command instead of being reported as unprojectable.
-    log_needed = 2.0 * (math.log(k) - math.log(target))
+    log_needed = (math.log(k) - math.log(target)) / exponent
     if log_needed > math.log(ABSURD_LABEL_COUNT):
         return None
     n_needed = math.exp(log_needed)
@@ -204,8 +257,19 @@ def _plan_scope(
         )
 
     n_half = n_now // 2
+    n_quarter = n_now // 4
     half = _measure(confidences[:n_half], correct[:n_half], alpha, seed)
-    fit_k = _fit_width_constant(n_now, metrics.ece_ci_span, n_half, half.ece_ci_span)
+    quarter = _measure(confidences[:n_quarter], correct[:n_quarter], alpha, seed)
+    scaling = _fit_scaling(
+        n_now, metrics.ece_ci_span, n_half, half.ece_ci_span, n_quarter, quarter.ece_ci_span
+    )
+    if scaling is None:
+        scaling = None
+        fit_k = _fit_width_constant(n_now, metrics.ece_ci_span, n_half, half.ece_ci_span)
+        exponent = 0.5
+        residual = None
+    else:
+        fit_k, exponent, residual = scaling
     if fit_k is None:
         return _unprojectable(
             scope,
@@ -221,7 +285,7 @@ def _plan_scope(
 
     projected: list[tuple[float, int]] = []
     for target in _target_widths(metrics.ece_ci_span, target_ci):
-        count = _labels_needed(fit_k, target, n_now)
+        count = _labels_needed(fit_k, target, n_now, exponent=exponent)
         if count is None:
             return _unprojectable(
                 scope,
@@ -244,6 +308,8 @@ def _plan_scope(
         assumption=ASSUMPTION,
         fit_k=fit_k,
         n_half=n_half,
+        exponent=exponent,
+        residual=residual,
     )
 
 

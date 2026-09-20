@@ -54,7 +54,9 @@ from numpy.typing import NDArray
 from jeval.schema import DecisionRecord
 
 DEFAULT_LEVEL_BINS = 5
-MIN_USABLE_PAIRS = 2
+MIN_USABLE_PAIRS = 3
+"""Two pairs always produce a perfect rank correlation of +/-1, which is arithmetic, not
+agreement: three is the least a rank statistic can say anything from."""
 _DEGENERATE_RANGE = 1e-12
 
 
