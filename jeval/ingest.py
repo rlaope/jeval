@@ -4,14 +4,17 @@ from __future__ import annotations
 
 import csv
 import json
-from collections.abc import Iterator, Mapping, Sequence
+import os
+import tempfile
+from collections.abc import Collection, Iterable, Iterator, Mapping, MutableSequence, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from jeval.config import IngestMap
-from jeval.schema import DecisionRecord, normalize_record
+from jeval.schema import ALL_LABEL_SOURCES, DecisionRecord, LabelSource, normalize_record
+from jeval.store import read_records
 
 
 @dataclass
@@ -138,3 +141,383 @@ def ingest_files(
             handle.write(record.model_dump_json() + "\n")
     report.n_records = len(records)
     return report
+
+
+_MISSING = object()
+_JSON = json.JSONDecoder()
+
+
+def _read_path(row: Mapping[str, Any], path: str) -> Any:
+    """Read a dotted path (``resolution.final_department``) out of a raw row.
+
+    Returns ``_MISSING`` when any segment is absent, so "no such column" and "column present
+    but empty" stay distinguishable: the first is a mapping mistake worth an error, the second
+    is just a row without an answer yet.
+    """
+    current: Any = row
+    for part in path.split("."):
+        if not isinstance(current, Mapping) or part not in current:
+            return _MISSING
+        current = current[part]
+    return current
+
+
+def _label_text(value: Any) -> str:
+    """Render an external label as the string the schema stores."""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, bool):
+        return "yes" if value else "no"
+    return str(value).strip()
+
+
+def _describe_columns(rows: Sequence[Mapping[str, Any]]) -> str:
+    columns = sorted({str(key) for row in rows for key in row})
+    return ", ".join(columns) if columns else "none"
+
+
+@dataclass(frozen=True)
+class LabelApplication:
+    """One record that received an external label."""
+
+    record_id: str
+    question_key: str
+    label: str
+    label_source: LabelSource
+
+
+@dataclass
+class HarvestReport:
+    """What a label harvest did: applied, unmatched, and skipped, never a silent drop."""
+
+    field: str
+    source: LabelSource
+    join_on: str
+    question: str | None = None
+    n_records: int = 0
+    n_label_rows: int = 0
+    n_applied: int = 0
+    n_unmatched: int = 0
+    n_skipped_without_key: int = 0
+    n_kept_existing: int = 0
+    n_rows_without_key: int = 0
+    n_rows_without_label: int = 0
+    n_other_question: int = 0
+    n_unlisted_label: int = 0
+    applications: tuple[LabelApplication, ...] = ()
+    unmatched_keys: tuple[str, ...] = ()
+    kept_existing_question_keys: tuple[str, ...] = ()
+    unlisted_labels: tuple[str, ...] = ()
+
+    @property
+    def applied_question_keys(self) -> tuple[str, ...]:
+        """The questions that gained at least one label, sorted."""
+        return tuple(sorted({application.question_key for application in self.applications}))
+
+    @property
+    def ok(self) -> bool:
+        return self.n_applied > 0
+
+
+def harvest_labels(
+    records: MutableSequence[DecisionRecord],
+    label_rows: Iterable[Mapping[str, Any]],
+    *,
+    field: str,
+    source: LabelSource,
+    join_on: str,
+    overwrite: bool = False,
+    question: str | None = None,
+    allow_unlisted: bool = False,
+) -> HarvestReport:
+    """Apply external human answers to records that already exist.
+
+    ``field`` is the column (or dotted path) in ``label_rows`` that holds the answer,
+    ``join_on`` is the column that holds the key tying a label row back to a record's
+    ``source_key``, and ``source`` is the provenance recorded next to the answer. The labels
+    are the ones the user is already producing: the human answer on an escalated case, the
+    reversal of an auto-processed one.
+
+    Records are updated in place, so the caller can hand the same list to the report or to
+    :func:`rewrite_labels_atomic`. That means labels appear on the sequence that was passed:
+    a reference to a record taken *before* the harvest is not updated. Every applied value
+    goes through schema validation, so a ``noul`` answer of ``"FALSE"`` is stored as ``"no"``.
+
+    Existing labels are never replaced unless ``overwrite=True``: a silver label silently
+    overwriting a human review would be the most expensive bug this tool could have, so those
+    records are counted in ``n_kept_existing`` and named in ``kept_existing_question_keys``
+    instead. Label rows that match no record are counted in ``n_unmatched`` and named in
+    ``unmatched_keys``; they are a symptom (a stale key, a wrong column) and are never dropped
+    quietly.
+
+    Two guards stop this function from writing a label that is merely well-formed:
+
+    ``question`` scopes the harvest to one question. A join key is usually shared by every
+    question of a request, so ``resolution.final_department`` joined on ``ticket_id`` matches the
+    request's *intent* record too, and without scoping the department answer would be written as
+    the intent answer. Records of another question are counted in ``n_other_question``.
+
+    A label is also refused when the record itself proves it cannot be one: a ``choice`` label
+    outside the record's own ``probabilities`` keys is not something that question can answer, and
+    a ``noul`` label outside yes/no is not a yes/no answer. Those are counted in
+    ``n_unlisted_label`` and named in ``unlisted_labels``. ``allow_unlisted=True`` lifts the second
+    guard for classifiers whose ``probabilities`` map lists only the top candidates.
+    """
+    if not field.strip() or not join_on.strip():
+        raise ValueError("harvest_labels needs both a label field and a join key")
+    if source not in ALL_LABEL_SOURCES:
+        allowed = ", ".join(ALL_LABEL_SOURCES)
+        raise ValueError(f"label source {source!r} is not one of {allowed}")
+
+    rows = [dict(row) for row in label_rows]
+    if rows and not any(_read_path(row, join_on) is not _MISSING for row in rows):
+        raise ValueError(
+            f"label rows have no {join_on!r} column to join on; columns present: "
+            f"{_describe_columns(rows)}"
+        )
+    if rows and not any(_read_path(row, field) is not _MISSING for row in rows):
+        raise ValueError(
+            f"label rows have no {field!r} field; columns present: {_describe_columns(rows)}"
+        )
+
+    report = HarvestReport(
+        field=field,
+        source=source,
+        join_on=join_on,
+        question=question,
+        n_records=len(records),
+        n_label_rows=len(rows),
+    )
+
+    labels_by_key: dict[str, str] = {}
+    for row in rows:
+        raw_key = _read_path(row, join_on)
+        key = "" if raw_key is _MISSING or raw_key is None else str(raw_key).strip()
+        if not key:
+            report.n_rows_without_key += 1
+            continue
+        raw_label = _read_path(row, field)
+        if raw_label is _MISSING or raw_label is None:
+            report.n_rows_without_label += 1
+            continue
+        text = _label_text(raw_label)
+        if not text:
+            report.n_rows_without_label += 1
+            continue
+        # A resolution log that answers the same case twice is applied in file order.
+        labels_by_key[key] = text
+
+    applications: list[LabelApplication] = []
+    matched: set[str] = set()
+    kept: list[str] = []
+    unlisted: set[str] = set()
+    for index, record in enumerate(records):
+        key = record.source_key.strip() if record.source_key else ""
+        if not key:
+            report.n_skipped_without_key += 1
+            continue
+        if key not in labels_by_key:
+            continue
+        if question is not None and record.question_key != question:
+            report.n_other_question += 1
+            continue
+        matched.add(key)
+        if record.label is not None and not overwrite:
+            report.n_kept_existing += 1
+            kept.append(record.question_key)
+            continue
+        updated = DecisionRecord.model_validate(
+            {**record.model_dump(), "label": labels_by_key[key], "label_source": source}
+        )
+        if updated.label is None:  # pragma: no cover - the schema keeps any non-empty answer
+            report.n_rows_without_label += 1
+            continue
+        if not allow_unlisted and not _label_is_possible(record, updated.label):
+            report.n_unlisted_label += 1
+            unlisted.add(f"{key}:{record.question_key}={updated.label}")
+            continue
+        records[index] = updated
+        report.n_applied += 1
+        applications.append(
+            LabelApplication(
+                record_id=updated.id,
+                question_key=updated.question_key,
+                label=updated.label,
+                label_source=source,
+            )
+        )
+
+    report.applications = tuple(applications)
+    report.unmatched_keys = tuple(sorted(set(labels_by_key) - matched))
+    report.n_unmatched = len(report.unmatched_keys)
+    report.kept_existing_question_keys = tuple(sorted(set(kept)))
+    report.unlisted_labels = tuple(sorted(unlisted))
+    return report
+
+
+def _label_is_possible(record: DecisionRecord, label: str) -> bool:
+    """Whether ``label`` is an answer this record's own question could have produced."""
+    if record.question_type == "choice":
+        candidates = record.probabilities
+        if not candidates:
+            return True  # nothing to check against; the caller's mapping is all we have
+        return label in candidates
+    if record.question_type == "noul":
+        return label.strip().lower() in {"yes", "no"}
+    if record.question_type == "score":
+        try:
+            float(label)
+        except (TypeError, ValueError):
+            return False
+        return True
+
+
+def harvest_file(
+    records_path: Path | str,
+    label_rows: Iterable[Mapping[str, Any]],
+    *,
+    field: str,
+    source: LabelSource,
+    join_on: str,
+    overwrite: bool = False,
+    question: str | None = None,
+    allow_unlisted: bool = False,
+) -> HarvestReport:
+    """Harvest labels into a records file and rewrite that file atomically."""
+    path = Path(records_path)
+    records = read_records(path)
+    report = harvest_labels(
+        records,
+        label_rows,
+        field=field,
+        source=source,
+        join_on=join_on,
+        overwrite=overwrite,
+        question=question,
+        allow_unlisted=allow_unlisted,
+    )
+    if report.applications:
+        rewrite_labels_atomic(path, report.applications)
+    return report
+
+
+def _skip_whitespace(text: str, index: int) -> int:
+    while index < len(text) and text[index] in " \t\r\n":
+        index += 1
+    return index
+
+
+def _top_level_spans(line: str, keys: Collection[str]) -> dict[str, tuple[int, int]]:
+    """Spans of the raw JSON values for ``keys`` in one flat, single-line JSON object."""
+    wanted = set(keys)
+    spans: dict[str, tuple[int, int]] = {}
+    index = _skip_whitespace(line, 0)
+    if index >= len(line) or line[index] != "{":
+        return spans
+    index += 1
+    while True:
+        index = _skip_whitespace(line, index)
+        if index >= len(line) or line[index] == "}":
+            return spans
+        if line[index] == ",":
+            index += 1
+            continue
+        try:
+            key, index = _JSON.raw_decode(line, index)
+        except json.JSONDecodeError:
+            return spans
+        if not isinstance(key, str):
+            return spans
+        index = _skip_whitespace(line, index)
+        if index >= len(line) or line[index] != ":":
+            return spans
+        index = _skip_whitespace(line, index + 1)
+        try:
+            _, end = _JSON.raw_decode(line, index)
+        except json.JSONDecodeError:
+            return spans
+        if key in wanted:
+            spans[key] = (index, end)
+        index = end
+
+
+def _set_json_field(line: str, key: str, value: Any) -> str:
+    """Replace one top-level field of a JSON line, leaving every other byte alone."""
+    encoded = json.dumps(value, ensure_ascii=False)
+    span = _top_level_spans(line, (key,)).get(key)
+    if span is not None:
+        return line[: span[0]] + encoded + line[span[1] :]
+    body = line.rstrip("\r\n")
+    tail = line[len(body) :]
+    close = body.rfind("}")
+    if close == -1:
+        return line
+    separator = "" if body[:close].rstrip().endswith("{") else ","
+    addition = f"{separator}{json.dumps(key)}:{encoded}"
+    return body[:close] + addition + body[close:] + tail
+
+
+def _write_atomically(target: Path, text: str) -> None:
+    """Replace ``target`` with ``text`` through a temp file in the same directory."""
+    handle, temp_name = tempfile.mkstemp(
+        prefix=f".{target.name}.", suffix=".tmp", dir=target.parent
+    )
+    temp = Path(temp_name)
+    try:
+        with os.fdopen(handle, "w", encoding="utf-8", newline="") as stream:
+            stream.write(text)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temp, target)
+    except BaseException:
+        temp.unlink(missing_ok=True)
+        raise
+
+
+def rewrite_labels_atomic(
+    path: Path | str,
+    applications: Iterable[LabelApplication],
+) -> int:
+    """Write harvested labels into a records file, atomically. Returns the lines changed.
+
+    Only the ``label`` and ``label_source`` values of the named records are touched: every
+    other byte of the file — every other field, the key order, the number formatting, the
+    lines of records that were not labeled — is copied through untouched. ``records.jsonl`` is
+    the user's data file, so a harvest must not be an excuse to reformat it.
+
+    The new content is written to a temp file next to the original and moved into place with
+    ``os.replace``, so an interrupted run leaves either the complete old file or the complete
+    new one. A caller that expects every application to land in the file should compare the
+    returned count with ``len(applications)``.
+    """
+    target = Path(path)
+    if not target.exists():
+        raise FileNotFoundError(f"no records file at {target}")
+    updates = {application.record_id: application for application in applications}
+    if not updates:
+        return 0
+
+    lines = target.read_text(encoding="utf-8").splitlines(keepends=True)
+    rebuilt: list[str] = []
+    changed = 0
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            rebuilt.append(line)
+            continue
+        try:
+            payload = json.loads(stripped)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"{target}: invalid JSON ({exc.msg})") from exc
+        if not isinstance(payload, dict):
+            raise ValueError(f"{target}: expected a JSON object per line")
+        update = updates.get(str(payload.get("id")))
+        if update is None:
+            rebuilt.append(line)
+            continue
+        patched = _set_json_field(line, "label", update.label)
+        patched = _set_json_field(patched, "label_source", update.label_source)
+        changed += 1
+        rebuilt.append(patched)
+    _write_atomically(target, "".join(rebuilt))
+    return changed

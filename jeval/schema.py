@@ -9,13 +9,14 @@ from __future__ import annotations
 import secrets
 from collections.abc import Mapping
 from datetime import datetime, timezone
-from typing import Any, Literal
+from typing import Any, Literal, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 QuestionType = Literal["choice", "score", "noul"]
 LabelSource = Literal["human_review", "human_override", "silver"]
 
+ALL_LABEL_SOURCES: tuple[str, ...] = tuple(get_args(LabelSource))
 GOLD_LABEL_SOURCES: frozenset[str] = frozenset({"human_review", "human_override"})
 SILVER_LABEL_SOURCE = "silver"
 
@@ -63,6 +64,10 @@ class DecisionRecord(BaseModel):
     probabilities: dict[str, float] | None = None
     label: str | None = None
     label_source: LabelSource | None = None
+    source_key: str | None = Field(
+        default=None,
+        description="Key of the source row this record came from; the join key for free labels.",
+    )
     segment: dict[str, str] = Field(default_factory=dict)
     state_tokens: int | None = None
     latency_ms: float | None = None
@@ -208,6 +213,7 @@ def normalize_record(payload: Mapping[str, Any]) -> DecisionRecord:
         "probabilities",
         "label",
         "label_source",
+        "source_key",
         "segment",
         "state_tokens",
         "latency_ms",
@@ -218,6 +224,9 @@ def normalize_record(payload: Mapping[str, Any]) -> DecisionRecord:
     extra["prediction"] = str(prediction)
     extra["confidence"] = confidence
     extra["probabilities"] = probabilities
+
+    if extra.get("source_key") is not None:
+        extra["source_key"] = str(extra["source_key"])
 
     label = payload.get("label")
     if question_type == "noul" and label is not None:

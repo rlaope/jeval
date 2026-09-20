@@ -10,6 +10,7 @@ from typing import Any
 import yaml
 
 from jeval.calibration import DEFAULT_ALPHA, DEFAULT_N_BINS
+from jeval.schema import ALL_LABEL_SOURCES
 from jeval.store import DATA_DIR_NAME
 
 DEFAULT_CONFIG: dict[str, Any] = {
@@ -74,6 +75,20 @@ def load_config(root: Path | str = ".") -> Config:
 
 
 @dataclass(frozen=True)
+class LabelFromSpec:
+    """The ``label_from`` block of an ingest map, parsed and checked."""
+
+    field: str
+    source: str
+    join_on: str
+    question: str | None = None
+
+    @property
+    def known_source(self) -> bool:
+        return self.source in ALL_LABEL_SOURCES
+
+
+@dataclass(frozen=True)
 class IngestMap:
     """How raw log fields map onto the decision-record schema."""
 
@@ -86,6 +101,53 @@ class IngestMap:
         """Read ``field`` from a raw row, honouring the configured source name."""
         source = self.field_map.get(field, field)
         return row.get(source)
+
+    def source_key_source(self) -> str:
+        """Raw field name that carries the join key for free labels.
+
+        ``field_map`` wins when it names a source for ``source_key``; otherwise
+        ``label_from.join_on`` is used, because the key that ties a label row back to a request
+        is normally called the same thing in the log as in the resolution file. With neither
+        configured, a log that already uses the schema name is read as-is.
+        """
+        mapped = self.field_map.get("source_key")
+        if mapped:
+            return str(mapped)
+        join_on = str(self.label_from.get("join_on") or "").strip()
+        return join_on or "source_key"
+
+    def label_spec(self) -> LabelFromSpec | None:
+        """Parse ``label_from``; ``None`` when the block is absent.
+
+        A half-filled block raises instead of being ignored: the README promises this mapping
+        applies labels, so a silently dropped key would leave a user believing they had ground
+        truth when they had none.
+        """
+        if not self.label_from:
+            return None
+        missing = [
+            key
+            for key in ("field", "source", "join_on")
+            if not str(self.label_from.get(key) or "").strip()
+        ]
+        if missing:
+            raise ValueError(
+                f"ingest map: label_from is missing {', '.join(missing)} "
+                "(it needs field, source and join_on)"
+            )
+        raw_question = str(self.label_from.get("question") or "").strip()
+        spec = LabelFromSpec(
+            field=str(self.label_from["field"]).strip(),
+            source=str(self.label_from["source"]).strip(),
+            join_on=str(self.label_from["join_on"]).strip(),
+            question=raw_question or None,
+        )
+        if not spec.known_source:
+            allowed = ", ".join(ALL_LABEL_SOURCES)
+            raise ValueError(
+                f"ingest map: label_from.source is {spec.source!r}, expected one of {allowed}"
+            )
+        return spec
 
     def apply(self, row: Mapping[str, Any]) -> dict[str, Any]:
         """Project a raw row onto schema field names, then add defaults."""
@@ -109,6 +171,11 @@ class IngestMap:
             value = self.resolve(row, name)
             if value not in (None, ""):
                 payload[name] = value
+        if "source_key" not in payload:
+            key_field = self.source_key_source()
+            value = row.get(key_field)
+            if value not in (None, ""):
+                payload["source_key"] = value
         for key, value in self.defaults.items():
             payload.setdefault(key, value)
         return payload
