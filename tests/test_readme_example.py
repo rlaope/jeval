@@ -125,8 +125,13 @@ def test_the_readme_size_claim_matches_the_file() -> None:
 
 
 def test_every_image_the_readme_references_exists() -> None:
-    images = re.findall(r"!\[[^\]]*\]\(([^)]+)\)", _readme())
+    readme = _readme()
+    # Markdown images and the HTML <img> form used for the side-by-side pair.
+    images = re.findall(r"!\[[^\]]*\]\(([^)]+)\)", readme) + re.findall(
+        r'<img[^>]+src="([^"]+)"', readme
+    )
     assert images, "the README should show the artifact it quotes"
+    assert len(images) >= 2, "the README pairs the verdict and cost screenshots"
     for image in images:
         target = REPO / image
         assert target.exists(), f"README references a missing image: {image}"

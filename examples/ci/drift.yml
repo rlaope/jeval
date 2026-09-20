@@ -1,0 +1,79 @@
+# Example: fail a build when calibration degrades.
+#
+# This is a copy-paste starting point, not a workflow this repository runs (jeval's own CI tests
+# the library; this file shows how you would gate *your* model on drift). It assumes a repository
+# that keeps its decision records in .jeval/records.jsonl and its cost matrix in costs.yaml.
+#
+# jeval prints the markdown summary; posting it is the workflow's job, because jeval never holds a
+# token. That split is deliberate.
+
+name: calibration-drift
+
+on:
+  pull_request:
+  schedule:
+    - cron: "0 6 * * 1"   # every Monday, so a silent model swap is caught within a week
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write   # only for the comment step
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@v5
+
+      # The records are production data and usually are NOT in the repository. Fetch them however
+      # you already move data around (artifact, warehouse export, S3), and place them at
+      # .jeval/records.jsonl before the next step.
+      - name: Provide decision records
+        run: |
+          test -s .jeval/records.jsonl || {
+            echo "no .jeval/records.jsonl: fetch your decision log here, or drop this workflow"
+            exit 1
+          }
+
+      # Optional: compare against the last known-good measurement instead of only model-to-model.
+      # commit .jeval/baseline.json (measurements only, never records) to compare against it.
+      - name: Check drift
+        id: drift
+        continue-on-error: true
+        run: |
+          uvx jeval drift \
+            --fail-on ece-increase=0.05 \
+            --fail-on auto-rate-drop=0.15 \
+            ${BASELINE:+--baseline "$BASELINE"} \
+            2>&1 | tee drift-report.txt
+        env:
+          BASELINE: ${{ hashFiles('.jeval/baseline.json') != '' && '.jeval/baseline.json' || '' }}
+
+      # The summary is what a reviewer reads without opening anything.
+      - name: Render the summary for the comment
+        if: always()
+        run: |
+          uvx jeval report --format md >> drift-report.txt || true
+
+      - name: Comment on the pull request
+        if: always() && github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          {
+            echo '<!-- jeval-drift -->'
+            echo '```'
+            cat drift-report.txt
+            echo '```'
+          } > comment.md
+          gh pr comment "${{ github.event.number }}" --body-file comment.md
+
+      - name: Fail the build if calibration degraded
+        if: steps.drift.outcome == 'failure'
+        run: |
+          echo "calibration drifted: see the comment on this pull request"
+          exit 1

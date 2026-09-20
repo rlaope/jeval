@@ -8,6 +8,32 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- `jeval ingest --labels`: free-label harvest. Human answers from a resolution log are joined onto
+  existing records by your own key, rewritten atomically, and never overwrite an existing label
+  unless `--overwrite` is passed. A label the record's own question cannot produce is refused and
+  named rather than written.
+- `jeval plan`: additional labels needed per question and segment for a target interval width,
+  with an explicit refusal below 200 labels and the scaling assumption printed with every number.
+- `jeval label`: active-learning queue (threshold band, flat probability distributions, sparse
+  confidence bins) with a CSV sheet to fill in and `--apply` to write answers back.
+- `jeval calibrate`: temperature scaling and isotonic regression fitted on your log, exported as a
+  YAML map for your application to apply. The reported gain is cross-validated and a map is only
+  exported when it beats the sampling noise of the log; otherwise the command exports nothing and
+  says why.
+- `jeval threshold --by <segment>`: per-segment threshold sweep that answers whether splitting pays,
+  with the reason when it does not.
+- `jeval drift` reports the cost-driven threshold movement of each compared slice when a cost matrix
+  is present (`recommended threshold (department): 0.94 -> 1.00`, `auto-rate 11% -> 58%`).
+- `jeval report`: a score-type section (MAE, RMSE, rank correlation, level table) — score records
+  are measured as error and rank agreement, never as binary accuracy.
+- `tests/test_documented_features.py`: the README and the command surface are now checked against
+  each other in both directions, so a documented-but-unimplemented feature fails the suite.
+
+### Fixed
+- A label harvest joined on a shared key no longer writes one question's answer onto another
+  question's records (found by running the documented flow against a two-question log).
+
+### Added
 
 - `jeval init` scaffolds `.jeval/config.yaml`, an ingest map, and a cost-matrix template.
 - `jeval ingest` reads JSONL/CSV logs into decision records, one record per question, with a

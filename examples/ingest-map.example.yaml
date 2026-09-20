@@ -15,7 +15,11 @@ questions_field: questions
 # Labels for this sample already live inside each question payload. In a real log this is
 # where the free-label harvest goes: point `field` at the human answer that already exists
 # in your own records, and `join_on` at the key that ties it back to the request.
+#
+# `question` is not optional in practice: one join key is shared by every question of a
+# request, so without it a department answer is written onto the intent record too.
 label_from: {}
   # field: resolution.final_department
   # source: human_override
   # join_on: ticket_id
+  # question: department

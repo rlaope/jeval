@@ -7,6 +7,26 @@ Your classifier answers with a label and a confidence. jeval answers the two que
 follow: *when it says 0.9, how often is it actually right?* and *given what a mistake costs,
 where should the line sit?*
 
+## What it looks like
+
+<p align="center">
+  <img src="docs/report-verdict.png" width="49%" alt="Report verdict: 'Your threshold is too low', with stat cards and the reliability curve plotted against the perfect-calibration diagonal">
+  <img src="docs/report-cost.png" width="49%" alt="Cost curve with its minimum and flat region, the impact table comparing 0.60 to 0.97, and the threshold slider">
+</p>
+
+Left: the verdict and the reliability curve, with Wilson intervals on every bin. Right: the cost
+curve, the impact table, and the slider that recomputes it. Both are screenshots of the report
+committed to this repository — open
+[`examples/report-example.html`](examples/report-example.html) in a browser (one 246 KB file, no
+network, no server), or rebuild it byte-for-byte with:
+
+```sh
+uv run jeval demo --out-dir examples/report-example --seed 11 --scale 0.5
+```
+
+Synthetic data and synthetic costs, seeded, so the example is reproducible rather than a
+one-off screenshot anyone could have made up.
+
 It is **provider-neutral by design**. Anything that returns a probability works — a vendor API,
 a local model, a logistic regression, a rules engine with a score. jeval does not verify any
 vendor's calibration claim and is not tied to one: the name came from one model family, the
@@ -102,32 +122,24 @@ $ jeval drift --fail-on ece-increase=0.05
 model changed: jev-1.13.0 -> jev-1.14.0 (Sep 17)
   question    ECE before  ECE after   delta
   department       0.018      0.144  +0.126   FAIL
-note: ECE 95% bootstrap intervals per question: department 0.019-0.054 -> 0.118-0.164.
+recommended threshold (department): 0.94 -> 1.00
+  at the current 0.94: auto-rate 11% -> 58%
 $ echo $?
 1
 ```
 
-That is a captured run, not a mock-up: 1,800 synthetic decisions where the newer model version
-is deliberately overconfident. Wire the same command into CI and a model swap cannot silently
-degrade a production decision boundary.
+That is a captured run, not a mock-up: 1,800 synthetic decisions where the newer model version is
+deliberately overconfident. The threshold line only appears when a cost matrix is present — with
+no costs, the block says `recommended threshold: not available (no cost matrix was applied)` rather
+than inventing a number. Wire the same command into CI and a model swap cannot silently
+degrade a production decision boundary. There is a copy-paste starting point in
+[`examples/ci/drift.yml`](examples/ci/drift.yml): it runs `drift --fail-on`, prints the markdown
+summary, and comments it on the pull request. jeval prints that summary; the workflow posts it,
+because jeval never holds a token.
 
-## Open the real thing
-
-![The verdict and the reliability curve: "Your threshold is too low", with the curve below the diagonal in the 0.70-0.84 bands](docs/report-verdict.png)
-
-![The cost curve with its minimum and flat region, the impact table showing 0.60 to 0.97, and the threshold slider](docs/report-cost.png)
-
-Those are screenshots of the committed report — verdict and reliability first, then cost and
-impact. The file itself is in the repository: open
-[`examples/report-example.html`](examples/report-example.html) in a browser (one 246 KB file, no
-network, no server), or rebuild it byte-for-byte with:
-
-```sh
-uv run jeval demo --out-dir examples/report-example --seed 11 --scale 0.5
-```
-
-Synthetic data and synthetic costs, seeded, so the artifact is reproducible rather than a
-one-off screenshot anyone could have made up.
+`--baseline .jeval/baseline.json` compares against the last measurement you accepted rather than
+only model-to-model, which matters when the model string never changes but the behaviour does. The
+snapshot holds measurements, never records, so it is safe to commit.
 
 ## Try it in five minutes
 
@@ -151,7 +163,10 @@ leaves the machine; the demo data is generated locally and is explicitly labeled
 - **Without labels, jeval measures nothing.** Read "Getting labels for free" below before
   concluding the tool is unusable — you are probably already producing labels without
   noticing.
-- No gateway, no router, no hosting, no prompt optimization, no dashboard, no accounts.
+- `jeval calibrate` exports a correction map; **jeval never applies it**. Adapters, gateways,
+  routers and request-path libraries stay out of scope — that is your application's job.
+- No gateway, no router, no hosting, no prompt optimization, no fine-tuning, no dashboard,
+  no accounts.
 
 ## Getting labels for free
 
@@ -164,22 +179,128 @@ labeling project. You usually do not. You are already producing labels:
 | Auto-processed cases that were later reversed | the reversal — the model was wrong |
 | Refund approvals and rejections | the outcome — a real, dated answer |
 
-Map those fields in `.jeval/ingest-map.yaml` and labeling cost drops to a mapping exercise.
+Point `.jeval/ingest-map.yaml` at those fields and labeling cost drops to a mapping exercise:
+
+```yaml
+label_from:
+  field: resolution.final_department   # dotted paths work
+  source: human_override               # human_review | human_override | silver
+  join_on: ticket_id                   # the key shared by your log and the resolution log
+  question: department                 # the question this column answers
+```
+
+```sh
+$ jeval ingest log.jsonl                       # records carry source_key from `join_on`
+$ jeval ingest log.jsonl --labels resolutions.jsonl
+applied 412 labels to 1,240 records to the 'department' question
+left 828 record(s) of other questions alone: 'resolution.final_department' answers one question,
+  and a request's other questions share the same key
+```
+
+`question:` is not decoration. A join key is shared by every question of a request, so without it a
+department answer would also be written as the *intent* answer. Two guards stand between your
+records and a wrong label: a harvest never overwrites an existing label unless you pass
+`--overwrite`, and it refuses a label the record's own question could not have produced (a
+`choice` label outside that record's `probabilities`, a `noul` answer that is not yes/no) instead
+of writing it — refusing is counted and named in the output, because a wrong label is worse than a
+missing one. Pass `--allow-unlisted-labels` if your `probabilities` map lists top candidates only.
+
+The harvest rewrites `.jeval/records.jsonl` in place and atomically, touching only the label
+fields — every other byte of your log is preserved.
+
+## How many more labels do you need?
+
+The interval around your ECE is the honest limit of what your sample can say. `jeval plan` projects
+how many additional labels each question needs to tighten it — and refuses to guess below 200
+labels:
+
+```
+$ jeval plan --target-ci 0.05
+scope      key                       n     ECE      CI  needed
+question   department              511   0.062   0.059  0.015: 6,346 · 0.030: 1,204 · 0.050: 91
+question   intent                  490   0.124   0.064  0.016: 6,967 · 0.032: 1,375 · 0.050: 276
+question   satisfaction              0     nan     nan  only 0 gold-labeled records; at least 200
+  are needed before the k/sqrt(n) scaling can be fitted
+```
+
+The projection assumes the interval width scales as `k/sqrt(n)` with `k` fitted from your own data
+at `n` and `n/2`. It is an estimate, and the output says so.
+
+## If you want to fix the confidence, not just measure it
+
+`jeval calibrate` fits a correction — temperature scaling or isotonic regression — and exports it
+as a YAML map your application applies:
+
+```
+$ jeval calibrate --method both
+temperature: ECE 0.144 -> 0.061 (cross-validated, n=1,240)
+  wrote /your/project/.jeval/calibration-temperature.yaml
+isotonic: ECE 0.144 -> 0.072 (cross-validated, n=1,240)
+  wrote /your/project/.jeval/calibration-isotonic.yaml
+```
+
+Two things keep this honest. The gain is measured **cross-validated**, never on the records the map
+was fitted on, and a map ships only if that gain beats the sampling noise of your own log. When it
+does not, `calibrate` exports nothing and says so:
+
+```
+$ jeval calibrate --method isotonic
+isotonic: ECE 0.041 -> 0.041 (cross-validated, n=1,240)
+  No correction retained: the best map moves cross-validated ECE by +0.003, which does not clear
+  the 0.022 floor. Apply() is the identity here: this log does not need this correction.
+  no correction exported: shipping an unearned map would make it worse
+```
+
+jeval never applies the map. It writes a file; your application reads it. There is no request path
+where jeval sits between you and your model.
+
+## Segments: does one threshold fit everyone?
+
+The report already shows that your segments are not calibrated alike. `jeval threshold --by lang`
+asks the follow-up question in money: does giving a segment its own threshold pay?
+
+```
+$ jeval threshold --by lang
+auto_route by lang: global threshold 0.84
+  segment            threshold  cost/case  vs global      n  verdict
+  lang = en               0.81   1,306.30     -42.52    254  split
+  lang = ko               0.84   1,159.92       0.00    257  splitting does not pay: its optimum 0.84
+    is within one sweep step (0.01) of the global 0.84 and the cost change of 0 per case is
+    under the 2% bar.
+auto_escalate_urgent by lang: global threshold 0.87
+  segment            threshold  cost/case  vs global      n  verdict
+  lang = en               0.70     740.74    -119.05    189  split
+  lang = ko               0.89     912.09       0.00    182  splitting does not pay: its optimum 0.89
+    differs from the global 0.87 and the cost change of 0 per case is under the 2% bar.
+```
+
+That is the demo dataset with the demo cost matrix. A split is recommended only when the segment's
+optimum moves by more than one sweep step **and** adopting it changes cost per case by more than
+2%; otherwise the output says "splitting does not pay" and names the clause that failed. Note the
+answer is not uniform — `en` pays to split on both actions, `ko` never does. A one-line answer to a
+question people usually settle by intuition.
 
 ## Status
 
-v0.1 is milestones M0–M2 plus the report extension (R0–R4). Anything not listed as implemented
-below is not implemented; the repository does not ship stubs that look finished.
+v0.1 is milestones M0–M4 plus the report extension (R0–R4). Anything not listed as implemented
+below is not implemented; the repository does not ship stubs that look finished. `tests/test_documented_features.py`
+fails if this table and the command surface disagree in either direction.
 
 | Command | Purpose | Status |
 | --- | --- | --- |
 | `jeval init` | scaffold `.jeval/` config and ingest map | implemented (M0) |
 | `jeval ingest` | JSONL/CSV logs to decision records | implemented (M0) |
-| `jeval report` | the argument document: verdict, reliability, cost, impact, segments, drift, data quality — one HTML file, or `--format md` for a paste-ready summary | implemented |
+| `jeval report` | the argument document: verdict, reliability, cost, impact, segments, score questions, labels-and-correction, drift, data quality — one HTML file, or `--format md` for a paste-ready summary | implemented |
 | `jeval demo` | synthetic log with known miscalibration, rendered through the same report path | implemented |
-| `jeval threshold` | cost matrix to per-action threshold with a bootstrap interval, written to `thresholds.yaml` | implemented |
-| `jeval drift` | model-version and period comparison, baseline snapshots, and `--fail-on` exit codes | implemented |
-| `jeval label` | active-learning labeling queue | milestone M4 |
+| `jeval threshold` | cost matrix to per-action threshold with a bootstrap interval, written to `thresholds.yaml`; `--by <segment>` answers whether splitting pays | implemented |
+| `jeval drift` | model-version and period comparison, baseline snapshots, `--fail-on` exit codes, and the cost-driven threshold movement per slice when a cost matrix is present | implemented |
+| `jeval ingest --labels` | free-label harvest: human answers from a resolution log, joined on your own key (M3) | implemented |
+| `jeval label` | active-learning labeling queue with a CSV sheet to fill in (M4) | implemented |
+| `jeval plan` | additional labels needed for a tighter interval, per question and segment | implemented |
+| `jeval calibrate` | temperature / isotonic correction map, cross-validated, exported as YAML for your app | implemented |
+
+`jeval label` is a queue and a sheet, not a full-screen TUI: it ranks what to label, exports the
+sheet, and applies your answers back with `jeval label --apply labels.csv`.
 
 ## The report is an argument, not a dashboard
 
