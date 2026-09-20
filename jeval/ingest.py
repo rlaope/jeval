@@ -111,8 +111,14 @@ def records_from_row(row: Mapping[str, Any], mapping: IngestMap) -> list[Decisio
     if isinstance(questions, list) and questions:
         payloads: list[Mapping[str, Any]] = questions
         records: list[DecisionRecord] = []
+        base_id = shared.get("id")
         for payload in payloads:
             merged = {**shared, **{k: v for k, v in payload.items() if v not in (None, "")}}
+            if base_id is not None and len(payloads) > 1:
+                # A request's questions are separate decisions, so they cannot share an id: the
+                # harvest and the labeling sheet both address records BY id, and a duplicated id
+                # made one answer land on every question of the request.
+                merged["id"] = f"{base_id}:{merged.get('question_key', 'question')}"
             records.append(normalize_record(merged))
         return records
     return [normalize_record(mapping.apply(row))]
@@ -599,7 +605,9 @@ def rewrite_labels_atomic(
     if not updates:
         return 0
 
-    lines = target.read_text(encoding="utf-8").splitlines(keepends=True)
+    # Read the bytes: `read_text` applies universal-newline translation, which silently rewrote
+    # every CRLF line ending in the user's file while the docstring promised untouched bytes.
+    lines = target.read_bytes().decode("utf-8").splitlines(keepends=True)
     rebuilt: list[str] = []
     changed = 0
     for line in lines:

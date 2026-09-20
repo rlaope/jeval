@@ -6,6 +6,7 @@ one confidence, and (optionally) the ground truth for that answer.
 
 from __future__ import annotations
 
+import math
 import secrets
 from collections.abc import Mapping
 from datetime import datetime, timezone
@@ -181,15 +182,37 @@ def normalize_record(payload: Mapping[str, Any]) -> DecisionRecord:
             p_yes = 0.5 + half if normalized == "yes" else 0.5 - half
         if p_yes is None:
             raise ValueError("noul records need probability_positive, probabilities, or confidence")
-        p_yes = min(1.0, max(0.0, float(p_yes)))
-        probabilities = probabilities or {"yes": p_yes, "no": 1.0 - p_yes}
-        prediction = _coerce_binary_label(prediction) or ("yes" if p_yes > 0.5 else "no")
+        raw_yes = float(p_yes)
+        if not math.isfinite(raw_yes):
+            # `max(0.0, nan)` is 0.0, which would become a maximally confident "no".
+            raise ValueError(f"noul probability must be finite, got {raw_yes!r}")
+        p_yes = min(1.0, max(0.0, raw_yes))
+        # Rebuilt from the clamped value: storing the caller's map unchanged let a probability of
+        # 1.5 reach the record and the threshold sweep.
+        probabilities = {"yes": p_yes, "no": 1.0 - p_yes}
+        # The probability is authoritative for a yes/no answer: deriving the prediction from it
+        # keeps `confidence` the distance from the fence for the answer that was stored. A caller
+        # passing "yes" alongside p_yes = 0.0 used to store a maximally confident "yes".
+        prediction = "yes" if p_yes > 0.5 else "no"
         confidence = abs(p_yes - 0.5) * 2
     elif question_type == "choice":
         if probabilities:
             top_label, top_prob = confidence_from_probabilities(probabilities)
-            prediction = prediction if prediction is not None else top_label
-            confidence = top_prob
+            if prediction is None:
+                prediction = top_label
+                confidence = top_prob
+            else:
+                matching = next((key for key in probabilities if str(key) == str(prediction)), None)
+                if matching is None:
+                    # A winner its own distribution gives no mass to is not a decision: keep
+                    # confidence = P(prediction) would be 0, and top-1 would describe another class.
+                    raise ValueError(
+                        f"choice prediction {prediction!r} is not in its own probabilities map "
+                        f"({sorted(probabilities)})"
+                    )
+                # The confidence must be the probability of the answer that was stored, never
+                # the largest number in the map when those differ.
+                confidence = probabilities[matching]
         if prediction is None:
             raise ValueError("choice records need a prediction or a probabilities map")
         if confidence is None:
