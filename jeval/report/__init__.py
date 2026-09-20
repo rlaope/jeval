@@ -1,15 +1,9 @@
-"""Single-file HTML reporting."""
+"""Single-file HTML reporting.
 
-from __future__ import annotations
+The report is an argument document, read top to bottom: verdict, reliability, cost, impact,
+segments, drift, data quality. Modules here stay free of I/O so the whole document is a pure
+function of its inputs and can be snapshot-tested.
 
-from jeval.report.html import render_report, score_section, write_report
-from jeval.report.svg import histogram, metric_bar, reliability_diagram
-
-__all__ = [
-    "histogram",
-    "metric_bar",
-    "reliability_diagram",
-    "render_report",
-    "score_section",
-    "write_report",
-]
+Keep this package's ``__init__`` free of re-exports: importing ``jeval.report.model`` must not
+drag in the chart layer.
+"""

@@ -58,6 +58,7 @@ class CalibrationMetrics:
     bins: tuple[CalibrationBin, ...]
     bins_requested: int
     binning: str
+    confidence_buckets: tuple[tuple[float, float, int], ...] = ()
 
     @property
     def ece_ci_span(self) -> float:
@@ -193,6 +194,20 @@ def maximum_calibration_error(bins: Sequence[CalibrationBin]) -> float:
     return float(max(abs(b.gap) for b in bins))
 
 
+def confidence_buckets(
+    confidences: NDArray[np.float64], n_buckets: int = 20
+) -> tuple[tuple[float, float, int], ...]:
+    """Counts of confidences over equal-width buckets on [0, 1].
+
+    Equal width is right here and wrong for the calibration bins: a density view should show
+    where the volume actually sits, and quantile buckets would flatten it by construction.
+    """
+    if confidences.size == 0:
+        return ()
+    counts, edges = np.histogram(np.clip(confidences, 0.0, 1.0), bins=n_buckets, range=(0.0, 1.0))
+    return tuple((float(edges[i]), float(edges[i + 1]), int(counts[i])) for i in range(len(counts)))
+
+
 def brier_score(confidences: NDArray[np.float64], correct: NDArray[np.bool_]) -> float:
     """Mean squared error of the confidence against the outcome."""
     if confidences.size == 0:
@@ -266,6 +281,7 @@ def compute_calibration(
         else quantile_edges(conf, effective_bins)
     )
     bins = bins_from_edges(conf, hit, edges, alpha)
+    buckets = confidence_buckets(conf)
     ece = expected_calibration_error(bins, n)
     ci_low, ci_high = bootstrap_ece_ci(conf, hit, edges, n_boot=n_boot, alpha=alpha, seed=seed)
     return CalibrationMetrics(
@@ -278,6 +294,7 @@ def compute_calibration(
         bins=bins,
         bins_requested=n_bins,
         binning=binning,
+        confidence_buckets=buckets,
     )
 
 

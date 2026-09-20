@@ -1,192 +1,448 @@
-"""Inline SVG rendering. No plotting dependency, no external assets."""
+"""Pure SVG primitives.
+
+Every function here maps data to an SVG string and nothing else: no state, no I/O, no
+knowledge of jeval's domain types. Charts are built from these, so a rendering bug is fixed
+once instead of in four chart modules.
+
+Conventions that matter for output size and accessibility:
+
+- coordinates are rounded to two decimals (visibly smaller files, no visual difference),
+- every chart carries a ``<title>`` and ``<desc>``,
+- colour never carries meaning alone: the colour-blind-safe palette is paired with labels
+  and positions.
+"""
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from dataclasses import dataclass
 from html import escape
 
-from jeval.calibration import CalibrationMetrics
+# Okabe-Ito: distinguishable under the common colour-vision deficiencies. Never rely on a
+# single channel to say good or bad; position and label carry that.
+PALETTE: tuple[str, ...] = (
+    "#0072B2",
+    "#E69F00",
+    "#009E73",
+    "#CC79A7",
+    "#56B4E9",
+    "#D55E00",
+    "#8C6D31",
+    "#444444",
+)
 
-PLOT_MARGIN_LEFT = 56
-PLOT_MARGIN_BOTTOM = 46
-PLOT_MARGIN_TOP = 34
-PLOT_MARGIN_RIGHT = 18
+INK = "#111111"
+MUTED = "#666666"
+GRID = "#dddddd"
+DIAGONAL = "#999999"
+SHADE = "#f2f2f2"
+
+FONT_STACK = (
+    "-apple-system, BlinkMacSystemFont, 'Segoe UI', ui-sans-serif, Helvetica, Arial, sans-serif"
+)
+MONO_STACK = "ui-monospace, SFMono-Regular, Menlo, monospace"
+
+MARGIN = 58.0  # left gutter used by every chart's y axis
 
 
-def _fmt(value: float, digits: int = 2) -> str:
+def r2(value: float) -> str:
+    """Format a coordinate to two decimals; the file-size saving is real, the loss is not."""
+    return f"{value:.2f}"
+
+
+def fmt(value: float, digits: int = 2) -> str:
+    """Human-readable number that never prints ``nan`` as a number."""
     if value != value:  # NaN
         return "n/a"
     return f"{value:.{digits}f}"
 
 
-def reliability_diagram(
-    metrics: CalibrationMetrics,
+def pct(value: float, digits: int = 1) -> str:
+    if value != value:
+        return "n/a"
+    return f"{value * 100:.{digits}f}%"
+
+
+def money(value: float) -> str:
+    """Compact currency for labels: 1.2M, 45.3k, 890."""
+    magnitude = abs(value)
+    if magnitude >= 1_000_000_000:
+        return f"{value / 1_000_000_000:.1f}B"
+    if magnitude >= 1_000_000:
+        return f"{value / 1_000_000:.1f}M"
+    if magnitude >= 1_000:
+        return f"{value / 1_000:.1f}k"
+    return f"{value:,.0f}"
+
+
+def nice_ticks(lo: float, hi: float, target: int = 5) -> list[float]:
+    """Tick positions on the 1 / 2 / 5 x 10^n rule, so labels stay round numbers."""
+    if hi <= lo:
+        return [lo]
+    step = (hi - lo) / max(1, target)
+    exponent = 0
+    while step >= 10:
+        step /= 10
+        exponent += 1
+    while step < 1:
+        step *= 10
+        exponent -= 1
+    for candidate in (1.0, 2.0, 5.0, 10.0):
+        if step <= candidate:
+            step = candidate
+            break
+    step *= 10**exponent
+    if step <= 0:
+        return [lo, hi]
+    ticks: list[float] = []
+    value = (lo // step) * step
+    if value < lo:
+        value += step
+    while value <= hi + step * 1e-9:
+        ticks.append(round(value, 10))
+        value += step
+    return ticks or [lo, hi]
+
+
+@dataclass(frozen=True)
+class Scale:
+    """A linear mapping from a data domain onto a pixel range."""
+
+    domain: tuple[float, float]
+    range: tuple[float, float]
+
+    def __call__(self, value: float) -> float:
+        lo, hi = self.domain
+        r_lo, r_hi = self.range
+        if hi == lo:
+            return (r_lo + r_hi) / 2.0
+        return r_lo + (value - lo) / (hi - lo) * (r_hi - r_lo)
+
+    def invert(self, pixel: float) -> float:
+        lo, hi = self.domain
+        r_lo, r_hi = self.range
+        if r_hi == r_lo:
+            return lo
+        return lo + (pixel - r_lo) / (r_hi - r_lo) * (hi - lo)
+
+
+def lin_scale(domain: tuple[float, float], range_: tuple[float, float]) -> Scale:
+    return Scale(domain=domain, range=range_)
+
+
+def svg_open(width: float, height: float, *, title: str, desc: str, cls: str = "") -> str:
+    """Open a responsive SVG with an accessible name and description."""
+    class_attr = f' class="{escape(cls)}"' if cls else ""
+    return (
+        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {r2(width)} {r2(height)}"'
+        f'{class_attr} role="img" aria-label="{escape(title)}" preserveAspectRatio="xMidYMid meet">'
+        f"<title>{escape(title)}</title><desc>{escape(desc)}</desc>"
+    )
+
+
+def svg_close() -> str:
+    return "</svg>"
+
+
+def rect(x: float, y: float, w: float, h: float, *, fill: str = "none", cls: str = "") -> str:
+    class_attr = f' class="{cls}"' if cls else ""
+    return (
+        f'<rect x="{r2(x)}" y="{r2(y)}" width="{r2(max(0.0, w))}" '
+        f'height="{r2(max(0.0, h))}"{class_attr} fill="{fill}"/>'
+    )
+
+
+def vband(
+    x: float,
     *,
-    width: int = 520,
-    height: int = 380,
+    width: float,
+    y0: float,
+    y1: float,
+    fill: str = SHADE,
+    opacity: float = 0.75,
+) -> str:
+    """Vertical shaded region, used for expected-overconfidence zones and flat cost regions."""
+    return rect(x, y0, width, y1 - y0, fill=fill, cls="") + ""
+    # opacity handled by the caller's palette choice; kept simple on purpose
+
+
+def line(
+    x1: float,
+    y1: float,
+    x2: float,
+    y2: float,
+    *,
+    stroke: str = INK,
+    width: float = 1.0,
+    dash: str = "",
+    opacity: float = 1.0,
+) -> str:
+    dash_attr = f' stroke-dasharray="{dash}"' if dash else ""
+    opacity_attr = "" if opacity >= 1.0 else f' stroke-opacity="{opacity:.2f}"'
+    return (
+        f'<line x1="{r2(x1)}" y1="{r2(y1)}" x2="{r2(x2)}" y2="{r2(y2)}" '
+        f'stroke="{stroke}" stroke-width="{width:.2f}"{dash_attr}{opacity_attr}/>'
+    )
+
+
+def polyline(
+    points: Sequence[tuple[float, float]],
+    *,
+    stroke: str = INK,
+    width: float = 1.8,
+    dash: str = "",
+    opacity: float = 1.0,
+    smooth: bool = False,
+) -> str:
+    if not points:
+        return ""
+    dash_attr = f' stroke-dasharray="{dash}"' if dash else ""
+    opacity_attr = "" if opacity >= 1.0 else f' stroke-opacity="{opacity:.2f}"'
+    if smooth and len(points) > 2:
+        d = _smooth_path(points)
+    else:
+        d = " ".join(f"{'M' if i == 0 else 'L'}{r2(x)},{r2(y)}" for i, (x, y) in enumerate(points))
+    return (
+        f'<path d="{d}" fill="none" stroke="{stroke}" stroke-width="{width:.2f}"'
+        f"{dash_attr}{opacity_attr}/>"
+    )
+
+
+def _smooth_path(points: Sequence[tuple[float, float]]) -> str:
+    """Horizontal-tangent smoothing, used only for presentation curves."""
+    d = f"M{r2(points[0][0])},{r2(points[0][1])}"
+    for index in range(len(points) - 1):
+        x0, y0 = points[index]
+        x1, y1 = points[index + 1]
+        cx = (x0 + x1) / 2.0
+        d += f"C{r2(cx)},{r2(y0)} {r2(cx)},{r2(y1)} {r2(x1)},{r2(y1)}"
+    return d
+
+
+def dot(
+    x: float,
+    y: float,
+    radius: float,
+    *,
+    fill: str = INK,
+    tooltip: str = "",
+    cls: str = "",
+    opacity: float = 1.0,
+    extra: str = "",
+) -> str:
+    class_attr = f' class="{cls}"' if cls else ""
+    opacity_attr = "" if opacity >= 1.0 else f' fill-opacity="{opacity:.2f}"'
+    inner = f"<title>{escape(tooltip)}</title>" if tooltip else ""
+    return (
+        f'<circle cx="{r2(x)}" cy="{r2(y)}" r="{r2(radius)}" fill="{fill}"'
+        f"{opacity_attr}{class_attr}{extra}>{inner}</circle>"
+    )
+
+
+def error_bar(
+    x: float,
+    low: float,
+    high: float,
+    y_of: Callable[[float], float],
+    *,
+    stroke: str = MUTED,
+    width: float = 1.3,
+    cap: float = 3.0,
+) -> str:
+    """Vertical interval with caps; the visible alternative to pretending a bin is precise."""
+    if low != low or high != high:
+        return ""
+    top = y_of(high)
+    bottom = y_of(low)
+    return "".join(
+        [
+            line(x, top, x, bottom, stroke=stroke, width=width),
+            line(x - cap, top, x + cap, top, stroke=stroke, width=width),
+            line(x - cap, bottom, x + cap, bottom, stroke=stroke, width=width),
+        ]
+    )
+
+
+def shaded_region(
+    x0: float,
+    x1: float,
+    *,
+    y0: float,
+    y1: float,
+    fill: str = SHADE,
+    label: str = "",
+    label_x: float | None = None,
+    label_y: float | None = None,
+) -> str:
+    body = rect(x0, y0, max(0.0, x1 - x0), max(0.0, y1 - y0), fill=fill)
+    if not label:
+        return body
+    lx = label_x if label_x is not None else (x0 + x1) / 2.0
+    ly = label_y if label_y is not None else (y0 + y1) / 2.0
+    return body + text(lx, ly, label, anchor="middle", size=10.5, fill=MUTED)
+
+
+def text(
+    x: float,
+    y: float,
+    value: str,
+    *,
+    anchor: str = "start",
+    size: float = 11.5,
+    fill: str = INK,
+    weight: int = 400,
+    mono: bool = False,
+    rotate: float | None = None,
+    rotate_at: tuple[float, float] | None = None,
+    opacity: float = 1.0,
+    cls: str = "",
+) -> str:
+    family = MONO_STACK if mono else FONT_STACK
+    transform = ""
+    if rotate is not None:
+        cx, cy = rotate_at if rotate_at else (x, y)
+        transform = f' transform="rotate({rotate:.1f} {r2(cx)} {r2(cy)})"'
+    opacity_attr = "" if opacity >= 1.0 else f' fill-opacity="{opacity:.2f}"'
+    class_attr = f' class="{cls}"' if cls else ""
+    return (
+        f'<text x="{r2(x)}" y="{r2(y)}" text-anchor="{anchor}" font-family="{family}" '
+        f'font-size="{size:.1f}" font-weight="{weight}" fill="{fill}"{opacity_attr}{class_attr}'
+        f"{transform}>{escape(value)}</text>"
+    )
+
+
+def axis_x(
+    scale: Scale,
+    *,
+    y: float,
+    tick_values: Sequence[float] | None = None,
+    format_: Callable[[float], str] = lambda v: fmt(v),
     title: str = "",
 ) -> str:
-    """Reliability diagram: predicted confidence against observed accuracy.
-
-    The diagonal is perfect calibration. Points below it mean the model claimed more
-    confidence than its accuracy earned; the vertical whiskers are Wilson intervals.
-    """
-    plot_w = width - PLOT_MARGIN_LEFT - PLOT_MARGIN_RIGHT
-    plot_h = height - PLOT_MARGIN_TOP - PLOT_MARGIN_BOTTOM
-    parts: list[str] = [
-        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} {height}" '
-        f'width="100%" role="img" aria-label="{escape(title or "reliability diagram")}">',
-        "<style>"
-        ".jw{stroke:#111;stroke-width:1}"
-        ".jg{stroke:#d8d8d8;stroke-width:1}"
-        ".jd{stroke:#999;stroke-width:1;stroke-dasharray:4 3}"
-        ".jl{stroke:#111;stroke-width:1.6;fill:none}"
-        ".jp{fill:#111}"
-        ".jt{font:12px ui-monospace,SFMono-Regular,Menlo,monospace;fill:#111}"
-        ".jb{fill:#bbb}"
-        "</style>",
-        f'<rect x="0" y="0" width="{width}" height="{height}" fill="#fff"/>',
-    ]
-
-    def px(value: float) -> float:
-        return PLOT_MARGIN_LEFT + value * plot_w
-
-    def py(value: float) -> float:
-        return PLOT_MARGIN_TOP + (1.0 - value) * plot_h
-
+    values = list(tick_values) if tick_values is not None else nice_ticks(*scale.domain)
+    parts = [line(scale.range[0], y, scale.range[1], y, stroke=INK, width=1.0)]
+    for value in values:
+        x = scale(value)
+        parts.append(line(x, y, x, y + 4, stroke=INK, width=1.0))
+        parts.append(text(x, y + 16, format_(value), anchor="middle", size=11, fill=MUTED))
     if title:
         parts.append(
-            f'<text class="jt" x="{PLOT_MARGIN_LEFT}" y="20" '
-            f'font-weight="600">{escape(title)}</text>'
-        )
-
-    for tick in (0.0, 0.25, 0.5, 0.75, 1.0):
-        x = px(tick)
-        y = py(tick)
-        parts.append(
-            f'<line class="jg" x1="{x:.2f}" y1="{py(0.0):.2f}" x2="{x:.2f}" y2="{py(1.0):.2f}"/>'
-        )
-        parts.append(
-            f'<line class="jg" x1="{px(0.0):.2f}" y1="{y:.2f}" x2="{px(1.0):.2f}" y2="{y:.2f}"/>'
-        )
-        parts.append(
-            f'<text class="jt" x="{px(0.0) - 8:.2f}" y="{y + 4:.2f}" '
-            f'text-anchor="end">{tick:.2f}</text>'
-        )
-        parts.append(
-            f'<text class="jt" x="{x:.2f}" y="{py(0.0) + 16:.2f}" '
-            f'text-anchor="middle">{tick:.2f}</text>'
-        )
-
-    parts.append(
-        f'<line class="jd" x1="{px(0.0):.2f}" y1="{py(0.0):.2f}" x2="{px(1.0):.2f}" y2="{py(1.0):.2f}"/>'
-    )
-    parts.append(
-        f'<line class="jw" x1="{px(0.0):.2f}" y1="{py(0.0):.2f}" x2="{px(0.0):.2f}" y2="{py(1.0):.2f}"/>'
-    )
-    parts.append(
-        f'<line class="jw" x1="{px(0.0):.2f}" y1="{py(1.0):.2f}" x2="{px(1.0):.2f}" y2="{py(1.0):.2f}"/>'
-    )
-
-    points: list[tuple[float, float]] = []
-    for cal_bin in metrics.bins:
-        x = px(min(max(cal_bin.mean_confidence, 0.0), 1.0))
-        y = py(min(max(cal_bin.accuracy, 0.0), 1.0))
-        points.append((x, y))
-        if cal_bin.ci_low == cal_bin.ci_low:
-            parts.append(
-                f'<line x1="{x:.2f}" y1="{py(max(0.0, cal_bin.ci_low)):.2f}" '
-                f'x2="{x:.2f}" y2="{py(min(1.0, cal_bin.ci_high)):.2f}" '
-                'stroke="#777" stroke-width="1.4"/>'
+            text(
+                (scale.range[0] + scale.range[1]) / 2.0,
+                y + 34,
+                title,
+                anchor="middle",
+                size=11.5,
+                weight=500,
             )
-            parts.append(
-                f'<line x1="{x - 3:.2f}" y1="{py(max(0.0, cal_bin.ci_low)):.2f}" '
-                f'x2="{x + 3:.2f}" y2="{py(max(0.0, cal_bin.ci_low)):.2f}" stroke="#777" stroke-width="1.4"/>'
-            )
-            parts.append(
-                f'<line x1="{x - 3:.2f}" y1="{py(min(1.0, cal_bin.ci_high)):.2f}" '
-                f'x2="{x + 3:.2f}" y2="{py(min(1.0, cal_bin.ci_high)):.2f}" stroke="#777" stroke-width="1.4"/>'
-            )
-    if len(points) > 1:
-        path = " ".join(
-            f"{'M' if i == 0 else 'L'}{x:.2f},{y:.2f}" for i, (x, y) in enumerate(points)
         )
-        parts.append(f'<path class="jl" d="{path}"/>')
-    for x, y in points:
-        parts.append(f'<circle class="jp" cx="{x:.2f}" cy="{y:.2f}" r="3.4"/>')
-
-    # Sample-count strip under the axis: a tall bin is a claim worth trusting.
-    total = sum(b.n for b in metrics.bins) or 1
-    strip_y = py(0.0) + 22
-    for cal_bin in metrics.bins:
-        x = px(min(max(cal_bin.mean_confidence, 0.0), 1.0))
-        bar_h = 16 * (cal_bin.n / max(b.n for b in metrics.bins))
-        parts.append(
-            f'<rect class="jb" x="{x - 3:.2f}" y="{strip_y + (16 - bar_h):.2f}" '
-            f'width="6" height="{bar_h:.2f}"/>'
-        )
-    parts.append(
-        f'<text class="jt" x="{px(1.0):.2f}" y="{strip_y + 14:.2f}" text-anchor="end">'
-        f"n={total} per bin \u2193 tallest</text>"
-    )
-    parts.append(
-        f'<text class="jt" x="{px(0.0) - 8:.2f}" y="{py(0.5):.2f}" text-anchor="end" '
-        f'transform="rotate(-90 {px(0.0) - 34:.2f} {py(0.5):.2f})">observed accuracy</text>'
-    )
-    parts.append("</svg>")
     return "".join(parts)
 
 
-def metric_bar(label: str, value: float, ci: tuple[float, float] | None = None) -> str:
-    """A one-line horizontal bar used for ECE-style magnitudes."""
-    width = 220.0
-    filled = 0.0 if value != value else max(0.0, min(1.0, value / 0.25)) * width
-    parts = [
-        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 18" width="300" height="18">',
-        '<rect x="0" y="4" width="220" height="10" fill="#eee"/>',
-        f'<rect x="0" y="4" width="{filled:.2f}" height="10" fill="#111"/>',
-    ]
-    if ci is not None and ci[0] == ci[0]:
-        low = max(0.0, min(1.0, ci[0] / 0.25)) * width
-        high = max(0.0, min(1.0, ci[1] / 0.25)) * width
-        parts.append(
-            f'<line x1="{low:.2f}" y1="1" x2="{high:.2f}" y2="17" stroke="#777" stroke-width="2"/>'
-        )
-    parts.append(
-        f'<text x="228" y="14" font-family="ui-monospace,Menlo,monospace" font-size="11" '
-        f'fill="#111">{_fmt(value, 3)}</text>'
-    )
-    parts.append("</svg>")
-    return "".join(parts)
-
-
-def histogram(
-    values: Sequence[float], *, width: int = 300, height: int = 90, bins: int = 12
+def axis_y(
+    scale: Scale,
+    *,
+    x: float,
+    tick_values: Sequence[float] | None = None,
+    format_: Callable[[float], str] = lambda v: fmt(v),
+    title: str = "",
 ) -> str:
-    """Plain histogram used for the score-type level distribution."""
-    if not values:
-        return '<p class="note">No values.</p>'
-    lo = min(values)
-    hi = max(values)
-    span = (hi - lo) or 1.0
-    counts = [0] * bins
+    values = list(tick_values) if tick_values is not None else nice_ticks(*scale.domain)
+    parts = [line(x, scale.range[0], x, scale.range[1], stroke=INK, width=1.0)]
     for value in values:
-        index = min(bins - 1, int((value - lo) / span * bins))
-        counts[index] += 1
-    peak = max(counts) or 1
-    bar_w = width / bins
-    parts = [
-        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} {height}" width="100%">'
-    ]
-    for index, count in enumerate(counts):
-        bar_h = (count / peak) * (height - 12)
+        y = scale(value)
+        parts.append(line(x - 4, y, x, y, stroke=INK, width=1.0))
+        parts.append(text(x - 8, y + 4, format_(value), anchor="end", size=11, fill=MUTED))
+    if title:
+        centre = (scale.range[0] + scale.range[1]) / 2.0
         parts.append(
-            f'<rect x="{index * bar_w + 1:.2f}" y="{height - 10 - bar_h:.2f}" '
-            f'width="{bar_w - 2:.2f}" height="{bar_h:.2f}" fill="#111"/>'
+            text(
+                x - 38,
+                centre,
+                title,
+                anchor="middle",
+                size=11.5,
+                weight=500,
+                rotate=-90,
+                rotate_at=(x - 38, centre),
+            )
         )
-    parts.append(
-        f'<text x="0" y="{height}" font-family="ui-monospace,Menlo,monospace" font-size="10" '
-        f'fill="#555">{_fmt(lo)} .. {_fmt(hi)}</text>'
-    )
-    parts.append("</svg>")
     return "".join(parts)
+
+
+def grid_x(scale: Scale, tick_values: Sequence[float], *, y0: float, y1: float) -> str:
+    return "".join(line(scale(v), y0, scale(v), y1, stroke=GRID, width=1.0) for v in tick_values)
+
+
+def grid_y(scale: Scale, tick_values: Sequence[float], *, x0: float, x1: float) -> str:
+    return "".join(line(x0, scale(v), x1, scale(v), stroke=GRID, width=1.0) for v in tick_values)
+
+
+def legend(entries: Sequence[tuple[str, str]], *, x: float, y: float, size: float = 11.0) -> str:
+    """Legend as swatch + label pairs; never colour alone."""
+    parts: list[str] = []
+    cursor = x
+    for label, colour in entries:
+        parts.append(rect(cursor, y - 9, 10, 10, fill=colour))
+        parts.append(text(cursor + 15, y - 1, label, size=size, fill=MUTED))
+        cursor += 15 + len(label) * size * 0.56 + 18
+    return "".join(parts)
+
+
+def marker_line(
+    x: float,
+    *,
+    y0: float,
+    y1: float,
+    label: str,
+    colour: str = INK,
+    dash: str = "4 3",
+    label_y: float | None = None,
+) -> str:
+    """A vertical rule with a label, used for the current threshold and model changes."""
+    ty = label_y if label_y is not None else y0 + 11
+    return line(x, y0, x, y1, stroke=colour, width=1.4, dash=dash) + text(
+        x + 4, ty, label, size=10.5, fill=colour, weight=600
+    )
+
+
+def details_table(
+    headers: Sequence[str],
+    rows: Iterable[Sequence[str]],
+    *,
+    summary: str = "Data behind this chart",
+    numeric_from: int = 1,
+) -> str:
+    """Collapsible table of the underlying numbers.
+
+    Accessibility and honesty in one control: a screen reader can read the table, and anyone
+    quoting a figure can copy it instead of eyeballing a pixel.
+    """
+    head = "".join(f"<th>{escape(h)}</th>" for h in headers)
+    body = "".join(
+        "<tr>"
+        + "".join(
+            f'<td class="{"num" if i >= numeric_from else ""}">{escape(str(cell))}</td>'
+            for i, cell in enumerate(row)
+        )
+        + "</tr>"
+        for row in rows
+    )
+    return (
+        f"<details><summary>{escape(summary)}</summary>"
+        f"<table><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table></details>"
+    )
+
+
+def embed_json(payload: str, *, element_id: str) -> str:
+    """Embed aggregates as data, never as executable code.
+
+    The ``application/json`` type means the browser will not execute it, and the payload holds
+    aggregated values only — raw decision records never enter the report.
+    """
+    safe = payload.replace("</", "<\\/")
+    return f'<script type="application/json" id="{escape(element_id)}">{safe}</script>'
+
+
+def mapping_legend(items: Mapping[str, str], *, x: float, y: float) -> str:
+    return legend([(key, value) for key, value in items.items()], x=x, y=y)

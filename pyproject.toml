@@ -55,9 +55,11 @@ select = ["E", "F", "I", "N", "UP", "B", "SIM", "RUF"]
 ignore = ["RUF001", "RUF002", "RUF003"]
 
 [tool.ruff.lint.per-file-ignores]
-# Markup literals (HTML attributes, SVG path data) are not meaningfully breakable.
-"jeval/report/html.py" = ["E501"]
-"jeval/report/svg.py" = ["E501"]
+# Markup literals (HTML attributes, SVG path data) are not meaningfully breakable, and the
+# chart modules import the SVG primitives as `S` because `S.dot(...)` reads better than a
+# fully spelled module name repeated hundreds of times in geometry code.
+"jeval/report/*.py" = ["E501", "N812"]
+"jeval/report/charts/*.py" = ["E501", "N812"]
 "tests/*" = ["E501"]
 
 [tool.mypy]
