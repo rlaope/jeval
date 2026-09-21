@@ -100,7 +100,19 @@ class IngestMap:
     def resolve(self, row: Mapping[str, Any], field: str) -> Any:
         """Read ``field`` from a raw row, honouring the configured source name."""
         source = self.field_map.get(field, field)
+        # A column the map already assigns to another field must not double as an implicit source
+        # here. An application that logs its prediction in a column called ``label`` would otherwise
+        # feed that same column to the schema's ``label``, producing a ground truth equal to the
+        # prediction: a perfect score out of nothing, in the field this tool exists to measure.
+        if source in self._claimed_elsewhere(field):
+            return None
         return row.get(source)
+
+    def _claimed_elsewhere(self, field: str) -> frozenset[str]:
+        """Raw columns this map assigns to a schema field other than ``field``."""
+        return frozenset(
+            column for other, column in self.field_map.items() if other != field and column
+        )
 
     def source_key_source(self) -> str:
         """Raw field name that carries the join key for free labels.

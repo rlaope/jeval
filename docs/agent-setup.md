@@ -60,6 +60,9 @@ label_from:                     # where the human's answer lives, if the log alr
   question: department          # only rows for this question take that answer
 ```
 
+One column feeds one field: if the map says `prediction` comes from the column `label`, that column
+is not also read as the answer. Map the answer's own column explicitly.
+
 `segment` may be a flat column — `segment: lang` makes `--by lang` work and names the axis after
 the column — or an object column already shaped like `{"lang": "ko", "channel": "email"}`.
 

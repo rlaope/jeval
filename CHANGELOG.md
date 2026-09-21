@@ -111,6 +111,12 @@ Report and CLI:
   documented `--by lang` sweep: the mapping renamed fields but could not build the object the schema
   wants, so every row was skipped. A non-object value mapped onto `segment` now becomes
   `{column_name: value}`, and an object column is still mapped as an object.
+- One column is not two fields. A field the map does not name fell back to a raw column of the same
+  name, so an application that logs its prediction in a column called `label` fed that column to the
+  schema's `label` as well: a ground truth equal to the prediction, every record correct, silver
+  labeled, out of nothing. The report refused to measure it, but the records were poisoned and the
+  silver-slice sections counted them. A column already assigned to another field is no longer read
+  implicitly; an explicit mapping is unaffected.
 - A skipped row says what to change. The message was a pydantic dump
   (`2 validation errors for DecisionRecord ... visit https://errors.pydantic.dev/...`) that named
   neither the field nor the file, and a missing `model` or a text confidence read as "jeval is

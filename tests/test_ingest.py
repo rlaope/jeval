@@ -457,3 +457,61 @@ def test_a_wrong_shaped_value_names_the_field(tmp_path: Path) -> None:
     assert "confidence" in message
     assert "'high'" in message
     assert "errors.pydantic.dev" not in message
+
+
+def test_a_column_claimed_by_one_field_is_not_reused_for_another(tmp_path: Path) -> None:
+    """The map said `prediction` comes from the column `label`; that column must not also become
+    the answer.
+
+    An application that logs its prediction in a column called `label` produced a ground truth equal
+    to the prediction — every record "correct", silver-labeled, out of nothing. The report refused to
+    measure it (gold and silver stay separate), but the records were poisoned and the silver-slice
+    sections counted them.
+    """
+    source = _write_jsonl(
+        tmp_path / "app.jsonl",
+        [
+            {"task": "department", "label": "billing", "score_0_to_1": 0.91},
+            {"task": "department", "label": "technical", "score_0_to_1": 0.72},
+        ],
+    )
+    mapping = IngestMap(
+        field_map={
+            "question_key": "task",
+            "prediction": "label",
+            "confidence": "score_0_to_1",
+        },
+        defaults={"question_type": "choice", "model": "jev-1.13.0"},
+    )
+
+    report = ingest_files([source], tmp_path / "records.jsonl", mapping)
+    records = read_records(tmp_path / "records.jsonl")
+
+    assert report.n_skipped == 0
+    assert [record.prediction for record in records] == ["billing", "technical"]
+    assert all(record.label is None for record in records), (
+        "a column the map assigns to `prediction` was also read as the answer"
+    )
+
+
+def test_an_identity_mapping_still_reads_its_own_column(tmp_path: Path) -> None:
+    """The convenience this guard must not break: `label: label` reads the label column."""
+    source = _write_jsonl(
+        tmp_path / "records.jsonl",
+        [
+            {
+                "question_key": "department",
+                "prediction": "billing",
+                "confidence": 0.9,
+                "label": "technical",
+            }
+        ],
+    )
+    mapping = IngestMap(
+        field_map={"label": "label", "prediction": "prediction", "confidence": "confidence"},
+        defaults={"question_type": "choice", "model": "jev-1.13.0"},
+    )
+
+    ingest_files([source], tmp_path / "out.jsonl", mapping)
+
+    assert read_records(tmp_path / "out.jsonl")[0].label == "technical"
