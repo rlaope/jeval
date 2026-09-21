@@ -46,16 +46,35 @@ jobs:
           path: dist
       # PyPI publishing needs a registered publisher; this job does not, so every tag produces
       # something installable even before that is set up.
+      #
+      # `-R` because there is no checkout here: gh infers the repository from a git remote, and
+      # without one it fails with "fatal: not a git repository" after uploading nothing.
       - name: Create or update the release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" dist/* --clobber
+          repo="$GITHUB_REPOSITORY"
+          if gh release view "$GITHUB_REF_NAME" -R "$repo" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" dist/* -R "$repo" --clobber
           else
-            gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --generate-notes
+            gh release create "$GITHUB_REF_NAME" dist/* -R "$repo" \
+              --title "$GITHUB_REF_NAME" --generate-notes
           fi
+      # An upload that exited 0 is not an asset someone can download, so read it back.
+      - name: Verify the release carries both distributions
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          listed="$(gh release view "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')"
+          echo "$listed"
+          for suffix in .whl .tar.gz; do
+            echo "$listed" | grep -q "$suffix" || {
+              echo "no $suffix asset on $GITHUB_REF_NAME" >&2
+              exit 1
+            }
+          done
 
   publish:
     name: publish to PyPI
