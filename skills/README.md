@@ -16,7 +16,7 @@ proves it worked, the failure modes that really happen, and what it must not cla
 ## Install them
 
 ```sh
-sh install-skills.sh --list                       # hosts, destinations, and the skills in the pack
+sh install-skills.sh --list           # hosts, destinations, and skills
 sh install-skills.sh --host all                    # .agents/skills + .claude/skills
 sh install-skills.sh --host cursor --project .
 ```

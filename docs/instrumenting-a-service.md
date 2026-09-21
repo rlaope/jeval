@@ -41,7 +41,7 @@ client = collect.track(
 
 
 def handle_ticket(ticket_id: str, text: str, **request) -> str:
-    answer = client.classify(ticket_id=ticket_id, text=text, **request)  # the call you already make
+    answer = client.classify(ticket_id=ticket_id, text=text, **request)  # unchanged call
     return answer["answers"]["department"]["choice"]
 ```
 
@@ -236,7 +236,9 @@ auto_billing by lang: global threshold 0.88
 ```
 
 Both answers are refusals, and both are useful: one segment does not have enough labeled records for
-a line of its own, and the other does not need one.
+a line of its own (50 of the 100 it needs), and the other does not need one — `lang = ko` stays on
+the global 0.88. The verdict column in that block runs past the page width, so the numbers it
+carries are repeated here.
 
 ## 10. Keep it running
 

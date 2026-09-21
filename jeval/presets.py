@@ -170,9 +170,10 @@ def payloads_from_rows(
 def describe(preset: IngestPreset) -> str:
     """One-line summary of what a preset expects, for user-facing messages."""
     location = preset.response_field or "the row itself"
+    # No name prefix: the CLI prints `preset: <name> (<this>)`, and repeating it read as
+    # "preset: jev-native (jev-native: response at ...)".
     return (
-        f"{preset.name}: response at {location!r}, answers under {preset.container!r}, "
-        f"join key from {preset.source_key_field!r}"
+        f"response {location!r}, answers {preset.container!r}, join key {preset.source_key_field!r}"
     )
 
 

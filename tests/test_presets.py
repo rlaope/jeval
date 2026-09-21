@@ -69,6 +69,11 @@ def test_describe_tells_a_user_where_the_preset_looks() -> None:
     assert "response" in described
     assert "answers" in described
     assert "request_id" in described
+    # The CLI prints `preset: <name> (<described>)`, so a name here would be printed twice.
+    assert not described.startswith(presets.JEV_NATIVE.name), described
+    assert len(described) < 70, (
+        f"one line on an 80-column terminal, got {len(described)}: {described}"
+    )
 
 
 def test_a_native_log_line_becomes_measurable_payloads() -> None:

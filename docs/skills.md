@@ -14,22 +14,25 @@ check that proves it worked, the failure modes that really happen, and the claim
 | `jeval-drift-gate` | Did the model change when I was not looking? | a build that fails, with the movement named |
 
 The canonical copies live in this repository under `skills/<name>/SKILL.md`. Everything else on this
-page is generated from them. What the pack does when an agent runs it, in order:
+page is generated from them. What the pack does when an agent runs it, in order: measure and compare with what is deployed,
+write the threshold file the application reads, then fail a build when the calibration moves.
 
 ```sh
-jeval report --root /var/lib/jeval --current 0.88 --costs costs.yaml     # measure, and compare with what is deployed
-jeval threshold --root /var/lib/jeval --costs costs.yaml                 # write thresholds.yaml for the application
-jeval drift --root /var/lib/jeval --fail-on ece-increase=0.05            # fail a build when calibration moves
+jeval report --root /var/lib/jeval --current 0.88 --costs costs.yaml
+jeval threshold --root /var/lib/jeval --costs costs.yaml
+jeval drift --root /var/lib/jeval --fail-on ece-increase=0.05
 ```
 
 ## Install
 
 ```sh
 # what would be installed, and where each host reads it
-curl -fsSL https://raw.githubusercontent.com/rlaope/jeval/main/install-skills.sh | sh -s -- --list
+curl -fsSL https://raw.githubusercontent.com/rlaope/jeval/main/install-skills.sh \
+  | sh -s -- --list
 
 # the two roots that between them cover every host below
-curl -fsSL https://raw.githubusercontent.com/rlaope/jeval/main/install-skills.sh | sh -s -- --host all
+curl -fsSL https://raw.githubusercontent.com/rlaope/jeval/main/install-skills.sh \
+  | sh -s -- --host all
 
 # one host, into one project
 sh install-skills.sh --host cursor --project .

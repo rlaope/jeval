@@ -24,7 +24,7 @@
   <tr>
     <td width="50%" valign="top">
       <img src="docs/report-verdict.png" alt="The verdict card: 'Your threshold is too low', with the current threshold, the measured accuracy and the recommended threshold">
-      <br><sub>The top of the report: the line is in the wrong place, and here is why.</sub>
+      <br><sub>The line is in the wrong place, and here is why.</sub>
     </td>
     <td width="50%" valign="top">
       <img src="docs/report-reliability.png" alt="Reliability chart: confidence along the bottom, how often the model was right up the side, with grey bands where the data is thin">
@@ -34,11 +34,11 @@
   <tr>
     <td width="50%" valign="top">
       <img src="docs/report-impact.png" alt="Impact table comparing the threshold in use with the recommended one: auto rate, accuracy and cost per case">
-      <br><sub>What changes if you move the line: how much gets automated, and what it costs.</sub>
+      <br><sub>What moving the line changes, and what it costs.</sub>
     </td>
     <td width="50%" valign="top">
       <img src="docs/report-segments.png" alt="Cost per case by segment, each segment's own threshold drawn against the global one">
-      <br><sub>Who does worse than average, and whether they need their own line.</sub>
+      <br><sub>Who does worse than average, and needs their own line.</sub>
     </td>
   </tr>
 </table>
@@ -76,7 +76,8 @@ Want to install nothing at all?
 ```sh
 uvx --from git+https://github.com/rlaope/jeval jeval --version            # current main
 uvx --from git+https://github.com/rlaope/jeval@v0.1.8 jeval --version     # pinned tag
-pip install https://github.com/rlaope/jeval/releases/download/v0.1.8/jeval_cli-0.1.8-py3-none-any.whl
+pip install \
+  https://github.com/rlaope/jeval/releases/download/v0.1.8/jeval_cli-0.1.8-py3-none-any.whl
 ```
 
 **Careful with `pip install jeval`:** that name on PyPI belongs to an **unrelated project**, and this
@@ -110,8 +111,10 @@ you: each one carries the commands, the check that proves it worked, the failure
 happen, and what it must not claim.
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/rlaope/jeval/main/install-skills.sh | sh -s -- --list
-curl -fsSL https://raw.githubusercontent.com/rlaope/jeval/main/install-skills.sh | sh -s -- --host claude-code
+curl -fsSL https://raw.githubusercontent.com/rlaope/jeval/main/install-skills.sh \
+  | sh -s -- --list
+curl -fsSL https://raw.githubusercontent.com/rlaope/jeval/main/install-skills.sh \
+  | sh -s -- --host claude-code
 ```
 
 The same six skills are exported into the layout each host expects, so nothing is hand-copied per
@@ -145,7 +148,7 @@ client = collect.track(
     TypeSafeClient(),  # your SDK, not jeval's
     method_names=("system_one",),  # the method that answers questions
     source_key=lambda **kw: kw["trace_id"],  # what a human answer is joined back on
-    segment=lambda **kw: {"lang": kw.get("lang")},  # request fields you want to compare later
+    segment=lambda **kw: {"lang": kw.get("lang")},  # request fields to compare later
 )
 ```
 
@@ -179,7 +182,7 @@ If your product's response shape is already known, one preset may cover it:
 
 ```sh
 $ jeval ingest --preset jev-native api-decisions.jsonl
-preset: jev-native (response at 'response', answers under 'answers', join key from 'request_id')
+preset: jev-native (response 'response', answers 'answers', join key 'request_id')
 read 4 rows
 wrote 8 records to .jeval/records.jsonl
 ```
@@ -245,10 +248,10 @@ demo uses:
 
 <table width="100%">
   <tr>
-    <th align="left" width="185">what changes</th>
-    <th align="right" width="205">now</th>
-    <th align="right" width="215">recommended</th>
-    <th align="right" width="95">change</th>
+    <th align="left" width="205">what changes</th>
+    <th align="right" width="225">now</th>
+    <th align="right" width="250">recommended</th>
+    <th align="right" width="157">change</th>
   </tr>
   <tr><td>confidence threshold</td><td align="right">0.60</td><td align="right">0.75</td><td align="right">+0.15</td></tr>
   <tr><td>auto rate</td><td align="right">33%</td><td align="right">30%</td><td align="right">-2.9 pt</td></tr>
@@ -378,15 +381,15 @@ direction, and no command here is a stub that only looks implemented.
 
 | Command | What it does | Status |
 | --- | --- | --- |
-| `jeval init` | create `.jeval/` config and the ingest map | implemented |
-| `jeval ingest` | JSONL/CSV logs to decision records; `--preset jev-native` reads a decision API's own response log; `--labels` brings in human answers | implemented |
-| `jeval report` | the report itself: verdict, reliability, cost, impact, segments, score questions, labels and correction, drift, data quality — one HTML file, or `--format md` for a summary you can paste | implemented |
-| `jeval threshold` | cost matrix to a threshold per action, with an uncertainty range, written to `thresholds.yaml`; `--by <segment>` answers whether splitting pays | implemented |
-| `jeval drift` | compare model versions or periods, save a baseline, fail a build with `--fail-on`, and see where the threshold moved per slice | implemented |
-| `jeval label` | a labeling queue with a CSV sheet to fill in | implemented |
-| `jeval plan` | how many more labels each question needs for a tighter range | implemented |
-| `jeval calibrate` | a temperature or isotonic correction map, measured on held-out data, exported as YAML | implemented |
-| `jeval demo` | a synthetic log with a known miscalibration, through the same report path | implemented |
+| `jeval init` | create `.jeval/` config and the ingest map | implemented |
+| `jeval ingest` | JSONL/CSV logs to decision records; `--preset jev-native` reads a decision API's own response log; `--labels` brings in human answers | implemented |
+| `jeval report` | the report itself: verdict, reliability, cost, impact, segments, score questions, labels and correction, drift, data quality — one HTML file, or `--format md` for a summary you can paste | implemented |
+| `jeval threshold` | cost matrix to a threshold per action, with an uncertainty range, written to `thresholds.yaml`; `--by <segment>` answers whether splitting pays | implemented |
+| `jeval drift` | compare model versions or periods, save a baseline, fail a build with `--fail-on`, and see where the threshold moved per slice | implemented |
+| `jeval label` | a labeling queue with a CSV sheet to fill in | implemented |
+| `jeval plan` | how many more labels each question needs for a tighter range | implemented |
+| `jeval calibrate` | a temperature or isotonic correction map, measured on held-out data, exported as YAML | implemented |
+| `jeval demo` | a synthetic log with a known miscalibration, through the same report path | implemented |
 
 `jeval report` writes one self-contained HTML file plus a short terminal summary. The report never
 writes configuration, never fetches anything at run time and never posts to a pull request.
