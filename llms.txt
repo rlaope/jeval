@@ -1,0 +1,84 @@
+# jeval
+
+> jeval measures what a probabilistic classifier's confidence is actually worth on your own labeled
+> decisions, and derives the confidence threshold at which a decision should be automated instead of
+> handed to a human, from what a mistake costs. It reads JSONL decision records from disk. No
+> server, no database, no network call, no account.
+
+Machine-facing entry point. The human-facing version is [README.md](README.md); the task playbook
+is [docs/agent-setup.md](docs/agent-setup.md).
+
+## Install
+
+Any of these works today. There is no PyPI package yet — do not write `pip install jeval`.
+
+```sh
+# no install, always current
+uvx --from git+https://github.com/rlaope/jeval jeval --help
+
+# pinned, no install
+uvx --from git+https://github.com/rlaope/jeval@v0.1.0 jeval --help
+
+# pinned wheel, installed
+pip install https://github.com/rlaope/jeval/releases/download/v0.1.0/jeval-0.1.0-py3-none-any.whl
+```
+
+## If you are an agent
+
+The user's classifier returns a label and a confidence. Your job is to get measured numbers out of
+their own data and show them the artifact — not to run a command tour.
+
+1. See the shape of the output first, with no user data:
+   `uvx --from git+https://github.com/rlaope/jeval jeval demo --out-dir /tmp/jeval-demo`
+   It writes `report.html` (one self-contained file), `costs.yaml` and `.jeval/records.jsonl`.
+2. Find the decision log: one row per model response, with the prediction, its confidence, and —
+   for anything beyond a demo — the human's eventual answer. JSONL or CSV.
+3. `jeval init --root DIR`, then describe that shape in `DIR/.jeval/ingest-map.yaml`.
+   Keys: `field_map`, `questions_field`, `defaults`, `label_from`. A known vendor shape may already
+   have a preset: `jeval ingest --list-presets`.
+4. `jeval ingest <file> --root DIR`. It prints `wrote N records` and names every row it skipped and
+   why. If N is 0, the mapping is wrong — fix the map, do not rewrite the user's data.
+5. Labels are the gate. Without them jeval measures nothing and says
+   `no labeled records`. Find them before promising a number (see the playbook).
+6. `jeval report --root DIR --current <the threshold in production> --costs costs.yaml`
+7. `jeval threshold --root DIR` writes `thresholds.yaml` — the artifact the application reads.
+8. To keep it: `jeval drift --root DIR --fail-on ece-increase=0.05` exits 1 when the model degrades.
+
+## Artifacts
+
+| Path | What it is | Who reads it |
+| --- | --- | --- |
+| `report.html` | One self-contained HTML file: verdict, reliability curve with intervals, cost curve, segments, drift | the human |
+| `thresholds.yaml` | The threshold to deploy per action, with a bootstrap interval | the application |
+| `labels.csv` | The decisions whose labels would teach the tool most | a person filling in answers |
+| `calibration-*.yaml` | An optional correction map, exported only when the gain is real | the application |
+
+## Hard facts, so you do not have to guess
+
+- Records: `.jeval/records.jsonl`, one question per record, one JSON object per line.
+- Question types: `choice`, `score`, `noul`. Accuracy is only defined for `choice`; `score`
+  questions get MAE/RMSE/rank correlation and are never folded into binary accuracy.
+- Cost matrix and threshold config live in files the user owns: `costs.yaml`, `thresholds.yaml`.
+  jeval does not invent cost numbers. A threshold without costs is `not available`.
+- Exit codes: `0` success, `1` refused or nothing to measure (missing records, missing map, an
+  input that cannot be true). Every refusal explains itself on stderr.
+- The report never fetches anything at runtime and holds no token.
+- `collect.track()` observes calls the application already makes; it never calls a model, never
+  blocks, never raises. `JEVAL_COLLECT=0` disables it.
+- No network access is needed by any command.
+
+## Rules for an agent working with a user
+
+- Never present a number the tool did not print. If the sample cannot support it, the tool says so
+  and so must you.
+- Never invent or edit the user's costs. Ask what a false positive and a false negative cost.
+- Do not edit `.jeval/records.jsonl` by hand; ingest is the only writer.
+- If there are no labels, say that plainly and offer the three label sources in the playbook
+  instead of producing a report nobody can trust.
+
+## Docs
+
+- [README.md](README.md) — what it measures and why
+- [docs/agent-setup.md](docs/agent-setup.md) — step-by-step setup, including the no-labels path
+- [examples/report-example.html](examples/report-example.html) — a real generated report
+- [examples/ci/drift.yml](examples/ci/drift.yml) — the CI starting point

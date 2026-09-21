@@ -7,6 +7,27 @@ Your classifier answers with a label and a confidence. jeval answers the two que
 follow: *when it says 0.9, how often is it actually right?* and *given what a mistake costs,
 where should the line sit?*
 
+## Hand it to an agent
+
+Nobody wants a command tour. Give an agent one sentence and take the artifact back:
+
+> Install jeval (`uvx --from git+https://github.com/rlaope/jeval jeval --help`), find where my
+> classifier's decisions are logged, describe that shape in `.jeval/ingest-map.yaml`, run
+> `jeval report`, and show me the report file.
+
+What it should produce, and in what order:
+
+| Artifact | What it answers |
+| --- | --- |
+| `report.html` — one self-contained file | Are the confidences trustworthy, where do they break, and what does the threshold in use cost? |
+| `thresholds.yaml` — read by your application | The threshold to deploy, with a bootstrap interval, and whether splitting by segment pays |
+| `labels.csv` — a sheet to fill in | Which decisions, labeled next, buy the most certainty |
+| `calibration-*.yaml` — optional | A correction map your application applies, exported only when the gain is real |
+
+[`llms.txt`](llms.txt) is the machine-readable entry point, and
+[`docs/agent-setup.md`](docs/agent-setup.md) is the playbook the agent follows — including what to
+do when nothing is logged yet and when there are no labels, which is where most attempts stall.
+
 ## What it looks like
 
 <p align="center">
@@ -141,16 +162,24 @@ because jeval never holds a token.
 only model-to-model, which matters when the model string never changes but the behaviour does. The
 snapshot holds measurements, never records, so it is safe to commit.
 
-## Try it in five minutes
+## Get it
 
 ```sh
-uvx jeval demo
+uvx --from git+https://github.com/rlaope/jeval jeval demo   # nothing installed
 ```
 
-Until the first release is on PyPI, run the same thing from a checkout
-(`uv run jeval demo`). Either way it generates a synthetic decision log whose miscalibration is
-known, reports on it, and shows you the reliability curve and ECE. Nothing is downloaded from your side and no data
-leaves the machine; the demo data is generated locally and is explicitly labeled as synthetic.
+```sh
+# pinned wheel, straight from the release
+pip install https://github.com/rlaope/jeval/releases/download/v0.1.0/jeval-0.1.0-py3-none-any.whl
+```
+
+It generates a synthetic decision log whose miscalibration is known, reports on it, and writes a
+`report.html` you can open — the same artifact the rest of this page is about. Nothing is
+downloaded from your side, no data leaves the machine, and the demo data is explicitly labeled
+synthetic.
+
+There is no `pip install jeval` yet: the PyPI name is reserved and the publisher is not registered.
+The two commands above are what work today, and a pinned wheel never changes under you.
 
 ## Pointing it at your own system
 
@@ -417,12 +446,16 @@ Wide interval? That is a label problem, not an analysis problem, and the command
 ## Install
 
 ```sh
-uvx jeval demo       # try it without installing
-uv tool install jeval
+uvx --from git+https://github.com/rlaope/jeval jeval demo            # nothing installed, current main
+uvx --from git+https://github.com/rlaope/jeval@v0.1.0 jeval demo     # nothing installed, pinned
 ```
 
-Neither of those works yet: the first PyPI release is gated on the M0-M2 milestone set
-completing. From a checkout:
+```sh
+pip install https://github.com/rlaope/jeval/releases/download/v0.1.0/jeval-0.1.0-py3-none-any.whl
+```
+
+`pip install jeval` will work once the publisher is registered on PyPI; until then the wheel URL
+above is the pinned, installable artifact and `uvx` needs no installation at all. From a checkout:
 
 ```sh
 git clone https://github.com/rlaope/jeval && cd jeval
