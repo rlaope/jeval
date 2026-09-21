@@ -4,6 +4,10 @@ The defect this file exists to catch: the README and the CLI both told users to 
 in their ingest map, and nothing ever read it. No test failed, because every test asked whether
 the code did what it said, and nobody asked whether the documentation matched the code.
 
+The documents an agent reads are now a first-class surface: `README.md`, `llms.txt` (the
+machine-readable entry point) and `docs/agent-setup.md` (the setup playbook). A wrong flag in any of
+them is a wrong instruction to an agent, so all three are checked, not just the README.
+
 Two directions, both mechanical:
 
 1. Every `jeval <command>` and every flag the README *shows as a command* must exist on the real
@@ -31,6 +35,12 @@ REPO = Path(__file__).resolve().parent.parent
 README = REPO / "README.md"
 PACKAGE = REPO / "jeval"
 
+# Every document that tells a reader (or an agent) to run something.
+DOC_PATHS = (README, REPO / "llms.txt", REPO / "docs" / "agent-setup.md")
+
+# `jeval ...` may be shown wrapped in an installer. The command inside it is still a claim.
+LAUNCHERS = r"(?:uv run |uvx(?: --from \S+)? )"
+
 runner = CliRunner()
 
 # Scaffolded keys the user is told to fill in, so something must act on them.
@@ -55,6 +65,11 @@ TOLERATED_KEYS = ("version",)
 
 def _readme() -> str:
     return README.read_text(encoding="utf-8")
+
+
+def _doc_texts() -> list[tuple[str, str]]:
+    """(name, text) for every document that shows commands."""
+    return [(path.name, path.read_text(encoding="utf-8")) for path in DOC_PATHS if path.exists()]
 
 
 def _registered_commands() -> set[str]:
@@ -106,23 +121,29 @@ def _help_flags(command: str | None = None) -> set[str]:
     return _declared_flags(command)
 
 
-def _invocations() -> list[tuple[str, set[str]]]:
-    """(command, flags) for every `jeval <command>` the README shows as a command.
+def _invocations() -> list[tuple[str, str, set[str]]]:
+    """(document, command, flags) for every `jeval <command>` the documents show as a command.
 
     Only code fences and inline code spans count: prose like "jeval measures ..." is a sentence,
-    not a command.
+    not a command. A command shown inside `uvx --from ...` or `uv run` is still a command.
     """
-    readme = _readme()
-    snippets: list[str] = re.findall(r"```[a-z]*\n(.*?)```", readme, re.DOTALL)
-    snippets += re.findall(r"`([^`\n]+)`", readme)
-    found: list[tuple[str, set[str]]] = []
-    for snippet in snippets:
-        for line in snippet.splitlines():
-            match = re.match(r"\s*\$?\s*jeval\s+(?P<cmd>[a-z][a-z-]*)(?P<rest>.*)$", line)
-            if match:
-                found.append(
-                    (match.group("cmd"), set(re.findall(r"--[a-z][a-z-]+", match.group("rest"))))
+    found: list[tuple[str, str, set[str]]] = []
+    for name, text in _doc_texts():
+        snippets: list[str] = re.findall(r"```[a-z]*\n(.*?)```", text, re.DOTALL)
+        snippets += re.findall(r"`([^`\n]+)`", text)
+        for snippet in snippets:
+            for line in snippet.splitlines():
+                match = re.match(
+                    rf"\s*\$?\s*{LAUNCHERS}jeval\s+(?P<cmd>[a-z][a-z-]*)(?P<rest>.*)$", line
                 )
+                if match:
+                    found.append(
+                        (
+                            name,
+                            match.group("cmd"),
+                            set(re.findall(r"--[a-z][a-z-]+", match.group("rest"))),
+                        )
+                    )
     return found
 
 
@@ -131,11 +152,23 @@ def test_every_documented_command_exists() -> None:
     missing = sorted(
         {
             command
-            for command, _ in _invocations()
+            for _, command, _ in _invocations()
             if command not in available and command not in DOCUMENTED_AS_MILESTONE
         }
     )
-    assert missing == [], f"README shows commands that do not exist: {missing}"
+    assert missing == [], f"the docs show commands that do not exist: {missing}"
+
+
+def test_every_agent_facing_document_is_actually_parsed() -> None:
+    """A guard that quietly stopped reading a document would pass while the docs lied.
+
+    `llms.txt` and `docs/agent-setup.md` are what an agent follows, so each has to contribute at
+    least one parsed command — otherwise this file is only checking the README again.
+    """
+    covered = {name for name, _, _ in _invocations()}
+
+    missing = [path.name for path in DOC_PATHS if path.exists() and path.name not in covered]
+    assert missing == [], f"no command was parsed out of {missing}; the guard does not read them"
 
 
 def test_a_milestone_command_is_not_secretly_shipped() -> None:
@@ -152,13 +185,13 @@ def test_every_documented_flag_exists_on_its_command() -> None:
     """Flags are checked per command, so a flag shown against the wrong command is caught."""
     available = _registered_commands()
     offenders: list[str] = []
-    for command, flags in _invocations():
+    for _, command, flags in _invocations():
         if command not in available or not flags:
             continue
         unknown = flags - _help_flags(command)
         if unknown:
             offenders.append(f"jeval {command}: {sorted(unknown)}")
-    assert offenders == [], f"README shows flags their command does not accept: {offenders}"
+    assert offenders == [], f"the docs show flags their command does not accept: {offenders}"
 
 
 def test_the_documented_demo_command_is_real() -> None:
