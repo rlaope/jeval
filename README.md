@@ -455,7 +455,9 @@ pip install https://github.com/rlaope/jeval/releases/download/v0.1.1/jeval-0.1.1
 ```
 
 `pip install jeval` will work once the publisher is registered on PyPI; until then the wheel URL
-above is the pinned, installable artifact and `uvx` needs no installation at all. From a checkout:
+above is the pinned, installable artifact and `uvx` needs no installation at all. Every tag is
+built by the release workflow, which attaches the wheel and the sdist to the GitHub release and
+reads the asset list back — nothing is uploaded by hand. From a checkout:
 
 ```sh
 git clone https://github.com/rlaope/jeval && cd jeval
