@@ -5,7 +5,10 @@
   </picture>
 </p>
 
-**Find out what your classifier's confidence is really worth, and where to hand off to a human, based on what a mistake costs.**
+<p align="center">
+  <strong>Find out what your classifier's confidence is really worth,<br>
+  and where to hand off to a human, based on what a mistake costs.</strong>
+</p>
 
 <div align="center">
 
@@ -240,13 +243,19 @@ demo uses:
 
 > **Your threshold is too low.** Band 0.03-0.44 measures 68.6% accuracy on 70 decisions (of 696 labels); the threshold belongs at 0.75, above the 0.60 in use.
 
-| | now | recommended | change |
-| --- | --- | --- | --- |
-| confidence threshold | 0.60 | 0.75 | +0.15 |
-| auto rate | 33% | 30% | -2.9 pt |
-| accuracy (auto) | 85% | 91% | +5.4 pt |
-| cost per case | KRW 1,926.23 | KRW 1,737.70 | -9.8% |
-| monthly cost | KRW 38,524,590.16 | KRW 34,754,098.36 | -9.8% |
+<table>
+  <tr>
+    <th align="left" width="31%">what changes</th>
+    <th align="right" width="19%">now</th>
+    <th align="right" width="26%">recommended</th>
+    <th align="right" width="24%">change</th>
+  </tr>
+  <tr><td>confidence threshold</td><td align="right">0.60</td><td align="right">0.75</td><td align="right">+0.15</td></tr>
+  <tr><td>auto rate</td><td align="right">33%</td><td align="right">30%</td><td align="right">-2.9 pt</td></tr>
+  <tr><td>accuracy (auto)</td><td align="right">85%</td><td align="right">91%</td><td align="right">+5.4 pt</td></tr>
+  <tr><td>cost per case</td><td align="right">KRW 1,926.23</td><td align="right">KRW 1,737.70</td><td align="right">-9.8%</td></tr>
+  <tr><td>monthly cost</td><td align="right">KRW 38,524,590.16</td><td align="right">KRW 34,754,098.36</td><td align="right">-9.8%</td></tr>
+</table>
 
 None of these numbers were typed in by hand, because the report itself is in the repository. Open
 [`examples/report-example.html`](examples/report-example.html) in a browser (one 249 KB file, no
