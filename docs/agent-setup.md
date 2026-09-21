@@ -9,8 +9,13 @@ The whole task: **turn the classifier's own log into one artifact someone can ac
 ## 0. Confirm the tool works before touching anyone's data
 
 ```sh
-uvx --from git+https://github.com/rlaope/jeval jeval demo --out-dir /tmp/jeval-demo
+curl -fsSL https://raw.githubusercontent.com/rlaope/jeval/main/install.sh | sh
+jeval demo --out-dir /tmp/jeval-demo
 ```
+
+The installer needs no uv, no pipx and no root, and afterwards `jeval` is a plain command on PATH.
+If installing is not allowed on this machine, every command below also runs as
+`uvx --from git+https://github.com/rlaope/jeval jeval …`.
 
 Synthetic data with a known miscalibration, so you can see what the output looks like with nothing
 at stake. It writes three things: `report.html`, `costs.yaml`, `.jeval/records.jsonl`. Open the HTML

@@ -165,11 +165,20 @@ snapshot holds measurements, never records, so it is safe to commit.
 ## Get it
 
 ```sh
-uvx --from git+https://github.com/rlaope/jeval jeval demo   # nothing installed
+curl -fsSL https://raw.githubusercontent.com/rlaope/jeval/main/install.sh | sh
+jeval demo
 ```
 
+That is the whole installation: a `jeval` command on your PATH. No uv, no pipx, no root, and nothing
+to do with PyPI. The installer puts a private virtual environment under `~/.local/share/jeval`, links
+`jeval` into `~/.local/bin`, and prints the one line to add if that directory is not on your PATH yet
+— or pass `--modify-path` and it edits your shell rc for you. Re-run it to upgrade;
+`sh install.sh uninstall` removes everything it made.
+
+Prefer to install nothing at all?
+
 ```sh
-# pinned wheel, straight from the release
+uvx --from git+https://github.com/rlaope/jeval jeval demo
 pip install https://github.com/rlaope/jeval/releases/download/v0.1.3/jeval_cli-0.1.3-py3-none-any.whl
 ```
 

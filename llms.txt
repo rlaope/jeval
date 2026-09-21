@@ -10,12 +10,17 @@ is [docs/agent-setup.md](docs/agent-setup.md).
 
 ## Install
 
-Any of these works today. `pip install jeval` installs an unrelated project: that name on PyPI
-belongs to someone else, and this tool is not on PyPI at all. Use one of the commands above — the
-release wheel URL and the pinned tag are the supported install paths.
+The supported path is a release asset, not an index: `pip install jeval` installs an unrelated
+project, and this tool is not on PyPI. Installing gives the user a plain `jeval` command on PATH.
 
 ```sh
-# no install, always current
+# installs a `jeval` command into ~/.local/bin, no uv, pipx or root
+curl -fsSL https://raw.githubusercontent.com/rlaope/jeval/main/install.sh | sh
+jeval --help
+```
+
+```sh
+# nothing installed, always current
 uvx --from git+https://github.com/rlaope/jeval jeval --help
 
 # pinned, no install
