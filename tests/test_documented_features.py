@@ -38,8 +38,10 @@ PACKAGE = REPO / "jeval"
 # Every document that tells a reader (or an agent) to run something.
 DOC_PATHS = (README, REPO / "llms.txt", REPO / "docs" / "agent-setup.md")
 
-# `jeval ...` may be shown wrapped in an installer. The command inside it is still a claim.
-LAUNCHERS = r"(?:uv run |uvx(?: --from \S+)? )"
+# `jeval ...` may be shown wrapped in an installer, or bare. The whole prefix is optional: without
+# the trailing `?` this matched only launcher-prefixed lines and silently ignored every plain
+# `jeval ...` in the documents, so the guard read a fraction of what it claimed to check.
+LAUNCHERS = r"(?:uv run |uvx(?: --from \S+)? )?"
 
 runner = CliRunner()
 
