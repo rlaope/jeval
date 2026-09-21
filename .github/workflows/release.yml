@@ -42,7 +42,9 @@ jobs:
           cp LICENSE "$pack/LICENSE"
           # The archive root carries skills/hosts/, which is where install-skills.sh looks first.
           tar -czf dist/jeval-skills.tar.gz -C "$pack" .
-          tar -tzf dist/jeval-skills.tar.gz | head -5
+          # `sed -n 1,5p`, not `head -5`: under `set -o pipefail` a reader that exits early sends
+          # tar an EPIPE, and its non-zero status fails the whole step after the archive was built.
+          tar -tzf dist/jeval-skills.tar.gz | sed -n '1,5p'
       - uses: actions/upload-artifact@v4
         with:
           name: dist
