@@ -250,10 +250,9 @@ def _plan_scope(
             value,
             metrics,
             n_now,
-            reason=(
-                f"only {n_now} gold-labeled records; at least {MIN_LABELS_FOR_PROJECTION} are "
-                "needed before the k/sqrt(n) scaling can be fitted"
-            ),
+            # Short enough to sit on one line of the plan table, which already runs wide; the
+            # scaling note itself is printed under the table as an assumption.
+            reason=(f"only {n_now} labels; {MIN_LABELS_FOR_PROJECTION} needed to fit the scaling"),
         )
 
     n_half = n_now // 2

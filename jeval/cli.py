@@ -1347,11 +1347,16 @@ def plan(
     if not plans:
         typer.echo("no labeled decisions to plan from: labels first, then a plan")
         raise typer.Exit(code=1)
-    typer.echo(f"{'scope':<10} {'key':<20} {'n':>6} {'ECE':>7} {'CI':>7}  needed")
+    # The scope column is printed only when the rows disagree about it: repeating "question" on
+    # every line spends 11 columns of a table that already runs wide.
+    show_scope = len({item.scope for item in plans}) > 1
+    head = f"{'scope':<10} " if show_scope else ""
+    typer.echo(f"{head}{'key':<20} {'n':>6} {'ECE':>7} {'CI':>7}  needed")
     for item in plans:
+        lead = f"{item.scope:<10} " if show_scope else ""
         if item.labels_for_target is None:
             typer.echo(
-                f"{item.scope:<10} {item.key:<20} {item.n_now:>6} "
+                f"{lead}{item.key:<20} {item.n_now:>6} "
                 f"{item.ece:>7.3f} {item.ci_width:>7.3f}  {item.reason}"
             )
             continue
@@ -1359,8 +1364,7 @@ def plan(
             f"{_fmt_target(target)}: {count:,}" for target, count in item.labels_for_target
         )
         typer.echo(
-            f"{item.scope:<10} {item.key:<20} {item.n_now:>6} "
-            f"{item.ece:>7.3f} {item.ci_width:>7.3f}  {wanted}"
+            f"{lead}{item.key:<20} {item.n_now:>6} {item.ece:>7.3f} {item.ci_width:>7.3f}  {wanted}"
         )
     from jeval.planning import _assumption_note
 

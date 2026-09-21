@@ -326,9 +326,11 @@ because jeval never holds a token.
 guess below 200 labels:
 
 ```
-$ jeval plan --target-ci 0.05
-scope      key                       n     ECE      CI  needed
-question   department              511   0.062   0.059  0.015: 6,346 · 0.030: 1,204 · 0.050: 91
+$ jeval plan --root examples/report-example --target-ci 0.05
+key                       n     ECE      CI  needed
+department              256   0.078   0.075  0.019: 2,442 · 0.037: 533 · 0.050: 214
+intent                  244   0.091   0.081  0.020: 8,753 · 0.040: 1,326 · 0.050: 677
+is_urgent               196   0.250   0.107  only 196 labels; 200 needed to fit the scaling
 ```
 
 `jeval label` ranks what to label instead of asking for a labeling project: it writes a CSV of the
