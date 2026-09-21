@@ -36,7 +36,12 @@ README = REPO / "README.md"
 PACKAGE = REPO / "jeval"
 
 # Every document that tells a reader (or an agent) to run something.
-DOC_PATHS = (README, REPO / "llms.txt", REPO / "docs" / "agent-setup.md")
+DOC_PATHS = (
+    README,
+    REPO / "llms.txt",
+    REPO / "docs" / "agent-setup.md",
+    REPO / "docs" / "instrumenting-a-service.md",
+)
 
 # `jeval ...` may be shown wrapped in an installer, or bare. The whole prefix is optional: without
 # the trailing `?` this matched only launcher-prefixed lines and silently ignored every plain

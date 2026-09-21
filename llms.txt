@@ -87,5 +87,7 @@ their own data and show them the artifact — not to run a command tour.
 
 - [README.md](README.md) — what it measures and why
 - [docs/agent-setup.md](docs/agent-setup.md) — step-by-step setup, including the no-labels path
+- [docs/instrumenting-a-service.md](docs/instrumenting-a-service.md) — instrument a running
+  service end to end: the wrapper, the outcome join, and the output of every step
 - [examples/report-example.html](examples/report-example.html) — a real generated report
 - [examples/ci/drift.yml](examples/ci/drift.yml) — the CI starting point
