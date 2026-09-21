@@ -245,10 +245,10 @@ demo uses:
 
 <table width="100%">
   <tr>
-    <th align="left" width="31%">what changes</th>
-    <th align="right" width="19%">now</th>
-    <th align="right" width="26%">recommended</th>
-    <th align="right" width="24%">change</th>
+    <th align="left" width="185">what changes</th>
+    <th align="right" width="205">now</th>
+    <th align="right" width="215">recommended</th>
+    <th align="right" width="95">change</th>
   </tr>
   <tr><td>confidence threshold</td><td align="right">0.60</td><td align="right">0.75</td><td align="right">+0.15</td></tr>
   <tr><td>auto rate</td><td align="right">33%</td><td align="right">30%</td><td align="right">-2.9 pt</td></tr>
