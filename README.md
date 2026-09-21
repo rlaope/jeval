@@ -56,6 +56,35 @@ tool sits above all of them.
 
 ---
 
+## Get it
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/rlaope/jeval/main/install.sh | sh
+jeval demo
+```
+
+That is the whole installation: a `jeval` command on your PATH. No uv, no pipx, no root, and nothing
+to do with PyPI. The installer puts a private virtual environment under `~/.local/share/jeval`, links
+`jeval` into `~/.local/bin`, and prints the one line to add if that directory is not on your PATH yet
+— or pass `--modify-path` and it edits your shell rc for you. Re-run it to upgrade;
+`sh install.sh uninstall` removes everything it made.
+
+Prefer to install nothing at all?
+
+```sh
+uvx --from git+https://github.com/rlaope/jeval jeval demo
+pip install https://github.com/rlaope/jeval/releases/download/v0.1.6/jeval_cli-0.1.6-py3-none-any.whl
+```
+
+It generates a synthetic decision log whose miscalibration is known, reports on it, and writes a
+`report.html` you can open — the same artifact the rest of this page is about. Nothing is
+downloaded from your side, no data leaves the machine, and the demo data is explicitly labeled
+synthetic.
+
+`pip install jeval` installs an **unrelated project**: that name on PyPI belongs to someone else,
+and this tool is not published to PyPI at all. The two commands above are the install paths, and a
+pinned wheel never changes under you.
+
 ## What the number actually means
 
 A confidence is a claim. Here is the curve's own table, five of its ten rows copied out of the
@@ -168,35 +197,6 @@ because jeval never holds a token.
 `--baseline .jeval/baseline.json` compares against the last measurement you accepted rather than
 only model-to-model, which matters when the model string never changes but the behaviour does. The
 snapshot holds measurements, never records, so it is safe to commit.
-
-## Get it
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/rlaope/jeval/main/install.sh | sh
-jeval demo
-```
-
-That is the whole installation: a `jeval` command on your PATH. No uv, no pipx, no root, and nothing
-to do with PyPI. The installer puts a private virtual environment under `~/.local/share/jeval`, links
-`jeval` into `~/.local/bin`, and prints the one line to add if that directory is not on your PATH yet
-— or pass `--modify-path` and it edits your shell rc for you. Re-run it to upgrade;
-`sh install.sh uninstall` removes everything it made.
-
-Prefer to install nothing at all?
-
-```sh
-uvx --from git+https://github.com/rlaope/jeval jeval demo
-pip install https://github.com/rlaope/jeval/releases/download/v0.1.6/jeval_cli-0.1.6-py3-none-any.whl
-```
-
-It generates a synthetic decision log whose miscalibration is known, reports on it, and writes a
-`report.html` you can open — the same artifact the rest of this page is about. Nothing is
-downloaded from your side, no data leaves the machine, and the demo data is explicitly labeled
-synthetic.
-
-`pip install jeval` installs an **unrelated project**: that name on PyPI belongs to someone else,
-and this tool is not published to PyPI at all. The two commands above are the install paths, and a
-pinned wheel never changes under you.
 
 ## Pointing it at your own system
 
