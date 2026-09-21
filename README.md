@@ -5,8 +5,7 @@
   </picture>
 </p>
 
-**Measure what your classifier's confidence is really worth, and set the human hand-off line from
-what a mistake costs.**
+**Find out what your classifier's confidence is really worth, and where to hand off to a human, based on what a mistake costs.**
 
 <div align="center">
 
@@ -18,23 +17,42 @@ what a mistake costs.**
 
 </div>
 
-<p align="center">
-  <img src="docs/report-verdict.png" width="49%" alt="Report verdict: 'Your threshold is too low', with stat cards and the reliability curve plotted against the perfect-calibration diagonal">
-  <img src="docs/report-cost.png" width="49%" alt="Cost curve with its minimum and flat region, the impact table comparing 0.60 to 0.75, and the threshold slider">
-</p>
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="docs/report-verdict.png" alt="The verdict card: 'Your threshold is too low', with the current threshold, the measured accuracy and the recommended threshold">
+      <br><sub>The top of the report: the line is in the wrong place, and here is why.</sub>
+    </td>
+    <td width="50%" valign="top">
+      <img src="docs/report-reliability.png" alt="Reliability chart: confidence along the bottom, how often the model was right up the side, with grey bands where the data is thin">
+      <br><sub>Confidence along the bottom, how often it was right up the side.</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="docs/report-impact.png" alt="Impact table comparing the threshold in use with the recommended one: auto rate, accuracy and cost per case">
+      <br><sub>What changes if you move the line: how much gets automated, and what it costs.</sub>
+    </td>
+    <td width="50%" valign="top">
+      <img src="docs/report-segments.png" alt="Cost per case by segment, each segment's own threshold drawn against the global one">
+      <br><sub>Who does worse than average, and whether they need their own line.</sub>
+    </td>
+  </tr>
+</table>
 
-Your classifier answers with a label and a confidence. jeval answers the two questions that follow:
-*when it says 0.9, how often is it actually right?* and *given what a mistake costs, where should the
-line sit?*
+Your classifier answers with a label and a confidence. Two questions follow, and jeval answers both:
 
-Both answers come out of **one self-contained HTML file** and **one YAML file your application
-reads**. Everything is computed from labeled decision records on disk: **no server, no database, no
-network call, no account, no token.**
+1. When it says 0.9, how often is it actually right?
+2. Given what a mistake costs, where should the line sit between "the machine decides" and "a human
+   decides"?
 
-It is **provider-neutral by design**. Anything that returns a probability works — a managed API, a
-gateway, a local model, a logistic regression, a rules engine with a score. jeval verifies no
-vendor's calibration claim and is tied to none: the name came from one model family, the tool sits
-above all of them.
+The answers come out as **one HTML file you can open offline** and **one YAML file your app reads**.
+Everything is measured from labeled decision records on disk. There is no server, no database, no
+network call, no account and no token.
+
+jeval works with anything that returns a probability: a hosted API, a gateway, a local model, a
+logistic regression, a scoring rule. The name comes from one model family, but the tool sits above
+all of them.
 
 ---
 
@@ -42,89 +60,89 @@ above all of them.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/rlaope/jeval/main/install.sh | sh
-jeval demo
 ```
 
-That is the whole installation: a `jeval` command on your PATH. No uv, no pipx, no root, and nothing
-to do with PyPI. The installer puts a private virtual environment under `~/.local/share/jeval`, links
-`jeval` into `~/.local/bin`, and prints the one line to add if that directory is not on your PATH yet
-— or pass `--modify-path` and it edits your shell rc for you. Re-run it to upgrade;
-`sh install.sh uninstall` removes everything it made.
+That is the whole install: a `jeval` command on your PATH. It needs no uv, no pipx, no root and no
+PyPI. The installer keeps a private environment in `~/.local/share/jeval`, links `jeval` into
+`~/.local/bin`, and prints the one line to add if that folder is not on your PATH yet — or pass
+`--modify-path` and it edits your shell file for you. Run it again to upgrade, and
+`sh install.sh uninstall` removes everything it created.
 
-Prefer to install nothing at all?
+Want to install nothing at all?
 
 ```sh
-uvx --from git+https://github.com/rlaope/jeval jeval demo            # current main
-uvx --from git+https://github.com/rlaope/jeval@v0.1.7 jeval demo     # pinned tag
+uvx --from git+https://github.com/rlaope/jeval jeval --version            # current main
+uvx --from git+https://github.com/rlaope/jeval@v0.1.7 jeval --version     # pinned tag
 pip install https://github.com/rlaope/jeval/releases/download/v0.1.7/jeval_cli-0.1.7-py3-none-any.whl
 ```
 
-`pip install jeval` installs an **unrelated project**: that name on PyPI belongs to someone else,
-and this tool is not published to PyPI at all. Every tag is built by the release workflow, which
-attaches the wheel and the sdist to the GitHub release and reads the asset list back.
+**Careful with `pip install jeval`:** that name on PyPI belongs to an **unrelated project**, and this
+tool is not on PyPI at all. Use one of the lines above. Every release tag is built by the release
+workflow, which attaches the wheel and the source archive to the GitHub release and checks the file
+list afterwards.
 
-Python 3.10 or newer · runtime dependencies `numpy`, `pydantic`, `pyyaml`, `typer` · from a checkout:
+Python 3.10 or newer. It uses only `numpy`, `pydantic`, `pyyaml` and `typer`. From a checkout:
 `uv sync --all-groups`.
 
 ---
 
-## Hand it to an agent
+## Let an agent do the setup
 
-Nobody wants a command tour. Give an agent one sentence and take the artifact back:
+Nobody wants to learn nine commands. Hand an agent one sentence and take the report back:
 
 > Install jeval (`uvx --from git+https://github.com/rlaope/jeval jeval --help`), find where my
-> classifier's decisions are logged, describe that shape in `.jeval/ingest-map.yaml`, run
+> classifier's decisions are logged, describe that layout in `.jeval/ingest-map.yaml`, run
 > `jeval report`, and show me the report file.
 
-[`llms.txt`](llms.txt) is the machine-readable entry point and
-[`docs/agent-setup.md`](docs/agent-setup.md) is the playbook it follows — including the two places
-every attempt stalls: nothing logged yet, and no labels yet.
+[`llms.txt`](llms.txt) is the short entry point for a machine, and
+[`docs/agent-setup.md`](docs/agent-setup.md) is the longer playbook it follows. Both cover the two
+places where people get stuck: nothing is logged yet, and nothing is labeled yet.
 
 ---
 
-## What comes out
+## What you get
 
-| Artifact | What it answers | Who reads it |
+| File | What it answers | Who reads it |
 | --- | --- | --- |
-| `report.html` — one self-contained file | Are the confidences trustworthy, where do they break, and what does the threshold in use cost? | the human |
-| `thresholds.yaml` | The threshold to deploy, with a bootstrap interval, and whether splitting by segment pays | your application |
-| `labels.csv` | Which decisions, labeled next, buy the most certainty | whoever has the answers |
-| `calibration-*.yaml` — optional | A correction map your application applies, exported only when the gain is real | your application |
+| `report.html` — one file, no dependencies | Are the confidences trustworthy, where do they break, and what is the current threshold costing you? | you |
+| `thresholds.yaml` | The threshold to deploy, with an uncertainty range, and whether a segment needs its own line | your app |
+| `labels.csv` | Which decisions to label next, to learn the most per answer | whoever has the answers |
+| `calibration-*.yaml` — optional | A correction map your app can apply, written only when the gain is real | your app |
 
 ---
 
-## Instrumenting the service you already run
+## Use it on the service you already run
 
-Two lines: one where the classifier is called, one where the human answer lands.
+You add two lines: one where the classifier is called, one where the human answer arrives.
 
 ```python
 from jeval import collect
 
 client = collect.track(
-    TypeSafeClient(),  # your SDK, not jeval's
-    method_names=("system_one",),  # the method that answers questions
-    source_key=lambda **kw: kw["trace_id"],  # what a human answer is joined back on
-    segment=lambda **kw: {"lang": kw.get("lang")},  # request attributes become segment axes
+    TypeSafeClient(),                               # your SDK, not jeval's
+    method_names=("system_one",),                   # the method that answers questions
+    source_key=lambda **kw: kw["trace_id"],         # what a human answer is joined back on
+    segment=lambda **kw: {"lang": kw.get("lang")},  # request fields you want to compare later
 )
 ```
 
-Then check `collect.stats()["calls"]` is not zero after your first request: a wrapper that found no
-method to patch is counted in `no_method_found`, because a silent no-op is how an integration looks
-installed while collecting nothing. Point it at your own directory with
-`JEVAL_ROOT=/var/lib/jeval`, which writes the same `.jeval/records.jsonl` that
-`jeval report --root /var/lib/jeval` opens. Collection is off with `JEVAL_COLLECT=0`.
+Then check that `collect.stats()["calls"]` is not zero after the first request. A wrapper that found
+no method to patch is counted in `no_method_found`, because a silent no-op looks exactly like a
+working setup. Set `JEVAL_ROOT=/var/lib/jeval` to choose where the records go: it writes the same
+`.jeval/records.jsonl` that `jeval report --root /var/lib/jeval` reads. Set `JEVAL_COLLECT=0` to turn
+collection off.
 
-The wrapper is a **recorder, not a proxy**: it observes a call your code already makes, never calls a
-model, never chooses one, never retries, never blocks, and never raises — a failed write is counted.
-It imports no vendor SDK; a preset, not a branch, is where a product's field names live.
+The wrapper only watches a call your code already makes. It never calls a model, never picks one,
+never retries, never blocks and never raises — a failed write is counted and dropped. It imports no
+vendor SDK, and any product-specific field name lives in a preset rather than in the core.
 
-The end-to-end walkthrough, with the output of every step, is in
+The full walkthrough, with the output of each step, is in
 [`docs/instrumenting-a-service.md`](docs/instrumenting-a-service.md).
 
-### A log you already have
+### You already have a log
 
-Skip the wrapper and describe the shape instead — `field_map`, `questions_field`, `defaults`,
-`label_from`; a flat column can serve as a segment axis:
+Skip the wrapper and describe the layout instead. `field_map` says which column means what,
+`questions_field` names the question, and a flat column can be used as a segment:
 
 ```sh
 jeval init --root ~/myproject
@@ -134,7 +152,7 @@ jeval ingest ~/myproject/decisions.jsonl --labels ~/myproject/resolutions.jsonl 
   --join-on ticket_id --label-question department --root ~/myproject
 ```
 
-A product's own response shape may already be a preset:
+If your product's response shape is already known, one preset may cover it:
 
 ```sh
 $ jeval ingest --preset jev-native api-decisions.jsonl
@@ -143,46 +161,46 @@ read 4 rows
 wrote 8 records to .jeval/records.jsonl
 ```
 
-`jeval ingest --list-presets` shows what is available; `--response-field` and `--source-key-field`
-override where it looks.
+`jeval ingest --list-presets` shows the presets. `--response-field` and `--source-key-field`
+override where a preset looks.
 
 ---
 
-## Where the labels come from
+## Where labels come from
 
-The single biggest reason people bounce off calibration tooling is thinking they need a labeling
-project. You are already producing labels — labeling cost is a mapping exercise:
+The usual reason people give up on calibration tools is believing they need a labeling project. You
+are most likely already producing labels — the work is joining them, not creating them:
 
 | You already have | Where the label is |
 | --- | --- |
-| Cases a human reviewed after escalation | the human's final answer — ground truth for the model's answer |
-| Auto-processed cases later reversed | the reversal — the model was wrong |
-| Refund approvals and rejections | the outcome — a real, dated answer |
+| Cases a human reviewed after escalation | the human's final answer — this is the truth for the model's answer |
+| Auto-handled cases that were later reversed | the reversal — the model was wrong |
+| Refund approvals and rejections | the outcome — a real answer, with a date |
 
 ```yaml
 label_from:
   field: resolution.final_department   # dotted paths work
   source: human_override               # human_review | human_override | silver
-  join_on: ticket_id                   # the key shared by your log and the resolution log
-  question: department                 # the question this column answers
+  join_on: ticket_id                   # the key your log and the resolution log share
+  question: department                 # which question this column answers
 ```
 
-`question:` is not decoration. A join key is shared by every question of a request, so without it a
-department answer would also be written as the *intent* answer. Two guards stand between your records
-and a wrong label: a harvest never overwrites an existing label unless you pass `--overwrite`, and it
-refuses a label the record's own question could not have produced — refusing is counted and named,
-because a wrong label is worse than a missing one. The harvest rewrites `.jeval/records.jsonl` in
-place and atomically, touching only the label fields.
+`question:` is not decoration. Every question of a request shares the same join key, so without it a
+department answer would also be written as the *intent* answer. Two rules protect your records: a
+harvest never overwrites a label unless you pass `--overwrite`, and it refuses a label the record's
+own question could not have produced. Refusals are counted and named, because a wrong label is worse
+than a missing one. The harvest rewrites `.jeval/records.jsonl` in place and atomically, and touches
+only the label fields.
 
-**Without labels, jeval measures nothing.** It says so and stops rather than producing a number.
+**With no labels, jeval measures nothing.** It says so and stops instead of making up a number.
 
 ---
 
 ## What the numbers mean
 
-A confidence is a claim. Five of the ten rows of the reliability table, copied out of the report in
-[`examples/report-example.html`](examples/report-example.html) — a real generated report, over
-synthetic data, committed so every claim in this README can be checked against the artifact itself:
+A confidence is a claim. Here are five rows of the reliability table, copied from a real report in
+[`examples/report-example.html`](examples/report-example.html) — generated from synthetic data, and
+committed so you can check every number on this page against the file:
 
 ```
 Confidence bin      n   Stated   Observed   Wilson 95%      Gap
@@ -193,10 +211,12 @@ Confidence bin      n   Stated   Observed   Wilson 95%      Gap
 0.97-1.00          26     98%      100%     [87%, 100%]  +0.016
 ```
 
-Read the third row: the model said 83% and was right 69% of the time, and the interval around that
-number spans 50% to 83% — which is what a 26-record bin can actually support.
+Read the third row: the model said 83% and was right 69% of the time, and the range around that
+number runs from 50% to 83% — that is all a bin of 26 decisions can support.
 
-That report's own verdict, for the threshold the demo treats as deployed:
+`ECE` is the average gap between the confidence claimed and how often the model was right; 0 means
+the confidence can be taken at face value. Here is the verdict in that report, for the threshold the
+demo uses:
 
 > **Your threshold is too low.** Band 0.03-0.44 measures 68.6% accuracy on 70 decisions (of 696 labels); the threshold belongs at 0.75, above the 0.60 in use.
 
@@ -208,35 +228,35 @@ That report's own verdict, for the threshold the demo treats as deployed:
 | cost per case | KRW 1,926.23 | KRW 1,737.70 | -9.8% |
 | monthly cost | KRW 38,524,590.16 | KRW 34,754,098.36 | -9.8% |
 
-No invented numbers, because the artifact is in the repository. Open
+None of these numbers were typed in by hand, because the report itself is in the repository. Open
 [`examples/report-example.html`](examples/report-example.html) in a browser (one 249 KB file, no
-network, no server), or rebuild it byte-for-byte:
+network, no server), or build it again yourself:
 
 ```sh
 uv run jeval demo --out-dir examples/report-example --seed 11 --scale 0.5
 cp examples/report-example/report.html examples/report-example.html
 ```
 
-### The report is an argument, not a dashboard
+### How the report is laid out
 
-It reads top to bottom as one case, in a fixed order: ① verdict, ② reliability with Wilson intervals
-and a density strip, ③ cost curve with its minimum and flat region marked, ④ impact of moving,
-⑤ segments worst-first, ⑥ drift before/after, ⑦ data quality. Every chart is inline SVG built by
-jeval — no chart library, no external request, and the file opens offline.
+It reads top to bottom as one case, always in the same order: the verdict, the reliability chart, the
+cost curve with its lowest point marked, what moving the line changes, the segments that do worst,
+drift before and after, and the state of the data. Every chart is inline SVG drawn by jeval — no
+chart library, no request to anywhere, and the file opens with the network switched off.
 
-### You could write the measurement yourself with 30 lines of pandas
+### You could measure this yourself with 30 lines of pandas
 
-Yes. You should, once. Then the number will still disagree with `jeval report`, because of one line:
-`pd.cut` bins by equal width while jeval bins by quantile. On the demo records that single choice is
-the difference between ECE 0.113 and ECE 0.076 — equal-width binning put 38 labels in one bin while
+And you probably should, once. Your number will still differ from `jeval report`, because of one
+choice: `pd.cut` makes bins of equal width, while jeval makes bins of equal size. On the demo records
+that difference is ECE 0.113 against ECE 0.076 — equal-width binning put 38 labels in one bin while
 the others held 17 and 18, so one bin carried 40% of the weight. Which number you ship is a decision,
 not a detail.
 
 ---
 
-## `jeval drift` is the part a notebook cannot replace
+## `jeval drift` catches the change a notebook cannot
 
-A notebook measures once. Drift detection is what happens when the thing you measured changes:
+A notebook measures once. This is what you run when the model behind the API changes:
 
 ```
 $ jeval drift --root /tmp/jeval-drift --fail-on ece-increase=0.05
@@ -250,28 +270,28 @@ $ echo $?
 1
 ```
 
-That is a captured run, not a mock-up, and you can rebuild the log it ran on — 1,800 synthetic
-decisions where the newer model version is deliberately overconfident:
+This is a captured run, not a drawing, and you can rebuild the log it ran on — 1,800 synthetic
+decisions in which the newer model version is deliberately overconfident:
 
 ```sh
 uv run python examples/make-drift-log.py /tmp/jeval-drift
 uv run jeval drift --root /tmp/jeval-drift --fail-on ece-increase=0.05
 ```
 
-The threshold line appears only when a cost matrix is present; with no costs the block says
+The threshold line appears only when a cost matrix is present. Without costs the output says
 `recommended threshold: not available (no cost matrix was applied)` rather than inventing a number.
 `--save-baseline .jeval/baseline.json` compares against the last measurement you accepted, which
-matters when the model string never changes but the behaviour does — the snapshot holds measurements,
-never records, so it is safe to commit. [`examples/ci/drift.yml`](examples/ci/drift.yml) is the
-copy-paste CI starting point: it runs the check, prints the markdown summary, and comments it on the
-pull request, because jeval itself never holds a token.
+matters when the model string never changes but its behaviour does; a snapshot holds measurements,
+not records, so it is safe to commit. [`examples/ci/drift.yml`](examples/ci/drift.yml) is a
+copy-paste workflow: it runs the check, prints the markdown summary and posts it on the pull request,
+because jeval never holds a token.
 
 ---
 
 ## Which labels next, and how many
 
-`jeval plan` projects how many additional labels each question needs to tighten the interval, and
-refuses to guess below 200 labels:
+`jeval plan` shows how many more labels each question needs to tighten its range, and refuses to
+guess below 200 labels:
 
 ```
 $ jeval plan --target-ci 0.05
@@ -279,76 +299,75 @@ scope      key                       n     ECE      CI  needed
 question   department              511   0.062   0.059  0.015: 6,346 · 0.030: 1,204 · 0.050: 91
 ```
 
-`jeval label` ranks what to label instead of asking for a labeling project: it exports a CSV sheet
-of the decisions that sit on the decision line, and applies your answers back with
-`jeval label --apply labels.csv`. It is a queue and a sheet, not a full-screen TUI.
+`jeval label` ranks what to label instead of asking for a labeling project: it writes a CSV of the
+decisions that sit on the decision line, and applies your answers back with
+`jeval label --apply labels.csv`. It is a queue and a sheet, not a full-screen terminal app.
 
-`jeval calibrate` fits a correction — temperature scaling or isotonic regression — and exports it as
-a YAML map your application applies, measured **cross-validated**, never on the records it was fitted
-on. When the gain does not clear the sampling noise of your own log, it exports nothing and says so.
-jeval never applies the map: it writes a file, your application reads it.
+`jeval calibrate` fits a correction — temperature scaling or isotonic regression — and writes it as a
+YAML map your app can apply. It is measured on held-out records, never on the ones it was fitted on.
+If the gain does not clear the noise in your own log, it writes nothing and tells you. jeval never
+applies the map itself: it writes a file, your app reads it.
 
-`jeval threshold --by lang` asks the follow-up question in money — does giving a segment its own
-threshold pay? A split is recommended only when the segment's optimum moves by more than one sweep
-step **and** adopting it changes cost per case by more than 2%; otherwise the output says "splitting
-does not pay" and names the clause that failed.
+`jeval threshold --by lang` asks the follow-up question in money: does one segment deserve its own
+line? A split is recommended only when the segment's best threshold moves by more than one step of
+the sweep **and** adopting it changes cost per case by more than 2%. Otherwise the output says
+"splitting does not pay" and names the clause that failed.
 
 ---
 
-## Honest limits
+## What jeval does not do
 
 * **No labels, no measurement.** Without a human's answer on a row, jeval cannot tell whether a
-  confident prediction was right, and it stops instead of inventing a number.
-* **The costs are yours.** Every recommended threshold is a direct consequence of the figures in
-  `costs.yaml`. Wrong costs give wrong thresholds, and jeval cannot know that a refund costs more
-  than a support hour at your company.
-* **A wide interval is a label problem, not an analysis problem.** `jeval plan` says how many more
-  labels a target needs; nothing in the output warns you if the sample cannot support the answer.
-* **Correctness is only defined for `choice`.** `score` questions get MAE, RMSE and rank agreement,
-  are never folded into binary accuracy, and the excluded count is printed.
-* **Results from silver labels are an agreement rate**, not an accuracy, and the report says so
-  loudly. A label with no `label_source` counts as silver, never as gold.
-* **The threshold "in use" is only known when you say it.** Pass `--current`, or keep a
-  `thresholds.yaml`; with nothing deployed the report says so instead of comparing the recommendation
-  with itself.
+  confident prediction was right. It stops instead of making up a number.
+* **The costs are yours.** Every recommended threshold follows directly from the figures in
+  `costs.yaml`. Wrong costs give wrong thresholds, and jeval cannot know that a refund costs more than
+  an hour of support at your company.
+* **A wide range is a labeling problem, not an analysis problem.** `jeval plan` says how many more
+  labels you need; nothing in the output can rescue a sample that is too small.
+* **Correctness is only defined for `choice` questions.** `score` questions get MAE, RMSE and rank
+  agreement, are never folded into binary accuracy, and the excluded count is printed.
+* **Silver labels give you an agreement rate, not an accuracy**, and the report says so. A label with
+  no `label_source` counts as silver, never as gold.
+* **The threshold in use is only known if you say it.** Pass `--current`, or keep a `thresholds.yaml`.
+  If nothing is deployed, the report says so instead of comparing the recommendation with itself.
 * **`--bins 1` is refused.** One bin averages every decision together, so ECE collapses toward zero
-  and the report reads as "confidence is trustworthy" whatever the data says.
-* **A projection is an estimate.** The label projection fits the width's scaling exponent from your
-  own subsamples and prints the fit with its residual, and says when it fell back to 1/sqrt(n).
-* **The demo is synthetic.** `jeval demo` shows what the tool computes, not what a real model does —
-  the numbers in this README come from that demo, and the artifact says so itself.
-* **No gateway, no router, no hosting, no prompt optimization, no fine-tuning, no dashboard, no
-  accounts.** Adapters and request-path libraries stay out of scope: jeval writes files, your
-  application writes the request path.
+  and the report reads as "trustworthy" whatever the data says.
+* **A projection is an estimate.** The label projection fits the scaling of the range width from your
+  own subsamples, prints the fit with its residual, and says when it fell back to 1/sqrt(n).
+* **The demo is synthetic.** `jeval demo` shows what the tool computes, not what a real model does.
+  The numbers on this page come from that demo, and the report says so itself.
+* **No gateway, no router, no hosting, no prompt tuning, no fine-tuning, no dashboard, no accounts.**
+  Adapters and request-path libraries stay out of scope: jeval writes files, your app writes the
+  request path.
 
 ---
 
-## Command surface
+## Commands
 
 `tests/test_documented_features.py` fails if this table and the real CLI disagree in either
-direction, and nothing here is a stub that only looks implemented.
+direction, and no command here is a stub that only looks implemented.
 
-| Command | Purpose | Status |
+| Command | What it does | Status |
 | --- | --- | --- |
-| `jeval init` | scaffold `.jeval/` config and ingest map | implemented |
-| `jeval ingest` | JSONL/CSV logs to decision records; `--preset jev-native` reads a decision API's own response log; `--labels` harvests human answers | implemented |
-| `jeval report` | the argument document: verdict, reliability, cost, impact, segments, score questions, labels-and-correction, drift, data quality — one HTML file, or `--format md` for a paste-ready summary | implemented |
-| `jeval threshold` | cost matrix to per-action threshold with a bootstrap interval, written to `thresholds.yaml`; `--by <segment>` answers whether splitting pays | implemented |
-| `jeval drift` | model-version and period comparison, baseline snapshots, `--fail-on` exit codes, and the cost-driven threshold movement per slice | implemented |
-| `jeval label` | active-learning labeling queue with a CSV sheet to fill in | implemented |
-| `jeval plan` | additional labels needed for a tighter interval, per question and segment | implemented |
-| `jeval calibrate` | temperature / isotonic correction map, cross-validated, exported as YAML for your app | implemented |
-| `jeval demo` | synthetic log with known miscalibration, rendered through the same report path | implemented |
+| `jeval init` | create `.jeval/` config and the ingest map | implemented |
+| `jeval ingest` | JSONL/CSV logs to decision records; `--preset jev-native` reads a decision API's own response log; `--labels` brings in human answers | implemented |
+| `jeval report` | the report itself: verdict, reliability, cost, impact, segments, score questions, labels and correction, drift, data quality — one HTML file, or `--format md` for a summary you can paste | implemented |
+| `jeval threshold` | cost matrix to a threshold per action, with an uncertainty range, written to `thresholds.yaml`; `--by <segment>` answers whether splitting pays | implemented |
+| `jeval drift` | compare model versions or periods, save a baseline, fail a build with `--fail-on`, and see where the threshold moved per slice | implemented |
+| `jeval label` | a labeling queue with a CSV sheet to fill in | implemented |
+| `jeval plan` | how many more labels each question needs for a tighter range | implemented |
+| `jeval calibrate` | a temperature or isotonic correction map, measured on held-out data, exported as YAML | implemented |
+| `jeval demo` | a synthetic log with a known miscalibration, through the same report path | implemented |
 
-`jeval report` writes one self-contained HTML file and the terminal summary; the report never writes
-configuration, never fetches anything at runtime, and never posts to a pull request.
+`jeval report` writes one self-contained HTML file plus a short terminal summary. The report never
+writes configuration, never fetches anything at run time and never posts to a pull request.
 
 ---
 
-## Data model
+## The data
 
-Everything is a decision record, one question per record, in `.jeval/records.jsonl` so it diffs,
-streams and survives whatever tool you read it with:
+Everything is a decision record — one question per record — in `.jeval/records.jsonl`, so it diffs,
+streams and works with whatever tool you already read files with:
 
 ```jsonc
 {
@@ -369,25 +388,25 @@ streams and survives whatever tool you read it with:
 }
 ```
 
-Three properties carry most of the value:
+Three fields carry most of the value:
 
-* **One record per question.** A request that answers "is this a refund?" and "how annoyed is the
-  customer?" can be reliable on one and useless on the other; pooled metrics hide exactly that.
-* **`model` is preserved verbatim.** `jev-latest` points at different models over time, and a
+* **One record per question.** A request that answers "is this a refund?" and "how annoyed is this
+  customer?" can be reliable on one and useless on the other. Pooled metrics hide exactly that.
+* **`model` is kept exactly as it came.** `jev-latest` points at different models over time, and a
   threshold tuned against it is tuned against something that no longer exists.
-* **`state_tokens` is preserved.** Accuracy tends to fall as the state grows, so
-  `--by state_tokens` is one of the more useful reports you can run.
+* **`state_tokens` is kept.** Accuracy tends to fall as the state grows, so `--by state_tokens` is
+  one of the more useful reports you can run.
 
 ---
 
 ## Docs
 
-* [`llms.txt`](llms.txt) — machine-readable entry point for an agent
+* [`llms.txt`](llms.txt) — short entry point for an agent
 * [`docs/agent-setup.md`](docs/agent-setup.md) — the setup playbook, including the no-labels path
-* [`docs/instrumenting-a-service.md`](docs/instrumenting-a-service.md) — instrumenting a running
-  service end to end, with the output of every step
+* [`docs/instrumenting-a-service.md`](docs/instrumenting-a-service.md) — set it up on a running
+  service, step by step, with the output of every step
 * [`examples/report-example.html`](examples/report-example.html) — a real generated report
-* [`examples/ci/drift.yml`](examples/ci/drift.yml) — the CI starting point
+* [`examples/ci/drift.yml`](examples/ci/drift.yml) — a CI starting point
 * [`CHANGELOG.md`](CHANGELOG.md) — what changed, and why
 
 ## Development
@@ -401,12 +420,12 @@ uv run mypy jeval
 uv run jeval demo --out-dir /tmp/jeval-demo
 ```
 
-The statistics are the product. `tests/test_synth.py` generates decision logs with a *known*
-miscalibration and asserts the measurement code recovers it: a calibrated sample must report ECE
-near zero, an inflated one must report the inflation, and a 95%-accurate sample that always claims
-0.99 must be caught as overconfident. If a change to the statistics cannot pass those tests, the
-change is wrong, not the tests. See `CONTRIBUTING.md` for the commit convention and `CLAUDE.md` for
-the rules that apply to automated contributors.
+The statistics are the product. `tests/test_synth.py` builds decision logs with a *known*
+miscalibration and checks that the code recovers it: a calibrated sample must report ECE near zero,
+an inflated one must report the inflation, and a sample that is 95% accurate but always claims 0.99
+must be caught as overconfident. If a change to the statistics cannot pass those tests, the change is
+wrong, not the tests. See `CONTRIBUTING.md` for the commit convention and `CLAUDE.md` for the rules
+that apply to automated contributors.
 
 ## License
 

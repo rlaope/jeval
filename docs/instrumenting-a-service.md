@@ -3,9 +3,8 @@
 How to get a real service's decisions into jeval, attach the human answers that arrive later, and
 read the result. Every step below was run; the output shown is the output it produced.
 
-The model in the walkthrough is a stand-in — there is no live vendor call. Everything else is the
-real thing: the wrapper, the call path, the files, the CLI, and the version of jeval the installer
-gave you.
+The model here is a stand-in — nothing calls a real vendor. Everything else is real: the wrapper,
+the call path, the files, the command line, and the version of jeval the installer gave you.
 
 ## What you need
 
@@ -50,7 +49,7 @@ The request path does not change. The wrapper makes no calls of its own, never c
 never retries, never blocks and never raises: it observes the call your code already makes and
 appends a line.
 
-Three things land in each record, and the third is the one that matters most:
+Each record keeps three things. The third one matters most:
 
 | Recorded | Why |
 | --- | --- |
@@ -99,9 +98,9 @@ Nothing is written outside that path, and nothing leaves the machine.
 
 ## 5. Verify the wrapper attached — do not skip this
 
-The default method names target the Jev SDK. A client that answers through a differently named
-method comes back working and **unwrapped**, and the log stays empty with no error anywhere. That is
-what happened on the first run of this walkthrough: `written: 0, calls: 0`.
+The default method names belong to the Jev SDK. If your client answers through a method with a
+different name, everything looks fine and nothing is recorded: no error, no warning, an empty file.
+That is what happened on the first run of this walkthrough — `written: 0, calls: 0`.
 
 ```python
 print(collect.stats())
@@ -236,8 +235,8 @@ auto_billing by lang: global threshold 0.88
                                                              global 0.88
 ```
 
-Both answers are refusals, and both are useful: one segment does not have enough labeled records to
-justify its own line, and the other does not need one.
+Both answers are refusals, and both are useful: one segment does not have enough labeled records for
+a line of its own, and the other does not need one.
 
 ## 10. Keep it running
 
@@ -274,8 +273,8 @@ workflow posts it, because jeval never holds a token.
 
 * It does not sit between your service and the model. Nothing here routes, retries, caches or
   proxies; a failed write is counted and dropped.
-* It does not decide the threshold for you. It reports what the numbers you supplied imply, with the
-  interval the sample can support.
+* It does not decide the threshold for you. It reports what your numbers imply, with the range the
+  sample can support.
 * It does not fix the confidence. `jeval calibrate` exports a correction map for your application to
   apply, and declines to export one when the gain does not clear the noise.
 * It does not upload anything. The records stay on the machine you put them on.
