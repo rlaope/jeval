@@ -33,6 +33,30 @@ jobs:
           name: dist
           path: dist/
 
+  attach:
+    name: attach distributions to the GitHub release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      # PyPI publishing needs a registered publisher; this job does not, so every tag produces
+      # something installable even before that is set up.
+      - name: Create or update the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" dist/* --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --generate-notes
+          fi
+
   publish:
     name: publish to PyPI
     needs: build
