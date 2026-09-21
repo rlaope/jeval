@@ -84,6 +84,29 @@ gets `.claude/skills`.
 * **OpenClaw and Opencode as separate skill roots in `--host all`.** Both read `.agents/skills`, so a
   second copy under their own root would list the same skill twice.
 
+### What is not certain
+
+The table above records what each host's own documentation states, retrieved 2026-09-21. Where that
+documentation is silent, contradictory, or undated, the question stays open here so a future change
+can start with it rather than with a guess:
+
+* **Codex CLI** — whether it still scans the legacy `$CODEX_HOME/skills` path is not stated in the
+  current documentation; that path appears only in a vendor document dated 2025-12-15. The pack ships
+  `.agents/skills` only.
+* **Cursor** — the discovery path for `AGENTS.md` is documented as a rule *type*, not as a path, so the
+  digest is offered for projects that already read `AGENTS.md`.
+* **OpenClaw** — the current name and state directory are confirmed by the vendor documentation, but
+  the rename dates come from third-party sources. Its description budget (one line, under 160
+  characters) is written as guidance rather than a hard limit, and the pack keeps to it anyway.
+* **Hermes Agent** — per-profile skill paths, and the date the project tier was added, are not
+  published.
+* **Pi** — only two of its documentation pages are directly fetchable; the instruction-file facts come
+  from the vendor repository's own docs file.
+* **OpenCode** — the V2 skill-source layout carries no published release date; the pack targets the
+  fixed roots documented for the current version.
+* **Claude Code** — no maximum length is documented for `name`, and the only size guidance for
+  `SKILL.md` is to keep it under 500 lines (the pack caps a skill at 120 lines).
+
 ## Keeping the pack true
 
 One source, one generator, one guard:
