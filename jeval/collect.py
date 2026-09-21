@@ -50,6 +50,7 @@ _STATS: dict[str, int] = {
     "retrack_ignored": 0,
     "sink_not_a_file": 0,
     "invalid_value": 0,
+    "no_method_found": 0,  # a track() that attached to nothing
 }
 
 
@@ -334,6 +335,7 @@ def response_payloads(
     source_key: str | None = None,
     keys: Mapping[str, str] | None = None,
     container: str = "answers",
+    segment: Mapping[str, str] | None = None,
 ) -> list[dict[str, Any]]:
     """Canonical payloads for a whole response object, model and usage included."""
     answers = response.get(container)
@@ -347,6 +349,7 @@ def response_payloads(
         usage=usage if isinstance(usage, Mapping) else None,
         source_key=source_key,
         keys=keys,
+        segment=segment,
     )
 
 
@@ -359,6 +362,7 @@ def track(
     method_names: Sequence[str] = ("system_one", "systemOne", "systemone"),
     path: str | Path | None = None,
     clock: Callable[[], datetime] = _now,
+    segment: Mapping[str, str] | Callable[..., Any] | None = None,
 ) -> Any:
     """Patch a client so every answered call is recorded, then return it.
 
@@ -394,6 +398,7 @@ def track(
                 container=container,
                 path=path,
                 clock=clock,
+                segment=segment,
             )
             setattr(wrapper, _TRACKED_ATTR, True)
             setattr(client, method_name, wrapper)
@@ -408,6 +413,11 @@ def track(
             _STATS["install_failed"] += 1
             return client
         break
+    else:
+        # Nothing matched, so the client comes back working and unwrapped. That is the worst
+        # first-run outcome there is — the log stays empty and nothing says why — so it is counted
+        # instead of silent. `method_names` names the method that answers questions.
+        _STATS["no_method_found"] += 1
     return client
 
 
@@ -419,6 +429,7 @@ def _wrap(
     container: str,
     path: str | Path | None,
     clock: Callable[[], datetime],
+    segment: Mapping[str, str] | Callable[..., Any] | None = None,
 ) -> Callable[..., Any]:
     if inspect.iscoroutinefunction(original):
 
@@ -427,7 +438,9 @@ def _wrap(
             _STATS["calls"] += 1  # counted here, so a call that raises is still an attempt
             started = clock()
             response = await original(*args, **kwargs)
-            _capture(response, args, kwargs, source_key, keys, container, path, started, clock)
+            _capture(
+                response, args, kwargs, source_key, keys, container, path, started, clock, segment
+            )
             return response
 
         return async_wrapper
@@ -437,7 +450,7 @@ def _wrap(
         _STATS["calls"] += 1  # counted here, so a call that raises is still an attempt
         started = clock()
         response = original(*args, **kwargs)
-        _capture(response, args, kwargs, source_key, keys, container, path, started, clock)
+        _capture(response, args, kwargs, source_key, keys, container, path, started, clock, segment)
         return response
 
     return wrapper
@@ -453,6 +466,7 @@ def _capture(
     path: str | Path | None,
     started: datetime,
     clock: Callable[[], datetime],
+    segment: Mapping[str, str] | Callable[..., Any] | None = None,
 ) -> None:
     """Record one call's answers. Every failure mode is counted, none is raised."""
     # The attempt itself is counted by the wrapper, before the call it wraps can raise.
@@ -468,8 +482,21 @@ def _capture(
             key = None if resolved is None else str(resolved)
         elif source_key is not None:
             key = str(source_key)
+        resolved_segment: Mapping[str, str] | None = None
+        if callable(segment):
+            candidate = segment(*args, **kwargs)
+            if isinstance(candidate, Mapping):
+                resolved_segment = {str(k): str(v) for k, v in candidate.items()}
+            elif candidate is not None:
+                # A segment that is not a mapping is counted and dropped: losing the whole decision
+                # over an extra field would be worse, and silence would hide a broken integration.
+                _STATS["invalid_value"] += 1
+        elif segment is not None:
+            resolved_segment = {str(k): str(v) for k, v in segment.items()}
         latency = (clock() - started).total_seconds() * 1000.0
-        payloads = response_payloads(response, source_key=key, keys=keys, container=container)
+        payloads = response_payloads(
+            response, source_key=key, keys=keys, container=container, segment=resolved_segment
+        )
         if not payloads:
             _STATS["unsupported"] += 1
             return

@@ -87,8 +87,17 @@ is 0, or rows are skipped in bulk, the map is wrong. Do not rewrite the user's f
 ```python
 from jeval import collect
 
-client = collect.track(YourClient(), source_key=lambda **kw: kw["trace_id"])
+client = collect.track(
+    YourClient(),
+    method_names=("system_one",),  # the method that answers questions
+    source_key=lambda **kw: kw["trace_id"],  # what a human answer is joined back on
+    segment=lambda **kw: {"lang": kw.get("lang")},  # request attributes become segment axes
+)
 ```
+
+Check `collect.stats()["calls"]` is not zero after one request, and that `no_method_found` is zero:
+a client whose answering method has another name is left working and unwrapped, which collects
+nothing.
 
 Every call the app already makes is recorded where it was made, including the model string and the
 join key. It makes no calls of its own, never blocks, and never raises: a failed write is counted,

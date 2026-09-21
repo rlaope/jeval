@@ -73,7 +73,7 @@ Prefer to install nothing at all?
 
 ```sh
 uvx --from git+https://github.com/rlaope/jeval jeval demo
-pip install https://github.com/rlaope/jeval/releases/download/v0.1.6/jeval_cli-0.1.6-py3-none-any.whl
+pip install https://github.com/rlaope/jeval/releases/download/v0.1.7/jeval_cli-0.1.7-py3-none-any.whl
 ```
 
 It generates a synthetic decision log whose miscalibration is known, reports on it, and writes a
@@ -208,9 +208,17 @@ from jeval import collect
 
 client = collect.track(
     TypeSafeClient(),
-    source_key=lambda **kw: kw["trace_id"],  # the id you will join a human answer back on
+    method_names=("system_one",),                      # the method that answers questions
+    source_key=lambda **kw: kw["trace_id"],            # what a human answer is joined back on
+    segment=lambda **kw: {"lang": kw.get("lang")},     # so --by lang works on your traffic
 )
 ```
+
+Then put the file where the report reads it — `JEVAL_ROOT=/var/lib/jeval` writes
+`/var/lib/jeval/.jeval/records.jsonl`, the same file `jeval report --root /var/lib/jeval` opens —
+and check `collect.stats()["calls"]` is not zero after your first request: a wrapper that found no
+method to patch is counted in `no_method_found`, because a silent no-op is how an integration looks
+installed while collecting nothing.
 
 That is the whole integration. The wrapper makes no calls of its own: it observes the call you
 already make, records the answers, and returns exactly what the client returned. It cannot take
@@ -464,11 +472,11 @@ Wide interval? That is a label problem, not an analysis problem, and the command
 
 ```sh
 uvx --from git+https://github.com/rlaope/jeval jeval demo            # nothing installed, current main
-uvx --from git+https://github.com/rlaope/jeval@v0.1.6 jeval demo     # nothing installed, pinned
+uvx --from git+https://github.com/rlaope/jeval@v0.1.7 jeval demo     # nothing installed, pinned
 ```
 
 ```sh
-pip install https://github.com/rlaope/jeval/releases/download/v0.1.6/jeval_cli-0.1.6-py3-none-any.whl
+pip install https://github.com/rlaope/jeval/releases/download/v0.1.7/jeval_cli-0.1.7-py3-none-any.whl
 ```
 
 `pip install jeval` installs an unrelated project: that name on PyPI belongs to someone else. This

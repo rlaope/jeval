@@ -290,3 +290,95 @@ def test_tracking_twice_under_another_method_name_is_counted(tmp_path: Path) -> 
 
     assert collect.stats()["already_tracked"] == 1
     assert not target.exists()  # and nothing was recorded by a second wrapper
+
+
+def test_a_client_with_no_matching_method_is_counted_not_silently_ignored(tmp_path) -> None:
+    """The first-run trap: add the line, make requests, find an empty log and no explanation.
+
+    The default method names target the vendor SDK. A client that answers through a differently
+    named method is left working and unwrapped, which is correct but must be visible — otherwise
+    the integration looks installed and collects nothing.
+    """
+
+    class Client:
+        def classify(self, **kwargs: object) -> dict[str, object]:
+            return {"model": "m", "answers": {}}
+
+    client = Client()
+    collect.track(client, path=tmp_path / "records.jsonl")
+
+    assert collect.stats()["no_method_found"] == 1
+    assert collect.stats()["calls"] == 0
+
+    # Naming the method that actually answers is the fix, and it collects.
+    collect.reset_stats()
+    named = collect.track(Client(), method_names=("classify",), path=tmp_path / "records.jsonl")
+    named.classify(question="department")
+    assert collect.stats()["no_method_found"] == 0
+    assert collect.stats()["calls"] == 1
+
+
+def test_a_segment_can_be_attached_to_tracked_calls(tmp_path) -> None:
+    """`--by lang` was unreachable for anyone who instruments a service.
+
+    The wrapper had no way to say where a request came from, so a collected decision never carried
+    a segment and every per-segment question answered "no record carries segment 'lang'".
+    """
+
+    class Client:
+        def classify(self, *, ticket_id: str, lang: str, **kwargs: object) -> dict[str, object]:
+            return {
+                "model": "jev-1.13.0",
+                "answers": {
+                    "department": {
+                        "type": "choice",
+                        "choice": "billing",
+                        "probabilities": {"billing": 0.9, "other": 0.1},
+                    }
+                },
+            }
+
+    target = tmp_path / "records.jsonl"
+    client = collect.track(
+        Client(),
+        method_names=("classify",),
+        source_key=lambda **kw: kw["ticket_id"],
+        segment=lambda **kw: {"lang": kw["lang"]},
+        path=target,
+    )
+    client.classify(ticket_id="T-1", lang="ko")
+    client.classify(ticket_id="T-2", lang="en")
+
+    records = [json.loads(line) for line in target.read_text().splitlines()]
+    assert [record["segment"] for record in records] == [{"lang": "ko"}, {"lang": "en"}]
+    assert [record["source_key"] for record in records] == ["T-1", "T-2"]
+
+
+def test_a_segment_callable_that_returns_nonsense_keeps_the_decision(tmp_path) -> None:
+    """A broken segment costs the segment, not the measurement."""
+
+    class Client:
+        def classify(self, **kwargs: object) -> dict[str, object]:
+            return {
+                "model": "jev-1.13.0",
+                "answers": {
+                    "department": {
+                        "type": "choice",
+                        "choice": "billing",
+                        "probabilities": {"billing": 0.9, "other": 0.1},
+                    }
+                },
+            }
+
+    target = tmp_path / "records.jsonl"
+    client = collect.track(
+        Client(),
+        method_names=("classify",),
+        segment=lambda **kw: "ko",  # a string, not a mapping
+        path=target,
+    )
+    client.classify(ticket_id="T-1")
+
+    records = [json.loads(line) for line in target.read_text().splitlines()]
+    assert len(records) == 1 and records[0]["segment"] == {}
+    assert collect.stats()["invalid_value"] == 1
