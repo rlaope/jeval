@@ -37,6 +37,41 @@ class IngestReport:
         return self.n_records > 0
 
 
+def _short(value: Any, limit: int = 40) -> str:
+    """A value as it will appear inside a one-line error."""
+    text = repr(value)
+    return text if len(text) <= limit else text[: limit - 3] + "..."
+
+
+def _row_error(exc: Exception) -> str:
+    """One line naming what to change, instead of a validation dump.
+
+    A mapping mistake is the likeliest reason a row is skipped, and the person reading it is holding
+    a log whose field names they control. The pydantic dump names neither the field to fix nor the
+    file to fix it in, so the same mistake gets read as "jeval is broken".
+    """
+    errors = getattr(exc, "errors", None)
+    if not callable(errors):
+        return str(exc)
+    parts: list[str] = []
+    for item in errors():
+        if not isinstance(item, Mapping):
+            continue
+        located = item.get("loc") or ()
+        field = ".".join(str(piece) for piece in located) or "record"
+        kind = str(item.get("type", ""))
+        if kind == "missing":
+            parts.append(f"nothing to use for {field!r}: map it in field_map or set it in defaults")
+        elif kind == "dict_type":
+            parts.append(
+                f"{field!r} must be an object of names, got {_short(item.get('input'))}: map an "
+                f"object column, or map a flat column and jeval names the segment after it"
+            )
+        else:
+            parts.append(f"{field!r} {item.get('msg', kind)}: got {_short(item.get('input'))}")
+    return "; ".join(parts) or str(exc)
+
+
 def _coerce_timestamp(value: Any) -> Any:
     if isinstance(value, (int, float)) and not isinstance(value, bool):
         return datetime.fromtimestamp(float(value), tz=timezone.utc)
@@ -142,7 +177,9 @@ def ingest_files(
             except Exception as exc:
                 report.n_skipped += 1
                 if len(report.errors) < 10:
-                    report.errors.append(f"{Path(source).name} row {report.n_rows}: {exc}")
+                    report.errors.append(
+                        f"{Path(source).name} row {report.n_rows}: {_row_error(exc)}"
+                    )
                 continue
             seen: set[str] = set()
             for record in built:
@@ -197,7 +234,9 @@ def ingest_preset_files(
             except Exception as exc:
                 report.n_skipped += 1
                 if len(report.errors) < 10:
-                    report.errors.append(f"{Path(source).name} row {report.n_rows}: {exc}")
+                    report.errors.append(
+                        f"{Path(source).name} row {report.n_rows}: {_row_error(exc)}"
+                    )
                 continue
             if not payloads:
                 report.n_skipped += 1
@@ -213,7 +252,9 @@ def ingest_preset_files(
                 except Exception as exc:
                     report.n_skipped += 1
                     if len(report.errors) < 10:
-                        report.errors.append(f"{Path(source).name} row {report.n_rows}: {exc}")
+                        report.errors.append(
+                            f"{Path(source).name} row {report.n_rows}: {_row_error(exc)}"
+                        )
                     continue
                 built = _drop_impossible_label(built, report)
                 if not built.is_labeled:

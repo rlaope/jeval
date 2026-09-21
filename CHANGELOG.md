@@ -105,6 +105,18 @@ Report and CLI:
 - `jeval init` over a file named `.jeval` explains the conflict instead of raising
   `FileExistsError`.
 
+### Fixed — third pass
+
+- A flat column can be a segment. A log that carries `lang: ko` as a column had no way to reach the
+  documented `--by lang` sweep: the mapping renamed fields but could not build the object the schema
+  wants, so every row was skipped. A non-object value mapped onto `segment` now becomes
+  `{column_name: value}`, and an object column is still mapped as an object.
+- A skipped row says what to change. The message was a pydantic dump
+  (`2 validation errors for DecisionRecord ... visit https://errors.pydantic.dev/...`) that named
+  neither the field nor the file, and a missing `model` or a text confidence read as "jeval is
+  broken". Each cause now names the field, what arrived, and whether to fix `field_map` or
+  `defaults`.
+
 ### Fixed
 Four adversarial QA passes over the whole tool found and closed the following. Release-blocking
 first.

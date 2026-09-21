@@ -148,6 +148,18 @@ def confidence_from_probabilities(probabilities: Mapping[str, float]) -> tuple[s
     return top_label, float(probabilities[top_label])
 
 
+def _number(value: Any, field: str) -> float:
+    """A float, or a message naming the field.
+
+    `float("high")` raises `could not convert string to float: 'high'`, which names neither the
+    field nor the file, and the person reading it is looking at a mapping they can fix.
+    """
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"{field}: {value!r} is not a number") from None
+
+
 def normalize_record(payload: Mapping[str, Any]) -> DecisionRecord:
     """Build a :class:`DecisionRecord` from a loosely typed mapping.
 
@@ -164,7 +176,9 @@ def normalize_record(payload: Mapping[str, Any]) -> DecisionRecord:
     raw_probabilities = payload.get("probabilities")
     probabilities: dict[str, float] | None = None
     if raw_probabilities:
-        probabilities = {str(k): float(v) for k, v in dict(raw_probabilities).items()}
+        probabilities = {
+            str(k): _number(v, f"probabilities[{k!r}]") for k, v in dict(raw_probabilities).items()
+        }
 
     prediction = payload.get("prediction")
     confidence = payload.get("confidence")
@@ -221,7 +235,7 @@ def normalize_record(payload: Mapping[str, Any]) -> DecisionRecord:
     if confidence is None:
         raise ValueError("score records need a confidence")
 
-    confidence = float(confidence)
+    confidence = _number(confidence, "confidence")
     if not 0.0 <= confidence <= 1.0:
         raise ValueError(f"confidence out of range: {confidence}")
 

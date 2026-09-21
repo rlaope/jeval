@@ -60,6 +60,9 @@ label_from:                     # where the human's answer lives, if the log alr
   question: department          # only rows for this question take that answer
 ```
 
+`segment` may be a flat column — `segment: lang` makes `--by lang` work and names the axis after
+the column — or an object column already shaped like `{"lang": "ko", "channel": "email"}`.
+
 A vendor shape may already be a preset — check before writing a map by hand:
 
 ```sh

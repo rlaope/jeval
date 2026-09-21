@@ -313,3 +313,147 @@ def test_a_possible_inline_label_is_left_alone(tmp_path: Path) -> None:
     stored = read_records(out)
     assert stored[0].label == "technical"
     assert stored[0].label_source == "human_override"
+
+
+def test_a_flat_column_can_be_a_segment(tmp_path: Path) -> None:
+    """`--by lang` was unreachable for any log that carries `lang` as a column, not an object.
+
+    A mapping config renames fields; it could not build the object the schema wants, so the row was
+    rejected and the documented per-segment sweep had no segment to sweep.
+    """
+    rows = [
+        {"question": "department", "prediction": "billing", "confidence": 0.9, "lang": "ko"},
+        {"question": "department", "prediction": "technical", "confidence": 0.8, "lang": "en"},
+    ]
+    source = _write_jsonl(tmp_path / "app.jsonl", rows)
+    mapping = IngestMap(
+        field_map={
+            "question_key": "question",
+            "prediction": "prediction",
+            "confidence": "confidence",
+            "segment": "lang",
+        },
+        defaults={"question_type": "choice", "model": "jev-1.13.0"},
+    )
+
+    report = ingest_files([source], tmp_path / "records.jsonl", mapping)
+
+    assert report.n_skipped == 0
+    records = read_records(tmp_path / "records.jsonl")
+    assert [record.segment for record in records] == [{"lang": "ko"}, {"lang": "en"}]
+
+
+def test_an_object_column_is_still_mapped_as_an_object(tmp_path: Path) -> None:
+    """The flat-column convenience must not flatten a log that already carries segments."""
+    rows = [
+        {
+            "question": "department",
+            "prediction": "billing",
+            "confidence": 0.9,
+            "segment": {"lang": "ko", "channel": "email"},
+        }
+    ]
+    source = _write_jsonl(tmp_path / "app.jsonl", rows)
+    mapping = IngestMap(
+        field_map={
+            "question_key": "question",
+            "prediction": "prediction",
+            "confidence": "confidence",
+            "segment": "segment",
+        },
+        defaults={"question_type": "choice", "model": "jev-1.13.0"},
+    )
+
+    ingest_files([source], tmp_path / "records.jsonl", mapping)
+
+    assert read_records(tmp_path / "records.jsonl")[0].segment == {
+        "lang": "ko",
+        "channel": "email",
+    }
+
+
+def test_a_skipped_row_says_what_to_change(tmp_path: Path) -> None:
+    """The message used to be a pydantic dump naming neither the field nor where to fix it."""
+    source = _write_jsonl(
+        tmp_path / "app.jsonl",
+        [{"question": "department", "prediction": "billing", "confidence": 0.9}],
+    )
+    mapping = IngestMap(
+        field_map={
+            "question_key": "question",
+            "prediction": "prediction",
+            "confidence": "confidence",
+        },
+        defaults={"question_type": "choice"},
+    )
+
+    report = ingest_files([source], tmp_path / "records.jsonl", mapping)
+
+    assert report.n_skipped == 1
+    message = report.errors[0]
+    assert "model" in message
+    assert "field_map" in message and "defaults" in message
+    for jargon in ("pydantic", "ValidationError", "input_value", "errors.pydantic.dev"):
+        assert jargon not in message
+    assert "\n" not in message  # one line per row, so a log of them stays readable
+
+
+def test_a_numeric_column_is_a_usable_segment_axis(tmp_path: Path) -> None:
+    """Tiers logged as numbers are a segment too: the column name is the key, the value a string."""
+    source = _write_jsonl(
+        tmp_path / "app.jsonl",
+        [
+            {
+                "question": "department",
+                "prediction": "billing",
+                "confidence": 0.9,
+                "model": "jev-1.13.0",
+                "tier": 3,
+            }
+        ],
+    )
+    mapping = IngestMap(
+        field_map={
+            "question_key": "question",
+            "prediction": "prediction",
+            "confidence": "confidence",
+            "segment": "tier",
+        },
+        defaults={"question_type": "choice"},
+    )
+
+    report = ingest_files([source], tmp_path / "records.jsonl", mapping)
+
+    assert report.n_skipped == 0
+    assert read_records(tmp_path / "records.jsonl")[0].segment == {"tier": "3"}
+
+
+def test_a_wrong_shaped_value_names_the_field(tmp_path: Path) -> None:
+    """Text where a number belongs: the message says which field and what arrived."""
+    source = _write_jsonl(
+        tmp_path / "app.jsonl",
+        [
+            {
+                "question": "department",
+                "prediction": "billing",
+                "confidence": "high",
+                "model": "jev-1.13.0",
+            }
+        ],
+    )
+    mapping = IngestMap(
+        field_map={
+            "question_key": "question",
+            "prediction": "prediction",
+            "confidence": "confidence",
+        },
+        defaults={"question_type": "choice"},
+    )
+
+    report = ingest_files([source], tmp_path / "records.jsonl", mapping)
+
+    assert report.n_skipped == 1
+    message = report.errors[0]
+    assert "confidence" in message
+    assert "'high'" in message
+    assert "errors.pydantic.dev" not in message

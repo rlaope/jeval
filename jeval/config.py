@@ -170,6 +170,11 @@ class IngestMap:
         ):
             value = self.resolve(row, name)
             if value not in (None, ""):
+                if name == "segment" and not isinstance(value, Mapping):
+                    # A log that carries `lang: ko` as a column has no object to map, and rejecting
+                    # the row made the documented `--by lang` unreachable for anyone whose segment
+                    # is a flat field. The column name becomes the segment key.
+                    value = {str(self.field_map.get("segment", "segment")): str(value)}
                 payload[name] = value
         if "source_key" not in payload:
             key_field = self.source_key_source()
