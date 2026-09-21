@@ -243,7 +243,7 @@ demo uses:
 
 > **Your threshold is too low.** Band 0.03-0.44 measures 68.6% accuracy on 70 decisions (of 696 labels); the threshold belongs at 0.75, above the 0.60 in use.
 
-<table>
+<table width="100%">
   <tr>
     <th align="left" width="31%">what changes</th>
     <th align="right" width="19%">now</th>
