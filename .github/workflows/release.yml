@@ -28,6 +28,21 @@ jobs:
           echo "tag and package version agree: $version"
       - name: Build
         run: uv build
+      # A tag is the moment the pack stops being a draft: the per-host layouts an agent installs
+      # have to be exactly what the canonical skills render, not what someone last generated.
+      - name: Verify the skill pack matches its sources
+        run: uv run --no-project python tools/export_skills.py --check
+      - name: Package the agent skills
+        run: |
+          set -euo pipefail
+          pack="$(mktemp -d)"
+          mkdir -p "$pack/skills/hosts"
+          cp -R skills/hosts/. "$pack/skills/hosts/"
+          cp -R skills/README.md "$pack/skills/README.md" 2>/dev/null || true
+          cp LICENSE "$pack/LICENSE"
+          # The archive root carries skills/hosts/, which is where install-skills.sh looks first.
+          tar -czf dist/jeval-skills.tar.gz -C "$pack" .
+          tar -tzf dist/jeval-skills.tar.gz | head -5
       - uses: actions/upload-artifact@v4
         with:
           name: dist
@@ -61,17 +76,22 @@ jobs:
             gh release create "$GITHUB_REF_NAME" dist/* -R "$repo" \
               --title "$GITHUB_REF_NAME" --generate-notes
           fi
-      # An upload that exited 0 is not an asset someone can download, so read it back.
-      - name: Verify the release carries both distributions
+      # An upload that exited 0 is not an asset someone can download, so read it back. The names are
+      # checked one by one on purpose: `grep .tar.gz` would be satisfied by the skills archive even
+      # if the sdist never made it, which is the failure this step exists to catch.
+      - name: Verify the release carries every asset
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          # The tag is the version: the build job already proved tag == pyproject version, and this
+          # job has no checkout to read pyproject.toml from.
+          version="${GITHUB_REF_NAME#v}"
           listed="$(gh release view "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')"
           echo "$listed"
-          for suffix in .whl .tar.gz; do
-            echo "$listed" | grep -q "$suffix" || {
-              echo "no $suffix asset on $GITHUB_REF_NAME" >&2
+          for asset in "jeval_cli-${version}-py3-none-any.whl" "jeval_cli-${version}.tar.gz" "jeval-skills.tar.gz"; do
+            echo "$listed" | grep -qx "$asset" || {
+              echo "missing release asset: $asset" >&2
               exit 1
             }
           done

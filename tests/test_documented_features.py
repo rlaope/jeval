@@ -41,6 +41,7 @@ DOC_PATHS = (
     REPO / "llms.txt",
     REPO / "docs" / "agent-setup.md",
     REPO / "docs" / "instrumenting-a-service.md",
+    REPO / "docs" / "skills.md",
 )
 
 # `jeval ...` may be shown wrapped in an installer, or bare. The whole prefix is optional: without
@@ -74,9 +75,24 @@ def _readme() -> str:
     return README.read_text(encoding="utf-8")
 
 
+# The canonical agent skills are instructions an agent follows, so they are held to the same
+# standard as the docs: a flag that does not exist is a wrong instruction, not a typo. They are
+# generated into per-host layouts by tools/export_skills.py, and only the sources are parsed here —
+# the generated copies are checked for byte equality elsewhere.
+SKILLS_DIR = REPO / "skills"
+
+
+def _skill_texts() -> list[tuple[str, str]]:
+    return [
+        (f"skills/{path.parent.name}/SKILL.md", path.read_text(encoding="utf-8"))
+        for path in sorted(SKILLS_DIR.glob("*/SKILL.md"))
+    ]
+
+
 def _doc_texts() -> list[tuple[str, str]]:
     """(name, text) for every document that shows commands."""
-    return [(path.name, path.read_text(encoding="utf-8")) for path in DOC_PATHS if path.exists()]
+    pairs = [(path.name, path.read_text(encoding="utf-8")) for path in DOC_PATHS if path.exists()]
+    return pairs + _skill_texts()
 
 
 def _registered_commands() -> set[str]:
@@ -189,13 +205,18 @@ def test_no_document_sends_a_reader_to_the_wrong_distribution() -> None:
 def test_every_agent_facing_document_is_actually_parsed() -> None:
     """A guard that quietly stopped reading a document would pass while the docs lied.
 
-    `llms.txt` and `docs/agent-setup.md` are what an agent follows, so each has to contribute at
-    least one parsed command — otherwise this file is only checking the README again.
+    Every parse target — the README, `llms.txt`, the docs, and each canonical skill — has to
+    contribute at least one parsed command, or this file is checking less than it claims. Skills
+    are counted explicitly: a glob that matched nothing would otherwise pass as coverage.
     """
+    expected = {name for name, _ in _doc_texts()}
     covered = {name for name, _, _ in _invocations()}
 
-    missing = [path.name for path in DOC_PATHS if path.exists() and path.name not in covered]
+    missing = sorted(expected - covered)
     assert missing == [], f"no command was parsed out of {missing}; the guard does not read them"
+
+    skills = _skill_texts()
+    assert len(skills) >= 5, f"expected the canonical skill pack, found {len(skills)} skills"
 
 
 def test_a_milestone_command_is_not_secretly_shipped() -> None:

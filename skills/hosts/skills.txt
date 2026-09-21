@@ -1,0 +1,8 @@
+# One skill name per line, from tools/export_skills.py. Installers read this file
+# instead of parsing manifest.json, where the same names span several lines.
+jeval-calibration-audit
+jeval-drift-gate
+jeval-handoff
+jeval-instrument-service
+jeval-labels-harvest
+jeval-threshold-from-costs

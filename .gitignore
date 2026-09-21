@@ -6,8 +6,10 @@ omo.*
 omc.*
 *.omo
 *.omc
-.agent/
-.agents/
+# Root-level agent scratch only (no leading slash would also match the generated pack's
+# nested .agents/skills directory, which must be committed).
+/.agent/
+/.agents/
 .scratch/
 scratch/
 .plan/

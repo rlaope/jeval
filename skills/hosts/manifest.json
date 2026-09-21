@@ -1,0 +1,84 @@
+{
+  "canonical_dir": "skills",
+  "hosts": {
+    "agents-md": [
+      "AGENTS.md"
+    ],
+    "agents-skills": [
+      ".agents/skills/jeval-calibration-audit/SKILL.md",
+      ".agents/skills/jeval-drift-gate/SKILL.md",
+      ".agents/skills/jeval-handoff/SKILL.md",
+      ".agents/skills/jeval-instrument-service/SKILL.md",
+      ".agents/skills/jeval-labels-harvest/SKILL.md",
+      ".agents/skills/jeval-threshold-from-costs/SKILL.md"
+    ],
+    "claude-code": [
+      ".claude/skills/jeval-calibration-audit/SKILL.md",
+      ".claude/skills/jeval-drift-gate/SKILL.md",
+      ".claude/skills/jeval-handoff/SKILL.md",
+      ".claude/skills/jeval-instrument-service/SKILL.md",
+      ".claude/skills/jeval-labels-harvest/SKILL.md",
+      ".claude/skills/jeval-threshold-from-costs/SKILL.md"
+    ],
+    "cursor": [
+      ".cursor/skills/jeval-calibration-audit/SKILL.md",
+      ".cursor/skills/jeval-drift-gate/SKILL.md",
+      ".cursor/skills/jeval-handoff/SKILL.md",
+      ".cursor/skills/jeval-instrument-service/SKILL.md",
+      ".cursor/skills/jeval-labels-harvest/SKILL.md",
+      ".cursor/skills/jeval-threshold-from-costs/SKILL.md"
+    ],
+    "hermes": [
+      ".hermes/skills/jeval-calibration-audit/SKILL.md",
+      ".hermes/skills/jeval-drift-gate/SKILL.md",
+      ".hermes/skills/jeval-handoff/SKILL.md",
+      ".hermes/skills/jeval-instrument-service/SKILL.md",
+      ".hermes/skills/jeval-labels-harvest/SKILL.md",
+      ".hermes/skills/jeval-threshold-from-costs/SKILL.md"
+    ],
+    "openclaw": [
+      ".openclaw/skills/jeval-calibration-audit/SKILL.md",
+      ".openclaw/skills/jeval-drift-gate/SKILL.md",
+      ".openclaw/skills/jeval-handoff/SKILL.md",
+      ".openclaw/skills/jeval-instrument-service/SKILL.md",
+      ".openclaw/skills/jeval-labels-harvest/SKILL.md",
+      ".openclaw/skills/jeval-threshold-from-costs/SKILL.md"
+    ],
+    "opencode": [
+      ".opencode/skills/jeval-calibration-audit/SKILL.md",
+      ".opencode/skills/jeval-drift-gate/SKILL.md",
+      ".opencode/skills/jeval-handoff/SKILL.md",
+      ".opencode/skills/jeval-instrument-service/SKILL.md",
+      ".opencode/skills/jeval-labels-harvest/SKILL.md",
+      ".opencode/skills/jeval-threshold-from-costs/SKILL.md"
+    ],
+    "pi": [
+      ".pi/skills/jeval-calibration-audit/SKILL.md",
+      ".pi/skills/jeval-drift-gate/SKILL.md",
+      ".pi/skills/jeval-handoff/SKILL.md",
+      ".pi/skills/jeval-instrument-service/SKILL.md",
+      ".pi/skills/jeval-labels-harvest/SKILL.md",
+      ".pi/skills/jeval-threshold-from-costs/SKILL.md"
+    ]
+  },
+  "output_dir": "skills/hosts",
+  "skills": [
+    "jeval-calibration-audit",
+    "jeval-drift-gate",
+    "jeval-handoff",
+    "jeval-instrument-service",
+    "jeval-labels-harvest",
+    "jeval-threshold-from-costs"
+  ],
+  "targets": {
+    "agents-md": "",
+    "agents-skills": ".agents/skills",
+    "claude-code": ".claude/skills",
+    "cursor": ".cursor/skills",
+    "hermes": ".hermes/skills",
+    "openclaw": ".openclaw/skills",
+    "opencode": ".opencode/skills",
+    "pi": ".pi/skills"
+  },
+  "version": "0.1.8"
+}

@@ -72,8 +72,8 @@ Want to install nothing at all?
 
 ```sh
 uvx --from git+https://github.com/rlaope/jeval jeval --version            # current main
-uvx --from git+https://github.com/rlaope/jeval@v0.1.7 jeval --version     # pinned tag
-pip install https://github.com/rlaope/jeval/releases/download/v0.1.7/jeval_cli-0.1.7-py3-none-any.whl
+uvx --from git+https://github.com/rlaope/jeval@v0.1.8 jeval --version     # pinned tag
+pip install https://github.com/rlaope/jeval/releases/download/v0.1.8/jeval_cli-0.1.8-py3-none-any.whl
 ```
 
 **Careful with `pip install jeval`:** that name on PyPI belongs to an **unrelated project**, and this
@@ -98,6 +98,26 @@ Nobody wants to learn nine commands. Hand an agent one sentence and take the rep
 [`docs/agent-setup.md`](docs/agent-setup.md) is the longer playbook it follows. Both cover the two
 places where people get stuck: nothing is logged yet, and nothing is labeled yet.
 
+### The skills, if you would rather install them than write that sentence
+
+Six skills ship in this repository as plain markdown — one for each job: hand the whole thing to an
+agent, audit the calibration, turn costs into a threshold, harvest the labels you already have,
+instrument a running service, and gate a model change in CI. They are written for the agent, not for
+you: each one carries the commands, the check that proves it worked, the failure modes that really
+happen, and what it must not claim.
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/rlaope/jeval/main/install-skills.sh | sh -s -- --list
+curl -fsSL https://raw.githubusercontent.com/rlaope/jeval/main/install-skills.sh | sh -s -- --host claude-code
+```
+
+The same six skills are exported into the layout each host expects, so nothing is hand-copied per
+host. Eight targets, each verified against its host's own documentation: `.agents/skills`, which
+Codex CLI, Hermes, OpenClaw, Pi, Cursor and OpenCode all read, `.claude/skills` for Claude Code,
+five host-specific roots (`.cursor/skills`, `.hermes/skills`, `.opencode/skills`, `.pi/skills`,
+`.openclaw/skills`), and one `AGENTS.md` digest for hosts that read a single instruction file.
+[`docs/skills.md`](docs/skills.md) lists them with their sources.
+
 ---
 
 ## What you get
@@ -119,9 +139,9 @@ You add two lines: one where the classifier is called, one where the human answe
 from jeval import collect
 
 client = collect.track(
-    TypeSafeClient(),                               # your SDK, not jeval's
-    method_names=("system_one",),                   # the method that answers questions
-    source_key=lambda **kw: kw["trace_id"],         # what a human answer is joined back on
+    TypeSafeClient(),  # your SDK, not jeval's
+    method_names=("system_one",),  # the method that answers questions
+    source_key=lambda **kw: kw["trace_id"],  # what a human answer is joined back on
     segment=lambda **kw: {"lang": kw.get("lang")},  # request fields you want to compare later
 )
 ```
@@ -405,6 +425,7 @@ Three fields carry most of the value:
 * [`docs/agent-setup.md`](docs/agent-setup.md) — the setup playbook, including the no-labels path
 * [`docs/instrumenting-a-service.md`](docs/instrumenting-a-service.md) — set it up on a running
   service, step by step, with the output of every step
+* [`docs/skills.md`](docs/skills.md) — the agent skill pack, and where each host reads it
 * [`examples/report-example.html`](examples/report-example.html) — a real generated report
 * [`examples/ci/drift.yml`](examples/ci/drift.yml) — a CI starting point
 * [`CHANGELOG.md`](CHANGELOG.md) — what changed, and why

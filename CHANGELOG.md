@@ -8,6 +8,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- An agent skill pack. Six skills — hand the job to an agent, audit the calibration, turn a cost
+  matrix into a threshold, harvest the labels you already have, instrument a running service, gate a
+  model change in CI — live as canonical markdown in `skills/`, and `tools/export_skills.py` renders
+  them into the layout each host reads: `skills/hosts/claude-code`, `hermes`, `cursor`, and one
+  `AGENTS.md` digest for hosts that read a single instruction file. The generated tree is committed
+  and a test fails when it stops matching its sources.
+- `install-skills.sh`: installs the pack with `--host`, `--project` or `--global`, and writes a
+  marker into every file it creates, so `--uninstall` removes exactly what it added. An existing
+  `AGENTS.md` is appended to, never replaced, unless `--force` says otherwise.
+- `tests/test_skills_pack.py`: the pack's three laws — one canonical source whose generated copies
+  are byte-identical, every `jeval` command inside a skill checked against the real CLI, and an
+  install that is reversible without touching a file that is not ours. The release workflow verifies
+  the pack is current at tag time and attaches `jeval-skills.tar.gz`, whose stable asset name is
+  what makes `releases/latest/download/jeval-skills.tar.gz` resolve.
 - `jeval ingest --labels`: free-label harvest. Human answers from a resolution log are joined onto
   existing records by your own key, rewritten atomically, and never overwrite an existing label
   unless `--overwrite` is passed. A label the record's own question cannot produce is refused and

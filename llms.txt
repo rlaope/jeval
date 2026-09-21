@@ -24,10 +24,10 @@ jeval --help
 uvx --from git+https://github.com/rlaope/jeval jeval --help
 
 # pinned, no install
-uvx --from git+https://github.com/rlaope/jeval@v0.1.7 jeval --help
+uvx --from git+https://github.com/rlaope/jeval@v0.1.8 jeval --help
 
 # pinned wheel, installed
-pip install https://github.com/rlaope/jeval/releases/download/v0.1.7/jeval_cli-0.1.7-py3-none-any.whl
+pip install https://github.com/rlaope/jeval/releases/download/v0.1.8/jeval_cli-0.1.8-py3-none-any.whl
 ```
 
 ## If you are an agent
@@ -89,5 +89,7 @@ their own data and show them the artifact — not to run a command tour.
 - [docs/agent-setup.md](docs/agent-setup.md) — step-by-step setup, including the no-labels path
 - [docs/instrumenting-a-service.md](docs/instrumenting-a-service.md) — instrument a running
   service end to end: the wrapper, the outcome join, and the output of every step
+- [docs/skills.md](docs/skills.md) — the agent skill pack: six skills, and where each host
+  (Claude Code, Codex, Hermes, OpenClaw, Pi, Cursor, OpenCode) reads them
 - [examples/report-example.html](examples/report-example.html) — a real generated report
 - [examples/ci/drift.yml](examples/ci/drift.yml) — the CI starting point
