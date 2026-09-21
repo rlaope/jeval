@@ -452,7 +452,7 @@ uvx --from git+https://github.com/rlaope/jeval@v0.1.2 jeval demo     # nothing i
 ```
 
 ```sh
-pip install https://github.com/rlaope/jeval/releases/download/v0.1.1/jeval_cli-0.1.2-py3-none-any.whl
+pip install https://github.com/rlaope/jeval/releases/download/v0.1.2/jeval_cli-0.1.2-py3-none-any.whl
 ```
 
 `pip install jeval` installs an unrelated project, because that name on PyPI belongs to someone
