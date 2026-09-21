@@ -186,7 +186,7 @@ Prefer to install nothing at all?
 
 ```sh
 uvx --from git+https://github.com/rlaope/jeval jeval demo
-pip install https://github.com/rlaope/jeval/releases/download/v0.1.5/jeval_cli-0.1.5-py3-none-any.whl
+pip install https://github.com/rlaope/jeval/releases/download/v0.1.6/jeval_cli-0.1.6-py3-none-any.whl
 ```
 
 It generates a synthetic decision log whose miscalibration is known, reports on it, and writes a
@@ -464,11 +464,11 @@ Wide interval? That is a label problem, not an analysis problem, and the command
 
 ```sh
 uvx --from git+https://github.com/rlaope/jeval jeval demo            # nothing installed, current main
-uvx --from git+https://github.com/rlaope/jeval@v0.1.5 jeval demo     # nothing installed, pinned
+uvx --from git+https://github.com/rlaope/jeval@v0.1.6 jeval demo     # nothing installed, pinned
 ```
 
 ```sh
-pip install https://github.com/rlaope/jeval/releases/download/v0.1.5/jeval_cli-0.1.5-py3-none-any.whl
+pip install https://github.com/rlaope/jeval/releases/download/v0.1.6/jeval_cli-0.1.6-py3-none-any.whl
 ```
 
 `pip install jeval` installs an unrelated project: that name on PyPI belongs to someone else. This
