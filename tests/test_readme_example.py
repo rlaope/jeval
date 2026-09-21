@@ -131,8 +131,16 @@ def test_every_image_the_readme_references_exists() -> None:
         r'<img[^>]+src="([^"]+)"', readme
     )
     assert images, "the README should show the artifact it quotes"
-    assert len(images) >= 2, "the README pairs the verdict and cost screenshots"
-    for image in images:
+
+    # Badges are remote by design and cannot be checked without a network call; a repository file
+    # shown in the README has to exist, and has to be big enough to be a real screenshot rather
+    # than a placeholder that renders as an empty box.
+    remote = [image for image in images if re.match(r"https?://", image)]
+    assert any("rlaope/jeval" in url for url in remote), "the badges should be this repository's"
+
+    local = [image for image in images if not re.match(r"https?://", image)]
+    assert len(local) >= 2, "the README pairs the verdict and cost screenshots"
+    for image in local:
         target = REPO / image
         assert target.exists(), f"README references a missing image: {image}"
         assert target.stat().st_size > 20_000, f"{image} looks too small to be a real screenshot"
