@@ -19,19 +19,19 @@ ARTIFACT = REPO / "examples" / "report-example.html"
 README = REPO / "README.md"
 
 BIN_ROWS = (
-    "0.61-0.70          27     66%       56%     [37%, 72%]   -0.104",
-    "0.74-0.77          27     76%       74%     [55%, 87%]   -0.016",
-    "0.82-0.84          26     83%       77%     [58%, 89%]   -0.064",
-    "0.90-0.94          27     92%       85%     [68%, 94%]   -0.070",
-    "0.97-1.00          27     98%      100%     [88%, 100%]  +0.017",
+    "0.60-0.69          26     65%       46%     [29%, 65%]   -0.188",
+    "0.74-0.77          26     76%       69%     [50%, 83%]   -0.064",
+    "0.82-0.85          26     83%       69%     [50%, 83%]   -0.140",
+    "0.91-0.95          25     93%       96%     [80%, 99%]   +0.033",
+    "0.97-1.00          26     98%      100%     [87%, 100%]  +0.016",
 )
 
 IMPACT_ROWS = (
-    ("confidence threshold", "0.60", "0.97", "+0.37"),
-    ("auto rate", "100%", "55%", "-45.2 pt"),
-    ("accuracy (auto)", "84%", "96%", "+11.5 pt"),
-    ("cost per case", "KRW 7,936.51", "KRW 2,095.24", "-73.6%"),
-    ("monthly cost", "KRW 158,730,158.73", "KRW 41,904,761.90", "-73.6%"),
+    ("confidence threshold", "0.60", "0.75", "+0.15"),
+    ("auto rate", "33%", "30%", "-2.9 pt"),
+    ("accuracy (auto)", "85%", "91%", "+5.4 pt"),
+    ("cost per case", "KRW 1,926.23", "KRW 1,737.70", "-9.8%"),
+    ("monthly cost", "KRW 38,524,590.16", "KRW 34,754,098.36", "-9.8%"),
 )
 
 
@@ -141,3 +141,22 @@ def test_every_image_the_readme_references_exists() -> None:
 @pytest.mark.parametrize("token", ["Your threshold is too low.", "0.97"])
 def test_representative_claims_are_present(token: str) -> None:
     assert token in _artifact()
+
+
+def test_the_drift_log_the_readme_asks_a_reader_to_build_is_buildable() -> None:
+    """The README quotes a drift run and hands the reader a script; the script must produce it."""
+    import importlib.util
+
+    script = REPO / "examples" / "make-drift-log.py"
+    assert script.exists(), "the README tells readers to run examples/make-drift-log.py"
+    spec = importlib.util.spec_from_file_location("make_drift_log", script)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    records = module.build()
+
+    assert len(records) == 1800, "the README says the drift log holds 1,800 decisions"
+    assert {record.model for record in records} == {"jev-1.13.0", "jev-1.14.0"}, (
+        "the drift example needs two model versions to compare"
+    )
+    assert all(record.is_gold for record in records), "an unlabeled record cannot be compared"

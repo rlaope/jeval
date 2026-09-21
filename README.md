@@ -32,17 +32,18 @@ do when nothing is logged yet and when there are no labels, which is where most 
 
 <p align="center">
   <img src="docs/report-verdict.png" width="49%" alt="Report verdict: 'Your threshold is too low', with stat cards and the reliability curve plotted against the perfect-calibration diagonal">
-  <img src="docs/report-cost.png" width="49%" alt="Cost curve with its minimum and flat region, the impact table comparing 0.60 to 0.97, and the threshold slider">
+  <img src="docs/report-cost.png" width="49%" alt="Cost curve with its minimum and flat region, the impact table comparing 0.60 to 0.75, and the threshold slider">
 </p>
 
 Left: the verdict and the reliability curve, with Wilson intervals on every bin. Right: the cost
 curve, the impact table, and the slider that recomputes it. Both are screenshots of the report
 committed to this repository — open
-[`examples/report-example.html`](examples/report-example.html) in a browser (one 246 KB file, no
+[`examples/report-example.html`](examples/report-example.html) in a browser (one 249 KB file, no
 network, no server), or rebuild it byte-for-byte with:
 
 ```sh
 uv run jeval demo --out-dir examples/report-example --seed 11 --scale 0.5
+cp examples/report-example/report.html examples/report-example.html
 ```
 
 Synthetic data and synthetic costs, seeded, so the example is reproducible rather than a
@@ -64,27 +65,27 @@ artifact itself:
 
 ```
 Confidence bin      n   Stated   Observed   Wilson 95%      Gap
-0.61-0.70          27     66%       56%     [37%, 72%]   -0.104
-0.74-0.77          27     76%       74%     [55%, 87%]   -0.016
-0.82-0.84          26     83%       77%     [58%, 89%]   -0.064
-0.90-0.94          27     92%       85%     [68%, 94%]   -0.070
-0.97-1.00          27     98%      100%     [88%, 100%]  +0.017
+0.60-0.69          26     65%       46%     [29%, 65%]   -0.188
+0.74-0.77          26     76%       69%     [50%, 83%]   -0.064
+0.82-0.85          26     83%       69%     [50%, 83%]   -0.140
+0.91-0.95          25     93%       96%     [80%, 99%]   +0.033
+0.97-1.00          26     98%      100%     [87%, 100%]  +0.016
 ```
 
-Read the third row: the model said 83% and was right 77% of the time, and the interval around
-that number spans 58% to 89% — which is what a 26-record bin can actually support.
+Read the third row: the model said 83% and was right 69% of the time, and the interval around
+that number spans 50% to 83% — which is what a 26-record bin can actually support.
 
 That report's own verdict, for the threshold the demo treats as deployed:
 
-> **Your threshold is too low.** Band 0.03-0.45 measures 69.4% accuracy on 72 decisions (of 713 labels); the threshold belongs at 0.97, above the 0.60 in use.
+> **Your threshold is too low.** Band 0.03-0.44 measures 68.6% accuracy on 70 decisions (of 696 labels); the threshold belongs at 0.75, above the 0.60 in use.
 
 | | now | recommended | change |
 | --- | --- | --- | --- |
-| confidence threshold | 0.60 | 0.97 | +0.37 |
-| auto rate | 100% | 55% | -45.2 pt |
-| accuracy (auto) | 84% | 96% | +11.5 pt |
-| cost per case | KRW 7,936.51 | KRW 2,095.24 | -73.6% |
-| monthly cost | KRW 158,730,158.73 | KRW 41,904,761.90 | -73.6% |
+| confidence threshold | 0.60 | 0.75 | +0.15 |
+| auto rate | 33% | 30% | -2.9 pt |
+| accuracy (auto) | 85% | 91% | +5.4 pt |
+| cost per case | KRW 1,926.23 | KRW 1,737.70 | -9.8% |
+| monthly cost | KRW 38,524,590.16 | KRW 34,754,098.36 | -9.8% |
 
 No screenshot, because a table is easier to check — and no invented numbers, because the artifact
 is right there in the repository.
@@ -139,18 +140,24 @@ jeval turns all four into one command with an exit code.
 A notebook measures once. Drift detection is what happens when the thing you measured changes:
 
 ```
-$ jeval drift --fail-on ece-increase=0.05
-model changed: jev-1.13.0 -> jev-1.14.0 (Sep 17)
+$ jeval drift --root /tmp/jeval-drift --fail-on ece-increase=0.05
+costs: /tmp/jeval-drift/costs.yaml
+model changed: jev-1.13.0 -> jev-1.14.0 (Sep 16)
   question    ECE before  ECE after   delta
-  department       0.018      0.144  +0.126   FAIL
-recommended threshold (department): 0.94 -> 1.00
-  at the current 0.94: auto-rate 11% -> 58%
+  department       0.028      0.141  +0.113   FAIL
+recommended threshold (department): 0.96 -> 0.98
+  at the current 0.96: auto-rate 2% -> 5%
 $ echo $?
 1
 ```
 
-That is a captured run, not a mock-up: 1,800 synthetic decisions where the newer model version is
-deliberately overconfident. The threshold line only appears when a cost matrix is present — with
+That is a captured run, not a mock-up, and you can rebuild the log it ran on — 1,800 synthetic
+decisions where the newer model version is deliberately overconfident:
+
+```sh
+uv run python examples/make-drift-log.py /tmp/jeval-drift
+uv run jeval drift --root /tmp/jeval-drift --fail-on ece-increase=0.05
+``` The threshold line only appears when a cost matrix is present — with
 no costs, the block says `recommended threshold: not available (no cost matrix was applied)` rather
 than inventing a number. Wire the same command into CI and a model swap cannot silently
 degrade a production decision boundary. There is a copy-paste starting point in

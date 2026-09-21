@@ -535,10 +535,13 @@ def _write_demo_costs(out_dir: Path) -> Path:
         "# SYNTHETIC cost figures for the demo. Replace them with your own before believing\n"
         "# any threshold jeval recommends: wrong costs give wrong thresholds.\n"
         "actions:\n"
+        # 6:1 rather than 25:1: at 25:1 this demo model's best bucket sits exactly at break-even, so
+        # the honest answer is the top of the grid (automate nothing) and the reader learns nothing
+        # about the curve. The demo exists to show a minimum inside the range.
         "  - name: auto_refund\n"
         "    question: intent\n"
         "    when: refund_request\n"
-        "    cost_false_accept: 50000\n"
+        "    cost_false_accept: 12000\n"
         "    cost_escalate: 2000\n"
         "    cost_false_reject: 0\n"
         "  - name: auto_route\n"
