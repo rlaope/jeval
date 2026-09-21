@@ -7,6 +7,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- A chart's shaded band was a fixed light colour, so in a dark report it stayed near-white:
+  the region below the reliability diagonal printed as a glowing block against the page. The
+  shade is a theme variable now, with its own value for light, dark and print, and the
+  reliability chart no longer carries a private one. Two golden SVGs changed by one attribute
+  each (the shaded rectangle gained its class).
+
 ### Added
 - An agent skill pack. Six skills — hand the job to an agent, audit the calibration, turn a cost
   matrix into a threshold, harvest the labels you already have, instrument a running service, gate a

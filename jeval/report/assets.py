@@ -69,11 +69,15 @@ REPORT_CSS = """\
   --good: #009e73;
   --warn: #b58900;
   --bad: #d55e00;
+  --shade: #f2f2f2;
   --shadow: 0 1px 2px rgba(20, 22, 26, 0.07);
   --radius: 8px;
   --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
+/* A shaded band in a chart is a tint, not a colour of its own: as a variable it follows the
+   theme instead of staying near-white in a dark report. */
+.shade { fill: var(--shade); }
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
 html { -webkit-text-size-adjust: 100%; }
@@ -229,6 +233,7 @@ footer {
     --bg: #0f1115;
     --panel: #171b22;
     --panel-alt: #1e232c;
+    --shade: #1c2129;
     --ink: #eef1f5;
     --muted: #a5aeba;
     --rule: #2a303a;
@@ -256,6 +261,7 @@ footer {
     --bg: #ffffff;
     --panel: #ffffff;
     --panel-alt: #f5f5f5;
+    --shade: #f5f5f5;
     --ink: #000000;
     --muted: #333333;
     --rule: #b8b8b8;

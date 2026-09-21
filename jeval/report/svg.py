@@ -302,11 +302,13 @@ def shaded_region(
     y0: float,
     y1: float,
     fill: str = SHADE,
+    cls: str = "shade",
     label: str = "",
     label_x: float | None = None,
     label_y: float | None = None,
 ) -> str:
-    body = rect(x0, y0, max(0.0, x1 - x0), max(0.0, y1 - y0), fill=fill)
+    # `fill` stays as the fallback for a viewer that ignores CSS; the class themes it.
+    body = rect(x0, y0, max(0.0, x1 - x0), max(0.0, y1 - y0), fill=fill, cls=cls)
     if not label:
         return body
     lx = label_x if label_x is not None else (x0 + x1) / 2.0

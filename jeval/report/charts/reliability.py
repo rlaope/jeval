@@ -61,7 +61,6 @@ def render_reliability(
             plot_right,
             y0=y(0.78),
             y1=plot_bottom,
-            fill="#fbfbfb",
             label="below this line the model is more confident than it is accurate",
             label_x=(plot_left + plot_right) / 2.0,
             label_y=plot_bottom - 12,
