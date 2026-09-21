@@ -28,7 +28,7 @@
     </td>
     <td width="50%" valign="top">
       <img src="docs/report-reliability.png" alt="Reliability chart: confidence along the bottom, how often the model was right up the side, with grey bands where the data is thin">
-      <br><sub>Confidence along the bottom, how often it was right up the side.</sub>
+      <br><sub>What the model claimed, against how often it was right.</sub>
     </td>
   </tr>
   <tr>
