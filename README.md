@@ -178,9 +178,9 @@ It generates a synthetic decision log whose miscalibration is known, reports on 
 downloaded from your side, no data leaves the machine, and the demo data is explicitly labeled
 synthetic.
 
-`pip install jeval` installs an **unrelated project**: that name on PyPI belongs to someone else.
-The distribution is `jeval-cli`, which is free but not published yet — the two commands above are
-what work today, and a pinned wheel never changes under you.
+`pip install jeval` installs an **unrelated project**: that name on PyPI belongs to someone else,
+and this tool is not published to PyPI at all. The two commands above are the install paths, and a
+pinned wheel never changes under you.
 
 ## Pointing it at your own system
 
@@ -455,10 +455,9 @@ uvx --from git+https://github.com/rlaope/jeval@v0.1.3 jeval demo     # nothing i
 pip install https://github.com/rlaope/jeval/releases/download/v0.1.3/jeval_cli-0.1.3-py3-none-any.whl
 ```
 
-`pip install jeval` installs an unrelated project, because that name on PyPI belongs to someone
-else. Ours is `jeval-cli`: `pip install jeval-cli` works once the publisher is registered, and the
-name is free. Until then the wheel URL above is the pinned, installable artifact and `uvx` needs
-no installation at all. Every tag is built by the release workflow, which attaches the wheel and
+`pip install jeval` installs an unrelated project: that name on PyPI belongs to someone else. This
+tool is deliberately not on PyPI — releases are GitHub release assets instead, so the wheel URL
+above is the pinned, installable artifact and `uvx` needs no installation at all. Every tag is built by the release workflow, which attaches the wheel and
 the sdist to the GitHub release and reads the asset list back — nothing is uploaded by hand. From a checkout:
 
 ```sh

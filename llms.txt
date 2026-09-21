@@ -11,8 +11,8 @@ is [docs/agent-setup.md](docs/agent-setup.md).
 ## Install
 
 Any of these works today. `pip install jeval` installs an unrelated project: that name on PyPI
-belongs to someone else. Our distribution is `jeval-cli` and it is not published yet, so use one of
-the commands above.
+belongs to someone else, and this tool is not on PyPI at all. Use one of the commands above — the
+release wheel URL and the pinned tag are the supported install paths.
 
 ```sh
 # no install, always current

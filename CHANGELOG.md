@@ -40,6 +40,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `questions_field` accepts a container keyed by question name and a dotted path, which is the shape
   a decision API returns (`{"response": {"answers": {...}}}`) rather than a list of questions.
 
+### Removed
+
+- Publishing to PyPI. The name `jeval` on PyPI belongs to an unrelated project, and the free
+  alternative `jeval-cli` is not one anyone would guess, so the package index bought nothing that a
+  release asset does not. Releases are GitHub release assets: a tag builds the wheel and the sdist,
+  attaches them, and reads the asset list back. Install with `uvx --from git+<repo>` or the pinned
+  wheel URL. The distribution keeps the name `jeval-cli` because the wheel and its metadata need
+  one, and the reported version is read from it.
+
 ### Fixed — second pass over the remaining QA findings
 
 Observability and degenerate inputs:

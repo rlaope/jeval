@@ -44,8 +44,8 @@ jobs:
         with:
           name: dist
           path: dist
-      # PyPI publishing needs a registered publisher; this job does not, so every tag produces
-      # something installable even before that is set up.
+      # The release asset is the install path: the `jeval` name on PyPI belongs to another project,
+      # so a tag has to produce something installable on its own.
       #
       # `-R` because there is no checkout here: gh infers the repository from a git remote, and
       # without one it fails with "fatal: not a git repository" after uploading nothing.
@@ -75,19 +75,3 @@ jobs:
               exit 1
             }
           done
-
-  publish:
-    name: publish to PyPI
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: release
-      url: https://pypi.org/p/jeval-cli
-    permissions:
-      id-token: write
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: dist
-          path: dist/
-      - uses: pypa/gh-action-pypi-publish@release/v1
