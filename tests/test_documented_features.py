@@ -283,3 +283,21 @@ def test_scaffolded_ingest_keys_match_the_mapping_type() -> None:
     assert documented <= declared, (
         f"the scaffold offers keys the mapping cannot hold: {sorted(documented - declared)}"
     )
+
+
+def test_the_reported_version_is_the_installed_distribution() -> None:
+    """`jeval --version` reported 0.1.0 from a 0.1.2 wheel.
+
+    The package asked for the distribution `jeval`, which is not its name on PyPI: the lookup raised
+    and fell back to a hardcoded string, and with the unrelated `jeval` project installed it would
+    have reported *that* version instead. The fallback is now a value that cannot be mistaken for a
+    release.
+    """
+    from importlib.metadata import version
+
+    import jeval
+
+    assert jeval.__version__ == version(jeval.DISTRIBUTION)
+    assert not jeval.__version__.startswith("0.0.0"), (
+        "the installed distribution was not found, so the version shown is a placeholder"
+    )
