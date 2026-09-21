@@ -82,7 +82,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: release
-      url: https://pypi.org/p/jeval
+      url: https://pypi.org/p/jeval-cli
     permissions:
       id-token: write
     steps:

@@ -170,7 +170,7 @@ uvx --from git+https://github.com/rlaope/jeval jeval demo   # nothing installed
 
 ```sh
 # pinned wheel, straight from the release
-pip install https://github.com/rlaope/jeval/releases/download/v0.1.1/jeval-0.1.1-py3-none-any.whl
+pip install https://github.com/rlaope/jeval/releases/download/v0.1.2/jeval_cli-0.1.2-py3-none-any.whl
 ```
 
 It generates a synthetic decision log whose miscalibration is known, reports on it, and writes a
@@ -178,8 +178,9 @@ It generates a synthetic decision log whose miscalibration is known, reports on 
 downloaded from your side, no data leaves the machine, and the demo data is explicitly labeled
 synthetic.
 
-There is no `pip install jeval` yet: the PyPI name is reserved and the publisher is not registered.
-The two commands above are what work today, and a pinned wheel never changes under you.
+`pip install jeval` installs an **unrelated project**: that name on PyPI belongs to someone else.
+The distribution is `jeval-cli`, which is free but not published yet — the two commands above are
+what work today, and a pinned wheel never changes under you.
 
 ## Pointing it at your own system
 
@@ -447,17 +448,18 @@ Wide interval? That is a label problem, not an analysis problem, and the command
 
 ```sh
 uvx --from git+https://github.com/rlaope/jeval jeval demo            # nothing installed, current main
-uvx --from git+https://github.com/rlaope/jeval@v0.1.1 jeval demo     # nothing installed, pinned
+uvx --from git+https://github.com/rlaope/jeval@v0.1.2 jeval demo     # nothing installed, pinned
 ```
 
 ```sh
-pip install https://github.com/rlaope/jeval/releases/download/v0.1.1/jeval-0.1.1-py3-none-any.whl
+pip install https://github.com/rlaope/jeval/releases/download/v0.1.1/jeval_cli-0.1.2-py3-none-any.whl
 ```
 
-`pip install jeval` will work once the publisher is registered on PyPI; until then the wheel URL
-above is the pinned, installable artifact and `uvx` needs no installation at all. Every tag is
-built by the release workflow, which attaches the wheel and the sdist to the GitHub release and
-reads the asset list back — nothing is uploaded by hand. From a checkout:
+`pip install jeval` installs an unrelated project, because that name on PyPI belongs to someone
+else. Ours is `jeval-cli`: `pip install jeval-cli` works once the publisher is registered, and the
+name is free. Until then the wheel URL above is the pinned, installable artifact and `uvx` needs
+no installation at all. Every tag is built by the release workflow, which attaches the wheel and
+the sdist to the GitHub release and reads the asset list back — nothing is uploaded by hand. From a checkout:
 
 ```sh
 git clone https://github.com/rlaope/jeval && cd jeval

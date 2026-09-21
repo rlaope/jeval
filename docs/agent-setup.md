@@ -171,7 +171,8 @@ The snapshot holds measurements, never records.
 
 ## Things that are not true, so do not say them
 
-- `pip install jeval` — there is no PyPI release yet; use the wheel URL or `uvx --from git+…`.
+- `pip install jeval` — that name on PyPI belongs to an unrelated project, so it installs someone
+  else's code. Ours is `jeval-cli`, not published yet; use the wheel URL or `uvx --from git+…`.
 - "The model is fine now" from a demo run — the demo data is synthetic.
 - Any cost number the user did not give you.
 - A single accuracy figure for `score` questions — those are MAE/RMSE/rank correlation, and they are

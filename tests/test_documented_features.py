@@ -159,6 +159,26 @@ def test_every_documented_command_exists() -> None:
     assert missing == [], f"the docs show commands that do not exist: {missing}"
 
 
+# A wrong install line does not fail loudly: it runs someone else's code. `pip install jeval` on
+# PyPI is an unrelated project, so a line naming it must say so.
+INSTALL_HAZARD_MARKERS = ("unrelated", "belongs to", "not ours", "someone else")
+
+
+def test_no_document_sends_a_reader_to_the_wrong_distribution() -> None:
+    """The distribution is `jeval-cli`; `jeval` on PyPI belongs to another account."""
+    offenders: list[str] = []
+    for name, text in _doc_texts():
+        for number, line in enumerate(text.splitlines(), 1):
+            if re.search(r"pip install jeval(?![-_]?cli)", line) and not any(
+                marker in line for marker in INSTALL_HAZARD_MARKERS
+            ):
+                offenders.append(f"{name}:{number}")
+    assert offenders == [], (
+        f"these lines install a different project from PyPI: {offenders}. "
+        "Name the distribution `jeval-cli`, or say in the line that `jeval` is not ours."
+    )
+
+
 def test_every_agent_facing_document_is_actually_parsed() -> None:
     """A guard that quietly stopped reading a document would pass while the docs lied.
 
