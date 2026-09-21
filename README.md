@@ -170,7 +170,7 @@ uvx --from git+https://github.com/rlaope/jeval jeval demo   # nothing installed
 
 ```sh
 # pinned wheel, straight from the release
-pip install https://github.com/rlaope/jeval/releases/download/v0.1.0/jeval-0.1.0-py3-none-any.whl
+pip install https://github.com/rlaope/jeval/releases/download/v0.1.1/jeval-0.1.1-py3-none-any.whl
 ```
 
 It generates a synthetic decision log whose miscalibration is known, reports on it, and writes a
@@ -447,11 +447,11 @@ Wide interval? That is a label problem, not an analysis problem, and the command
 
 ```sh
 uvx --from git+https://github.com/rlaope/jeval jeval demo            # nothing installed, current main
-uvx --from git+https://github.com/rlaope/jeval@v0.1.0 jeval demo     # nothing installed, pinned
+uvx --from git+https://github.com/rlaope/jeval@v0.1.1 jeval demo     # nothing installed, pinned
 ```
 
 ```sh
-pip install https://github.com/rlaope/jeval/releases/download/v0.1.0/jeval-0.1.0-py3-none-any.whl
+pip install https://github.com/rlaope/jeval/releases/download/v0.1.1/jeval-0.1.1-py3-none-any.whl
 ```
 
 `pip install jeval` will work once the publisher is registered on PyPI; until then the wheel URL
