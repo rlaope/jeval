@@ -27,6 +27,9 @@ from jeval.schema import DecisionRecord
 
 SYNTH_MODES = ("calibrated", "inflated", "overconfident", "underconfident", "constant_high")
 
+# The highest confidence a generated record may claim: certainty is not a probability.
+CERTAINTY_CAP = 0.999
+
 DEFAULT_CLASSES: tuple[str, ...] = ("billing", "technical", "other")
 
 
@@ -68,7 +71,11 @@ def _transform(probabilities: NDArray[np.float64], spec: SynthSpec) -> NDArray[n
         reported = np.full_like(probabilities, spec.constant_confidence)
     else:
         raise ValueError(f"unknown mode {spec.mode!r}; expected one of {SYNTH_MODES}")
-    return np.clip(reported, 0.5000001, 1.0)
+    # Clipping a continuous confidence at 1.0 stacks a large share of records on exactly-certain —
+    # 45% of them at inflation 1.22 — and a threshold sweep then finds a free bucket at 1.00 and
+    # recommends automating nothing. A producer that reports a probability does not claim certainty
+    # on half its traffic, so the cap sits just below it.
+    return np.clip(reported, 0.5000001, CERTAINTY_CAP)
 
 
 def _true_probabilities(rng: np.random.Generator, n: int) -> NDArray[np.float64]:
@@ -160,12 +167,18 @@ def generate(spec: SynthSpec) -> list[DecisionRecord]:
             continue
 
         classes = spec.classes or DEFAULT_CLASSES
-        prediction = classes[0]
-        remaining = list(classes[1:]) or ["__other__"]
+        # The prediction follows the sampled outcome instead of always being `classes[0]`. A
+        # generator whose classifier only ever answers the first class cannot exercise a per-class
+        # threshold, a per-class cost action, or any slice by predicted class — every artifact built
+        # from it looks like a tool that routes exactly one class.
+        truth = classes[int(rng.integers(0, len(classes)))]
         if bool(correct[index]):
-            label = prediction if label_known else None
+            prediction = truth
         else:
-            label = remaining[int(rng.integers(0, len(remaining)))] if label_known else None
+            alternatives = [name for name in classes if name != truth]
+            prediction = alternatives[int(rng.integers(0, len(alternatives)))]
+        label = truth if label_known else None
+        remaining = [name for name in classes if name != prediction] or ["__other__"]
         top = float(reported[index])
         leftover = max(0.0, 1.0 - top)
         weights = rng.random(len(remaining))

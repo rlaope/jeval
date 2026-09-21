@@ -85,6 +85,40 @@ def _inflated_log(n: int = 300) -> list[DecisionRecord]:
     ]
 
 
+def _grown_taxonomy_log(n: int = 200) -> list[DecisionRecord]:
+    """The same model, the same question, a larger label set.
+
+    The refund action now covers a sixth of the traffic instead of a third. This is the change the
+    cost sweep cannot compensate for: a calibration shift moves the recommended line and leaves the
+    automated share roughly where it was (the sweep re-optimises to the same cost trade-off), while a
+    shift in *what* the model predicts moves the share itself.
+    """
+    return [
+        *_side(n, mode="calibrated", model=OLDER, start=OLD_START, seed=21),
+        *_side(
+            n,
+            mode="calibrated",
+            model=NEWER,
+            start=NEW_START,
+            seed=22,
+            classes=("refund_request", "check_balance", "other", "promo", "shipping", "account"),
+        ),
+    ]
+
+
+# A mistake that costs less than a human: the sweep automates a large share, so a change in that
+# share is measurable. With mistakes far costlier than escalation the share sits near 7% and no mix
+# shift can move it by ten points.
+AUTO_REFUND_CHEAP = CostAction(
+    name="auto_refund",
+    question="intent",
+    when="refund_request",
+    cost_false_accept=500.0,
+    cost_escalate=2000.0,
+    cost_false_reject=0.0,
+)
+
+
 def _underconfident_log(n: int = 200) -> list[DecisionRecord]:
     """A calibrated model replaced by one shrunk toward 0.5: it escalates more for the same work."""
     return [
@@ -147,9 +181,12 @@ def test_each_side_is_swept_over_its_own_records() -> None:
     assert after_threshold == pytest.approx(newer.threshold)
     assert after_rate == pytest.approx(newer.auto_rate)
 
-    # An inflated model has to clear a higher bar, and more of its inflated confidences clear it.
+    # An inflated model has to clear a higher bar, and this fixture shows the consequence: the
+    # cost-optimal line moves to the top of the grid (0.94 -> 1.00) and the automated share collapses
+    # (0.050 -> 0.000). Inflation does not buy automation, it removes the licence to automate: the
+    # confidences rose but the accuracy behind them did not.
     assert after_threshold > before_threshold
-    assert after_rate > before_rate
+    assert after_rate < before_rate
 
 
 def test_the_block_reports_the_threshold_movement_and_the_auto_rate() -> None:
@@ -214,8 +251,8 @@ def test_the_printed_line_names_the_compared_unit() -> None:
 
 
 def test_the_auto_rate_line_is_the_number_the_check_fails_on() -> None:
-    records = _underconfident_log()
-    view = attach_thresholds(compare(records), records, [AUTO_REFUND])
+    records = _grown_taxonomy_log()
+    view = attach_thresholds(compare(records), records, [AUTO_REFUND_CHEAP])
     before = _slice(view, "intent", OLDER)
     after = _slice(view, "intent", NEWER)
     before_threshold, after_threshold = before.threshold, after.threshold
@@ -225,10 +262,10 @@ def test_the_auto_rate_line_is_the_number_the_check_fails_on() -> None:
     assert before_rate is not None and after_rate is not None
     drop = before_rate - after_rate
 
-    # A model shrunk toward 0.5 escalates more: the recommended line moves down and so does the
-    # share of cases the machine handles alone. Both numbers are finite, so the check can fire.
-    assert after.ece > before.ece
-    assert after_threshold < before_threshold
+    # Measured on this fixture: the label set grew, the model now answers `refund_request` for a
+    # sixth of the traffic instead of a third, and the recommended line rises as escalation becomes
+    # the relatively cheaper option. The share the machine handles alone falls by about 20 points.
+    assert after_threshold > before_threshold
     assert drop > 0.10
 
     failures = run_checks(view, parse_fail_on(["auto-rate-drop=0.10"]))
@@ -377,3 +414,23 @@ def test_attach_thresholds_rejects_a_grid_or_level_it_cannot_sweep(
 
     with pytest.raises(ValueError, match=re.escape(match)):
         attach_thresholds(compare(records), records, [AUTO_REFUND], **kwargs)
+
+
+def test_underconfidence_moves_the_line_and_leaves_the_share_alone() -> None:
+    """Why the auto-rate check needs a mix shift, not a calibration shift.
+
+    Measured on this fixture: an underconfident replacement drops the recommended line from 0.91 to
+    0.74 and the automated share from 0.070 to 0.075. The sweep re-optimises the line for the same
+    cost trade-off, so the share barely moves — which is the honest shape of the quantity, and the
+    reason a `auto-rate-drop` check fires on a change in what the model predicts rather than on
+    calibration drift alone. Asserting a large drop here was reading the old synthetic generator,
+    whose classifier only ever answered one class.
+    """
+    records = _underconfident_log()
+    view = attach_thresholds(compare(records), records, [AUTO_REFUND])
+    before = _slice(view, "intent", OLDER)
+    after = _slice(view, "intent", NEWER)
+
+    assert after.ece > before.ece
+    assert after.threshold < before.threshold
+    assert abs(before.auto_rate - after.auto_rate) < 0.05

@@ -7,6 +7,7 @@ recorded from an earlier run: each cost figure can be checked with a calculator.
 from __future__ import annotations
 
 import math
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -448,17 +449,29 @@ def test_sweep_breaks_a_global_tie_toward_the_higher_threshold() -> None:
     assert result.auto_rate == 0.0
 
 
-def constant_high_records() -> list[DecisionRecord]:
-    """A model that is 90% accurate and always claims 0.99: the classic overconfidence case."""
-    spec = SynthSpec(
-        n=300,
-        mode="constant_high",
-        accuracy_target=0.9,
-        question_key="intent",
-        classes=("refund_request", "check_balance", "other"),
-        seed=5,
-    )
-    return [item for item in generate(spec) if item.is_gold]
+def constant_high_records(n: int = 300, accuracy: float = 0.9) -> list[DecisionRecord]:
+    """A model that only ever answers `refund_request`, always claiming 0.99, right `accuracy` of the
+    time: the classic overconfidence case.
+
+    Built by hand rather than generated. The generator draws a balanced multiclass classifier whose
+    predictions follow the sampled outcome, so a fixture that leaned on its distribution was really
+    testing that distribution — when the generator stopped always predicting `classes[0]`, these
+    tests failed for a reason that had nothing to do with the sweep.
+    """
+    correct = round(n * accuracy)
+    return [
+        DecisionRecord(
+            ts=datetime(2026, 9, 1, tzinfo=timezone.utc) - timedelta(minutes=index),
+            model="jev-test",
+            question_key="intent",
+            question_type="choice",
+            prediction="refund_request",
+            confidence=0.99,
+            label="refund_request" if index < correct else "check_balance",
+            label_source="human_override",
+        )
+        for index in range(n)
+    ]
 
 
 def test_sweep_escalates_a_constant_high_model_when_mistakes_are_expensive() -> None:
@@ -884,7 +897,10 @@ def test_a_when_class_the_model_never_predicts_is_never_automated() -> None:
         classes=("refund_request", "check_balance", "other"),
         seed=13,
     )
-    records = generate(spec)
+    # The condition under test: the action's trigger class is never the model's answer. The
+    # generator now answers every class it is given, so the condition is built here rather than
+    # assumed from its distribution.
+    records = [item for item in generate(spec) if item.prediction != "check_balance"]
     action = CostAction("auto", "intent", "check_balance", 50.0, 5.0, 1.0)
 
     result = sweep(action, records, seed=0)
