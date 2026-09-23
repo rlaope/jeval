@@ -655,8 +655,18 @@ def _details(screen: Screen) -> str:
     )
 
 
-def render_screen(screen: Screen, *, provenance: str, models: str) -> str:
-    """The whole page: a claim, a row of facts, the chart, the impact table, the small print."""
+def kicker_line(*, provenance: str, models: str, product: str = "jeval") -> str:
+    """The one line above the claim: what log this is, how big, in what currency, which models."""
+    return (
+        f'<p class="kicker">{S.escape(product)} · <span class="synthetic">synthetic log</span> · '
+        f"{S.escape(provenance)} · {S.escape(models)}</p>"
+    )
+
+
+def render_body(screen: Screen, *, kicker: str) -> str:
+    """Everything inside ``<main>``: a claim, a row of facts, the chart, the impact table, the small
+    print. ``kicker`` is the markup placed above the claim, or empty when a host page supplies its own
+    line, as ``examples/make-workbench.py`` does; nothing else on the screen changes with the host."""
     current = screen.impact.current_threshold or CURRENT_THRESHOLD
     belongs = screen.result.threshold
     claim = (
@@ -678,13 +688,7 @@ def render_screen(screen: Screen, *, provenance: str, models: str) -> str:
         else ""
     )
     return (
-        "<!doctype html>\n"
-        '<html lang="en"><head><meta charset="utf-8">'
-        '<meta name="viewport" content="width=device-width, initial-scale=1">'
-        f"<title>jeval · {S.escape(screen.question)} · where the line belongs</title>"
-        f"<style>{CSS}</style></head><body><main>"
-        f'<header><p class="kicker">jeval · <span class="synthetic">synthetic log</span> · '
-        f"{S.escape(provenance)} · {S.escape(models)}</p>"
+        f"<header>{kicker}"
         f"<h1>{claim}</h1>"
         f"{_facts(screen)}</header>"
         "<h2>Cost per case against the threshold</h2>"
@@ -697,16 +701,26 @@ def render_screen(screen: Screen, *, provenance: str, models: str) -> str:
         "</h2>"
         f"{_impact_table(screen.impact)}"
         f"{_details(screen)}"
+    )
+
+
+def render_screen(screen: Screen, *, provenance: str, models: str) -> str:
+    """The whole page: the document shell around ``render_body``."""
+    return (
+        "<!doctype html>\n"
+        '<html lang="en"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width, initial-scale=1">'
+        f"<title>jeval · {S.escape(screen.question)} · where the line belongs</title>"
+        f"<style>{CSS}</style></head><body><main>"
+        f"{render_body(screen, kicker=kicker_line(provenance=provenance, models=models))}"
         "</main></body></html>\n"
     )
 
 
-def build_document() -> tuple[str, Screen]:
-    """The whole page, plus the analysis behind it.
+def build_screen() -> tuple[Screen, str, str]:
+    """The analysis behind the page, plus the two strings the kicker states about it.
 
-    ``main`` writes what this returns, and ``tests/test_demo_dashboard.py`` rebuilds it to keep the
-    committed artefact honest: the build is deterministic -- seeded synthesis, no clock in the
-    document -- so that check can be an equality rather than a property.
+    Shared with ``examples/make-workbench.py``, which frames the same screen inside a longer page.
     """
     serving, candidate = build_records()
     # The cost matrix lives in this file, not beside the artefact: the script is the provenance, and
@@ -721,6 +735,17 @@ def build_document() -> tuple[str, Screen]:
         f"{CURRENCY} at {MONTHLY_VOLUME:,.0f} cases a month"
     )
     models_text = "models " + ", ".join(models)
+    return screen, provenance, models_text
+
+
+def build_document() -> tuple[str, Screen]:
+    """The whole page, plus the analysis behind it.
+
+    ``main`` writes what this returns, and ``tests/test_demo_dashboard.py`` rebuilds it to keep the
+    committed artefact honest: the build is deterministic -- seeded synthesis, no clock in the
+    document -- so that check can be an equality rather than a property.
+    """
+    screen, provenance, models_text = build_screen()
     return render_screen(screen, provenance=provenance, models=models_text), screen
 
 
