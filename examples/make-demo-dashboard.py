@@ -366,6 +366,12 @@ body.dashboard figure { max-width: 800px; }
 @media (max-width: 760px) {
   .stat-row, .live-row { grid-template-columns: 1fr 1fr; }
   .scene-head h1 { font-size: 24px; }
+  /* The impact table has a minimum width no phone can take, so on a phone the panel holding it
+     goes full-bleed and stops spending width on padding the table needs. */
+  .panel { padding: 14px 12px; }
+  .panel-flush { padding-left: 0; padding-right: 0; border-left: 0; border-right: 0; border-radius: 0; }
+  /* Eight pixels short of fitting is a clipped "%" rather than a table that needs swiping. */
+  .panel-flush table.impact { font-size: 11.5px; }
   .dash-caption { position: static; display: block; color: var(--muted); background: none; padding: 16px 0; }
 }
 """
@@ -681,7 +687,7 @@ def _scene_verdict(analysis: Analysis) -> str:
         f'<p class="detail">{S.escape(verdict.detail)}</p>'
         f'<div class="stat-row">{stats}</div>'
         "</div>"
-        '<div class="panel"><h3>What changes if you move the line</h3>'
+        '<div class="panel panel-flush"><h3>What changes if you move the line</h3>'
         f"{_impact_table(analysis.impact)}"
         '<p class="note">Measured on '
         f"{analysis.result.n_records:,} labeled decisions for "

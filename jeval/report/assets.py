@@ -328,7 +328,15 @@ footer p { margin: 0 0 6px; }
   h1 { font-size: 24px; }
   h2 { margin-top: 34px; }
   .stats, .figures { grid-template-columns: 1fr 1fr; }
-  table { font-size: 12.5px; }
+  /* A table of currency amounts has a minimum width wider than a phone: "KRW 38,524,590.16" cannot
+     wrap, so at 100% the table wins and drags the whole page sideways — header, paragraphs and all.
+     The table takes the overflow itself instead, and the type comes down so that what is hidden is
+     a column edge rather than half the row. */
+  table { display: block; max-width: 100%; overflow-x: auto; font-size: 12px; }
+  th, td { padding: 7px 8px; }
+  th:first-child, td:first-child { padding-left: 0; }
+  /* The last column holds the shortest value in the table, so it gives up its padding first. */
+  th:last-child, td:last-child { padding-right: 4px; }
 }
 /* One block, custom properties only: every colour in the report is a var(), so dark mode is
    a palette swap and nothing else has to know it happened. */
