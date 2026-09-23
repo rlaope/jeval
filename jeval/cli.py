@@ -754,7 +754,10 @@ def build_and_write_report(
     threshold_by_question = {
         result.question: result.threshold for result in thresholds if result.curve
     }
-    blocks = template.build_blocks(dataset, thresholds=threshold_by_question)
+    action_by_question = {result.question: result.action for result in thresholds if result.curve}
+    blocks = template.build_blocks(
+        dataset, thresholds=threshold_by_question, actions=action_by_question
+    )
     html = template.render_document(model, blocks, segment_metrics=segment_metrics)
     template.write_report(html, out)
     return dataset, thresholds, impact, out

@@ -6,7 +6,9 @@ network -- no ``@import``, no ``url()``, no web font, no CDN script.
 
 All colour lives in custom properties, so a single ``@media (prefers-color-scheme: dark)``
 block restyles the whole report, and the ``@media print`` block lays the argument out for one
-A4 portrait page.
+A4 portrait page. The one thing custom properties cannot reach is a chart's own presentation
+attributes, so the dark block also re-maps the chart layer's greys from the same constants
+that layer paints with.
 
 What the template has to emit. Everything is optional: a report without tabs, sliders, segment
 charts or a copy button is still a readable static document.
@@ -39,9 +41,10 @@ Elements the script looks for, all optional:
     Panel -- a reliability figure or a data-quality block -- shown only for the active tab.
 ``[data-jeval-action="<action>"]``
     Slider box. Contains ``input[type="range"]``, ``[data-jeval-threshold]`` for the slider's
-    own label, and one ``[data-jeval-value="<key>"]`` per displayed figure. Keys: ``auto_rate``,
-    ``accuracy_auto``, ``measured_accuracy``, ``cost_per_case``, ``cost_per_month``,
-    ``auto_per_month``, ``escalations_per_month``.
+    own label, one ``[data-jeval-value="<key>"]`` per displayed figure, and optionally a
+    ``data-currency`` attribute (e.g. ``KRW``) and an ``input[type="number"]`` for the monthly
+    volume. Keys: ``auto_rate``, ``accuracy_auto``, ``measured_accuracy``, ``cost_per_case``,
+    ``cost_per_month``, ``auto_per_month``, ``escalations_per_month``.
 ``[data-jeval-copy-summary]``
     Copy-summary button; copies ``summary_markdown``. ``[data-copy-target]`` is accepted as an
     alias because the template already ships it.
@@ -53,25 +56,62 @@ Elements the script looks for, all optional:
 
 from __future__ import annotations
 
+from jeval.report import svg as chart_svg
+
 __all__ = ["REPORT_CSS", "REPORT_JS", "minify"]
 
-REPORT_CSS = """\
+# --------------------------------------------------------------------------------------
+# Colour
+# --------------------------------------------------------------------------------------
+# Charts paint literal greys: an SVG presentation attribute cannot read a custom property, and a
+# report whose curves go invisible on a reader's dark-mode laptop is a report that lied. Rather
+# than keep two palettes in step by hand, the dark block's grey re-map is generated here from the
+# chart layer's own constants -- and it re-maps greys only. The Okabe-Ito hues that carry meaning
+# are never touched.
+_GREY_RULES: tuple[tuple[str, str, str, str], ...] = (
+    ('text[fill="{v}"]', "fill", "ink", chart_svg.INK),
+    ('circle[fill="{v}"]', "fill", "ink", chart_svg.INK),
+    ('line[stroke="{v}"]', "stroke", "ink", chart_svg.INK),
+    ('path[stroke="{v}"]', "stroke", "ink", chart_svg.INK),
+    ('text[fill="{v}"]', "fill", "muted", chart_svg.MUTED),
+    ('line[stroke="{v}"]', "stroke", "muted", chart_svg.SOFT),
+    ('path[stroke="{v}"]', "stroke", "muted", chart_svg.SOFT),
+    ('circle[fill="{v}"]', "fill", "muted", chart_svg.SOFT),
+    ('line[stroke="{v}"]', "stroke", "rule", chart_svg.GRID),
+    ('line[stroke="{v}"]', "stroke", "rule", chart_svg.DIAGONAL),
+    ('rect[fill="{v}"]', "fill", "rule", chart_svg.GRID),
+    ('rect[fill="{v}"]', "fill", "shade", chart_svg.SHADE),
+    ('polygon[fill="{v}"]', "fill", "shade", chart_svg.SHADE),
+    ('rect[fill="{v}"]', "fill", "shade", chart_svg.DIAGONAL),
+)
+
+_GREY_REMAP = "".join(
+    "  figure svg " + selector.format(v=value) + " { " + prop + ": var(--" + token + "); }\n"
+    for selector, prop, token, value in _GREY_RULES
+)
+
+# The placeholder lives in the dark-mode block; replacing it keeps the stylesheet readable as one
+# document while the values it swaps in come from the chart layer. Resolved below, once the
+# stylesheet itself is defined.
+
+_CSS = """\
 :root {
   color-scheme: light dark;
-  --bg: #ffffff;
-  --panel: #f6f7f9;
-  --panel-alt: #eceff3;
-  --ink: #14161a;
-  --muted: #5b6472;
-  --rule: #e2e5ea;
-  --accent: #0072b2;
-  --accent-soft: #e8f1f9;
-  --good: #009e73;
-  --warn: #b58900;
-  --bad: #d55e00;
-  --shade: #f2f2f2;
-  --shadow: 0 1px 2px rgba(20, 22, 26, 0.07);
-  --radius: 8px;
+  --bg: #fbfbfc;
+  --panel: #ffffff;
+  --panel-alt: #f4f6f9;
+  --ink: #16181d;
+  --muted: #5f6773;
+  --rule: #e6e8ec;
+  --accent: #2f5fd0;
+  --accent-soft: #eef3fd;
+  --good: #10795c;
+  --warn: #95590a;
+  --bad: #b3261e;
+  --alert: #b3261e;
+  --shade: #f2f4f7;
+  --shadow: 0 1px 2px rgba(22, 24, 29, 0.08);
+  --radius: 10px;
   --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
@@ -83,175 +123,244 @@ REPORT_CSS = """\
 html { -webkit-text-size-adjust: 100%; }
 body {
   margin: 0;
-  padding: 0;
   background: var(--bg);
   color: var(--ink);
-  font: 15px/1.55 var(--font);
+  font: 15px/1.6 var(--font);
+  -webkit-font-smoothing: antialiased;
 }
-main { max-width: 940px; margin: 0 auto; padding: 28px 20px 72px; }
-h1 { font-size: 22px; line-height: 1.25; margin: 0 0 4px; letter-spacing: -0.01em; }
+/* One column, wide enough for a 660pt chart to scale up and short enough to read: 880px is the
+   measure this report is typeset for. */
+main { max-width: 880px; margin: 0 auto; padding: 44px 24px 96px; }
+h1 { font-size: 28px; line-height: 1.2; letter-spacing: -0.02em; margin: 0 0 10px; }
+.lede { font-size: 16px; line-height: 1.55; color: var(--muted); max-width: 58ch; margin: 0 0 20px; }
 h2 {
-  font-size: 17px; margin: 34px 0 12px; padding-bottom: 6px;
-  border-bottom: 1px solid var(--rule);
+  font-size: 20px; line-height: 1.3; letter-spacing: -0.01em;
+  margin: 46px 0 14px; padding-bottom: 8px; border-bottom: 1px solid var(--rule);
 }
-h3 { font-size: 14px; margin: 22px 0 8px; }
-p, li { margin: 0 0 8px; }
-ul { margin: 0 0 8px; padding-left: 20px; }
+h3 { font-size: 15px; line-height: 1.45; margin: 26px 0 6px; }
+p { margin: 0 0 12px; }
+ul { margin: 0 0 12px; padding-left: 22px; }
+li { margin: 0 0 6px; }
 a { color: var(--accent); }
-.meta { color: var(--muted); font-size: 12.5px; margin: 0 0 20px; }
-.note, figcaption, .card .s { color: var(--muted); font-size: 12.5px; }
-.num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+section { margin: 0 0 10px; }
 code, kbd, samp { font-family: var(--mono); font-size: 0.94em; }
-section { margin: 0 0 26px; }
+.num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.note { color: var(--muted); font-size: 12.5px; }
 /* The template emits sections in SECTION_ORDER, so the verdict is already first in the
    document; the rule below keeps it first if a container is ever flexed or reordered. */
-#verdict { order: -1; margin-top: 8px; }
+#verdict { order: -1; margin: 0 0 10px; }
+
+/* Provenance: one item per line. As a single `·`-separated run it reads as boilerplate and gets
+   skipped, which is exactly the part a reader needs to judge the sample. */
+.meta { display: flex; flex-direction: column; gap: 4px; margin: 0; color: var(--muted); font-size: 12.5px; line-height: 1.5; }
+.meta-item { display: block; max-width: 86ch; }
+
+/* The verdict. One card, one coloured edge for the status, and the three figures that carry it
+   underneath — no shadow, no second frame. */
 .verdict {
   border: 1px solid var(--rule);
-  border-left: 4px solid var(--accent);
+  border-left: 3px solid var(--accent);
   border-radius: var(--radius);
   background: var(--panel);
-  padding: 16px 18px;
+  padding: 20px 24px;
 }
-#verdict[data-status="too_low"] .verdict, #verdict[data-status="too_high"] .verdict {
-  border-left-color: var(--warn);
-}
-#verdict[data-status="insufficient_data"] .verdict { border-left-color: var(--muted); }
-.verdict .headline { font-size: 19px; font-weight: 600; margin: 0 0 6px; }
-.verdict .detail { margin: 0; font-size: 14px; color: var(--muted); }
+#verdict[data-status="too_low"].verdict, #verdict[data-status="too_high"].verdict { border-left-color: var(--warn); }
+#verdict[data-status="insufficient_data"].verdict { border-left-color: var(--muted); }
+.verdict .headline { font-size: 21px; line-height: 1.32; letter-spacing: -0.01em; font-weight: 600; margin: 0 0 8px; }
+.verdict .detail { margin: 0; font-size: 14.5px; line-height: 1.6; color: var(--muted); max-width: 68ch; }
 .stats {
   display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-  gap: 12px; margin: 16px 0 4px;
+  gap: 18px 28px; margin: 20px 0 0; padding-top: 18px; border-top: 1px solid var(--rule);
 }
-.card {
-  border: 1px solid var(--rule); border-radius: var(--radius); background: var(--bg);
-  padding: 12px 14px; box-shadow: var(--shadow);
-}
-.card .k {
-  font-size: 11.5px; letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted);
-}
-.card .v { font: 600 20px/1.25 var(--mono); margin-top: 5px; }
-.card .s { margin-top: 3px; }
+.stat .k { font-size: 12px; color: var(--muted); }
+.stat .v { font-size: 22px; line-height: 1.25; font-weight: 600; letter-spacing: -0.01em; margin-top: 4px; }
+.stat .s { font-size: 12.5px; line-height: 1.5; color: var(--muted); margin-top: 2px; }
+.stats.small { gap: 14px 24px; margin-top: 16px; }
+.stats.small .stat .v { font-size: 17px; }
+.verdict-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 18px; }
+
+/* Tabs as one segmented control: a row of loose labels reads as text, not as a control. */
 .tabs {
-  display: flex; flex-wrap: wrap; gap: 6px; margin: 14px 0 12px;
-  border-bottom: 1px solid var(--rule);
+  display: inline-flex; flex-wrap: wrap; gap: 2px; padding: 3px;
+  margin: 16px 0; border: 1px solid var(--rule); border-radius: var(--radius);
+  background: var(--panel-alt);
 }
 .tab {
-  -webkit-appearance: none; appearance: none; background: none; color: var(--muted);
-  border: 1px solid transparent; border-bottom: 2px solid transparent;
-  font: inherit; font-size: 13.5px; padding: 7px 11px; border-radius: 6px 6px 0 0;
-  cursor: pointer;
+  -webkit-appearance: none; appearance: none; cursor: pointer;
+  border: 0; background: none; color: var(--muted);
+  font: inherit; font-size: 13px; padding: 6px 12px; border-radius: 7px;
 }
-.tab:hover { background: var(--panel); color: var(--ink); }
+.tab:hover { color: var(--ink); background: var(--panel); }
 .tab[aria-selected="true"], .tab.is-active {
-  color: var(--ink); background: var(--panel); border-bottom-color: var(--accent);
-  font-weight: 600;
+  color: var(--ink); background: var(--panel); font-weight: 600; box-shadow: var(--shadow);
 }
-.tab:focus-visible, button:focus-visible, input[type="range"]:focus-visible,
+.tab:focus-visible, button:focus-visible, input:focus-visible,
 [data-jeval-segment]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-figure { margin: 10px 0 16px; }
-figure svg { display: block; width: 100%; height: auto; }
-figcaption { margin-top: 6px; }
-table { border-collapse: collapse; width: 100%; margin: 10px 0 16px; font-size: 13px; }
-th, td {
-  border-bottom: 1px solid var(--rule); padding: 7px 10px;
-  text-align: right; vertical-align: top;
+.block-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin: 26px 0 4px; }
+.block-head h3 { margin: 0; }
+.block-sub { margin: 0; font-size: 12.5px; color: var(--muted); }
+
+/* Callouts. The left edge carries the status, the tint only separates them from the page. */
+.diag {
+  border: 1px solid var(--rule); border-left: 3px solid var(--accent); border-radius: 0 8px 8px 0;
+  background: var(--accent-soft); padding: 12px 16px; margin: 12px 0 18px;
+  font-size: 14.5px; line-height: 1.6;
 }
+.warn {
+  border: 1px solid var(--rule); border-left: 3px solid var(--warn); border-radius: 0 8px 8px 0;
+  background: var(--panel-alt); padding: 12px 16px; margin: 16px 0 20px;
+  font-size: 14.5px; line-height: 1.6;
+}
+.warn ul { margin: 8px 0 0; }
+.good { color: var(--good); }
+.bad { color: var(--bad); }
+
+figure { margin: 18px 0 24px; }
+figure svg { display: block; width: 100%; height: auto; }
+figcaption { margin-top: 10px; color: var(--muted); font-size: 12.5px; line-height: 1.55; max-width: 74ch; }
+
+table { border-collapse: collapse; width: 100%; margin: 14px 0 20px; font-size: 13.5px; }
+caption { caption-side: top; text-align: left; color: var(--muted); font-size: 12.5px; padding: 0 0 8px; }
+th, td { padding: 9px 12px; border-bottom: 1px solid var(--rule); text-align: right; vertical-align: baseline; }
 th:first-child, td:first-child { text-align: left; }
 th {
   color: var(--muted); font-weight: 600; font-size: 11.5px;
-  text-transform: uppercase; letter-spacing: 0.04em;
+  text-transform: uppercase; letter-spacing: 0.06em;
 }
+th.num, td.num { text-align: right; }
+tbody tr:hover td { background: var(--panel-alt); }
 tbody tr:last-child td { border-bottom: 0; }
-.diag {
-  border-left: 3px solid var(--accent); background: var(--panel);
-  padding: 10px 14px; margin: 10px 0 16px; font-size: 14px;
-}
-.warn {
-  border-left: 3px solid var(--warn); background: var(--panel-alt);
-  padding: 10px 14px; margin: 12px 0 16px; font-size: 14px;
-}
-.good { color: var(--good); }
-.bad { color: var(--bad); }
+/* The recommended column is the proposal this whole document argues for; a tint says so
+   without a second colour legend. */
+table.impact th:nth-child(3), table.impact td:nth-child(3) { background: var(--accent-soft); }
+table.impact td:first-child { font-weight: 500; }
+
+/* Collapsible data tables: closed by default, obviously openable, and print when open. */
 details {
   border: 1px solid var(--rule); border-radius: var(--radius); background: var(--panel);
-  padding: 8px 12px; margin: 10px 0 16px;
+  margin: 14px 0 20px;
 }
-details > summary { cursor: pointer; font-size: 13px; color: var(--muted); }
-details[open] > summary { margin-bottom: 8px; }
-details table { margin: 4px 0 6px; }
-.controls, .actions {
-  display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 12px 0;
-}
+details > summary { cursor: pointer; list-style: none; padding: 11px 16px; font-size: 13px; color: var(--muted); }
+details > summary:hover { color: var(--ink); }
+details > summary::-webkit-details-marker { display: none; }
+details > summary::before { content: "▸"; display: inline-block; width: 14px; color: var(--muted); }
+details[open] > summary { border-bottom: 1px solid var(--rule); }
+details[open] > summary::before { content: "▾"; }
+details table { margin: 0; }
+details th:first-child, details td:first-child { padding-left: 16px; }
+details th:last-child, details td:last-child { padding-right: 16px; }
+
 button, .button {
   -webkit-appearance: none; appearance: none; cursor: pointer;
-  border: 1px solid var(--rule); border-radius: 6px; background: var(--panel);
-  color: var(--ink); font: inherit; font-size: 13px; padding: 6px 12px;
+  border: 1px solid var(--rule); border-radius: 8px; background: var(--panel);
+  color: var(--ink); font: inherit; font-size: 13px; padding: 7px 14px;
 }
 button:hover, .button:hover { border-color: var(--accent); color: var(--accent); }
 .copy-summary { white-space: nowrap; }
+
+/* The threshold explorer. Everything the slider rewrites sits below the rule, so a reader can
+   see at a glance which numbers are live and which ones are the report's own measurement. */
+.controls, .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 12px 0; }
 .slider {
   border: 1px solid var(--rule); border-radius: var(--radius); background: var(--panel);
-  padding: 12px 14px; margin: 12px 0 16px;
+  padding: 16px 18px; margin: 16px 0 20px;
 }
-.slider .row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 12px;
-  justify-content: space-between; }
-.slider .label { font-size: 13px; color: var(--muted); }
-.slider [data-jeval-threshold] { font-family: var(--mono); font-size: 15px; font-weight: 600; }
-.slider .readout { font-family: var(--mono); }
+.slider-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 10px 16px; }
+.slider-title { display: inline-flex; align-items: baseline; gap: 10px; }
+.slider-title label { font-size: 13px; color: var(--muted); }
+.slider [data-jeval-threshold], [data-jeval-threshold] {
+  font-family: var(--mono); font-size: 18px; font-weight: 600; font-variant-numeric: tabular-nums;
+}
+.volume { display: inline-flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--muted); }
+input[type="number"] {
+  font: inherit; font-family: var(--mono); font-size: 13px; width: 96px;
+  padding: 5px 8px; border: 1px solid var(--rule); border-radius: 8px;
+  background: var(--bg); color: var(--ink);
+}
 input[type="range"] {
   -webkit-appearance: none; appearance: none; display: block;
-  width: 100%; height: 22px; margin: 6px 0 2px; background: transparent; cursor: ew-resize;
+  width: 100%; height: 24px; margin: 8px 0 0; background: transparent; cursor: ew-resize;
 }
 input[type="range"]::-webkit-slider-runnable-track {
-  height: 4px; border-radius: 2px; background: var(--rule);
+  height: 6px; border-radius: 999px; background: var(--rule);
 }
 input[type="range"]::-webkit-slider-thumb {
-  -webkit-appearance: none; appearance: none; width: 16px; height: 16px;
-  margin-top: -6px; border: 0; border-radius: 50%; background: var(--accent);
+  -webkit-appearance: none; appearance: none; width: 18px; height: 18px;
+  margin-top: -6px; border: 2px solid var(--panel); border-radius: 50%;
+  background: var(--accent); box-shadow: var(--shadow);
 }
-input[type="range"]::-moz-range-track { height: 4px; border-radius: 2px; background: var(--rule); }
+input[type="range"]::-moz-range-track { height: 6px; border-radius: 999px; background: var(--rule); }
 input[type="range"]::-moz-range-thumb {
-  width: 16px; height: 16px; border: 0; border-radius: 50%; background: var(--accent);
+  width: 18px; height: 18px; border: 2px solid var(--panel); border-radius: 50%; background: var(--accent);
 }
+.scale { display: flex; justify-content: space-between; font-family: var(--mono); font-size: 11.5px; color: var(--muted); }
+.figures {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px 24px; margin: 16px 0 4px; padding-top: 16px; border-top: 1px solid var(--rule);
+}
+.figures .figure { display: flex; flex-direction: column; gap: 2px; }
+.figures .k { color: var(--muted); font-size: 12px; }
+.figures .v { font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
+
+/* Segment bars: the track behind them is what makes two lengths comparable. */
+.seg-bar { cursor: pointer; }
+.seg-bar:hover .seg-fill, .seg-bar.is-open .seg-fill { opacity: 0.82; }
+.seg-fill { fill: var(--accent); }
+.accent-stroke { stroke: var(--accent); }
+.accent-dot { fill: var(--accent); }
+/* The line in use, and a model change: the same warning in two charts, one value per theme. */
+.alert-stroke { stroke: var(--alert); }
+.alert-ink { fill: var(--alert); }
+.alert-dot { fill: var(--alert); }
+/* An annotation drawn on top of a gridline needs its own ground; a box would be louder. */
+.halo { paint-order: stroke; stroke: var(--bg); stroke-width: 3px; stroke-linejoin: round; }
 [data-jeval-segment] { cursor: pointer; }
 [data-jeval-segment][aria-expanded="true"] { font-weight: 600; }
-[data-jeval-segment-chart] { margin-top: 10px; }
+[data-jeval-segment-chart] { margin-top: 12px; }
+
 footer {
-  margin-top: 46px; border-top: 1px solid var(--rule); padding-top: 16px;
+  margin-top: 56px; border-top: 1px solid var(--rule); padding-top: 18px;
   color: var(--muted); font-size: 12.5px;
 }
+footer p { margin: 0 0 6px; }
 @media (max-width: 640px) {
-  main { padding: 20px 14px 48px; }
-  .stats { grid-template-columns: 1fr; }
+  main { padding: 28px 16px 64px; }
+  h1 { font-size: 24px; }
+  h2 { margin-top: 34px; }
+  .stats, .figures { grid-template-columns: 1fr 1fr; }
+  table { font-size: 12.5px; }
 }
 /* One block, custom properties only: every colour in the report is a var(), so dark mode is
    a palette swap and nothing else has to know it happened. */
 @media (prefers-color-scheme: dark) {
   :root {
     color-scheme: dark;
-    --bg: #0f1115;
-    --panel: #171b22;
-    --panel-alt: #1e232c;
-    --shade: #1c2129;
-    --ink: #eef1f5;
-    --muted: #a5aeba;
-    --rule: #2a303a;
-    --accent: #56b4e9;
-    --accent-soft: #12304a;
-    --good: #4cc79a;
-    --warn: #e0b64a;
-    --bad: #f08a54;
+    --bg: #12141a;
+    --panel: #181b22;
+    --panel-alt: #1f232b;
+    --shade: #22262f;
+    --ink: #e7eaef;
+    --muted: #9aa3b1;
+    --rule: #2a2f39;
+    --accent: #7ea6ff;
+    --accent-soft: #1b2436;
+    --good: #4fc99f;
+    --warn: #e0b357;
+    --bad: #ff8f85;
+    --alert: #ff9d92;
     --shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
   }
-  /* Charts are painted with fixed ink values; remap only the greys the palette keeps as
-     text and grid, never the Okabe-Ito hues that carry meaning. */
-  figure svg text[fill="#111111"], figure svg circle[fill="#111111"] { fill: var(--ink); }
-  figure svg text[fill="#666666"] { fill: var(--muted); }
-  figure svg line[stroke="#111111"] { stroke: var(--ink); }
-  figure svg line[stroke="#dddddd"], figure svg line[stroke="#999999"] { stroke: var(--rule); }
-  figure svg rect[fill="#f2f2f2"] { fill: var(--panel-alt); }
+  /* Charts are painted with fixed grey values, because SVG has no custom properties of its own
+     for a presentation attribute. The greys are re-mapped by attribute selector rather than
+     removed from the chart layer: the same hex that is ink on white is ink on near-black, and
+     the Okabe-Ito hues (which carry meaning) are never touched. The rules below are generated
+     from jeval.report.svg, so a new grey cannot be forgotten here. */
+/*__GREY_REMAP__*/
 }
+/* Text inside a dark heatmap cell, in both themes: a cell painted with the page's own ink at
+   high opacity is the one cell whose label needs the page's own background. This rule sits
+   after the dark-mode block on purpose -- it has to beat the grey remap above it. */
+.heat-strong { fill: var(--bg); }
 @page { size: A4 portrait; margin: 12mm; }
 /* One page: verdict, reliability chart and impact table. Everything interactive or repeated
    is chrome and goes; collapsed details stay collapsed; nothing splits across a page. */
@@ -265,19 +374,22 @@ footer {
     --ink: #000000;
     --muted: #333333;
     --rule: #b8b8b8;
+    --accent: #1a3f8f;
+    --accent-soft: #f0f0f0;
+    --alert: #a01b14;
     --shadow: none;
   }
-  body { background: #fff; color: #000; font-size: 10.5pt; }
+  body { background: #fff; color: #000; font-size: 10.5pt; line-height: 1.45; }
   main { max-width: none; margin: 0; padding: 0; }
-  nav, .report-nav, .tabs, .tab, .controls, .actions, button, .button, .copy-summary,
-  .no-print, footer, .slider { display: none !important; }
+  nav, .report-nav, .tabs, .tab, .controls, .actions, .verdict-actions, button, .button,
+  .copy-summary, .no-print, footer, .slider { display: none !important; }
+  .lede { font-size: 10pt; margin-bottom: 3mm; }
+  .meta { font-size: 8pt; }
   #verdict { order: -1; break-after: avoid; page-break-after: avoid; }
   section { break-inside: avoid; page-break-inside: avoid; margin: 0 0 5mm; }
   details:not([open]) { display: none !important; }
   details > summary { display: none !important; }
-  details, .card, .verdict, figure, .diag, .warn {
-    break-inside: avoid; page-break-inside: avoid;
-  }
+  details, .verdict, figure, .diag, .warn { break-inside: avoid; page-break-inside: avoid; }
   table { break-inside: avoid; page-break-inside: avoid; font-size: 9.5pt; }
   tr, th, td { break-inside: avoid; page-break-inside: avoid; }
   thead { display: table-header-group; }
@@ -286,39 +398,12 @@ footer {
   h2 { font-size: 12pt; margin: 4mm 0 1.5mm; }
   .verdict .headline { font-size: 14pt; }
   .stats { grid-template-columns: repeat(3, 1fr); gap: 2mm; }
-  .card .v { font-size: 13pt; }
-}
-
-/* Slider figures: the report's script rewrites [data-jeval-value], so the label and the value
-   must be visually separate at a glance. */
-.figures {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 24px;
-  margin: 10px 0 6px;
-}
-.figures .figure {
-  display: flex;
-  gap: 8px;
-  align-items: baseline;
-}
-.figures .k {
-  color: var(--muted);
-  font-size: 13px;
-}
-.figures .v {
-  font-size: 14px;
-  font-weight: 600;
-  font-family: var(--mono);
-}
-[data-jeval-segment] {
-  cursor: pointer;
-}
-[data-jeval-segment]:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
+  .stat .v { font-size: 13pt; }
+  figcaption { font-size: 8pt; margin-top: 1.5mm; }
 }
 """
+
+REPORT_CSS = _CSS.replace("/*__GREY_REMAP__*/", _GREY_REMAP.rstrip("\n"))
 
 REPORT_JS = """\
 (function () {
@@ -346,16 +431,12 @@ REPORT_JS = """\
     return isFinite(number) ? number : null;
   }
 
-  function pct(value, digits) {
+  function pct(value) {
     var number = finite(value);
     if (number === null) { return "n/a"; }
-    return (number * 100).toFixed(digits === undefined ? 1 : digits) + "%";
-  }
-
-  function fixed(value, digits) {
-    var number = finite(value);
-    if (number === null) { return "n/a"; }
-    return number.toFixed(digits === undefined ? 3 : digits);
+    // Whole percent, matching how the impact table and the charts write a rate: a live readout
+    // that disagrees with the table above it by half a point reads as a second, wrong number.
+    return Math.round(number * 100) + "%";
   }
 
   function grouped(value) {
@@ -372,6 +453,27 @@ REPORT_JS = """\
       if (count % 3 === 0 && i > 0) { out = "," + out; }
     }
     return sign + out;
+  }
+
+  function amount(value, digits) {
+    var number = finite(value);
+    if (number === null) { return "n/a"; }
+    var parts = Math.abs(number).toFixed(digits === undefined ? 2 : digits).split(".");
+    var whole = parts[0];
+    var out = "";
+    var count = 0;
+    for (var i = whole.length - 1; i >= 0; i -= 1) {
+      out = whole.charAt(i) + out;
+      count += 1;
+      if (count % 3 === 0 && i > 0) { out = "," + out; }
+    }
+    if (parts.length > 1) { out = out + "." + parts[1]; }
+    return (number < 0 ? "-" : "") + out;
+  }
+
+  function withCurrency(text, currency) {
+    if (text === "n/a") { return text; }
+    return currency ? currency + " " + text : text;
   }
 
   function money(value) {
@@ -468,6 +570,8 @@ REPORT_JS = """\
     var action = box.getAttribute("data-jeval-action") || "";
     var spec = first(actions, [action]);
     if (!spec) { return; }
+    var currency = box.getAttribute("data-currency") || "";
+    var volumeInput = box.querySelector('input[type="number"]');
     var curve = first(spec, ["curve", "points"]);
     if (!Array.isArray(curve)) { curve = []; }
     var volume = finite(first(spec, ["monthly_volume", "volume"]));
@@ -477,6 +581,10 @@ REPORT_JS = """\
       if (threshold === null) { return; }
       setText(box.querySelector("[data-jeval-threshold]"), threshold.toFixed(2));
       slider.setAttribute("aria-valuetext", threshold.toFixed(2));
+      // A typed volume wins over the embedded one, so the monthly figures answer the question the
+      // reader just asked instead of the one the report was built with.
+      var typed = volumeInput ? finite(volumeInput.value) : null;
+      var live = typed === null ? volume : typed;
       var point = pointAt(curve, threshold);
       if (!point) { return; }
       if (point.auto_rate !== null) {
@@ -487,19 +595,23 @@ REPORT_JS = """\
         renderValue(box, "measured_accuracy", pct(point.accuracy_auto));
       }
       if (point.cost !== null) {
-        renderValue(box, "cost_per_case", fixed(point.cost, 3));
-        if (volume !== null) {
-          renderValue(box, "cost_per_month", money(point.cost * volume));
+        renderValue(box, "cost_per_case", withCurrency(amount(point.cost, 2), currency));
+        if (live !== null) {
+          renderValue(box, "cost_per_month", withCurrency(money(point.cost * live), currency));
         }
       }
-      if (point.auto_rate !== null && volume !== null) {
-        renderValue(box, "auto_per_month", grouped(point.auto_rate * volume));
-        renderValue(box, "escalations_per_month", grouped((1 - point.auto_rate) * volume));
+      if (point.auto_rate !== null && live !== null) {
+        renderValue(box, "auto_per_month", money(point.auto_rate * live));
+        renderValue(box, "escalations_per_month", money((1 - point.auto_rate) * live));
       }
     }
 
     slider.addEventListener("input", render);
     slider.addEventListener("change", render);
+    if (volumeInput) {
+      volumeInput.addEventListener("input", render);
+      volumeInput.addEventListener("change", render);
+    }
     render();
   }
 
