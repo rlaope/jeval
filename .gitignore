@@ -6,6 +6,8 @@ omo.*
 omc.*
 *.omo
 *.omc
+# Git worktrees kept inside the repository (agent or human scratch, never committed).
+/.worktrees/
 # Root-level agent scratch only (no leading slash would also match the generated pack's
 # nested .agents/skills directory, which must be committed).
 /.agent/
