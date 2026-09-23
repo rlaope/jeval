@@ -67,20 +67,21 @@ actions:
     cost_false_reject: 1000
 """
 
-# The chart's own geometry. The viewBox is deliberately wider than a laptop window: the SVG scales
-# down to the column, so a 13px label is drawn as 13px instead of shrinking to 10px.
-CHART_W = 1120.0
-CHART_H = 340.0
-PLOT_LEFT = 78.0
-PLOT_RIGHT = 30.0
-PLOT_TOP = 34.0
-PLOT_BOTTOM = 116.0
-STRIP_GAP = 22.0
-STRIP_H = 38.0
-LABEL_Y = 22.0
-X_TICK_Y = 304.0
-X_TITLE_Y = 325.0
-Y_TITLE_X = 20.0
+# The chart is drawn at the column's width, so one viewBox unit is one CSS pixel on a laptop window
+# and a 13px label is rendered at 13px instead of being scaled down.
+COLUMN_W = 960.0
+CHART_W = COLUMN_W
+CHART_H = 372.0
+PLOT_LEFT = 70.0
+PLOT_RIGHT = 20.0
+PLOT_TOP = 30.0
+PLOT_BOTTOM = 140.0
+STRIP_GAP = 24.0
+STRIP_H = 58.0
+LABEL_Y = 18.0
+X_TICK_Y = 337.0
+X_TITLE_Y = 358.0
+Y_TITLE_X = 14.0
 
 
 @dataclass
@@ -239,7 +240,7 @@ def _threshold_line(
                 label,
                 anchor=anchor,
                 size=13.5,
-                weight=650,
+                weight=700,
                 cls=label_cls,
                 halo=True,
             ),
@@ -252,7 +253,7 @@ def _chart(screen: Screen) -> str:
     assert points, "the sweep must produce points"
     costs = [point.expected_cost for point in points]
     lo, hi = min(costs), max(costs)
-    pad = max(1e-9, (hi - lo) * 0.16)
+    pad = max(1e-9, (hi - lo) * 0.18)
     y_lo, y_hi = max(0.0, lo - pad), hi + pad
 
     x0, x1 = PLOT_LEFT, CHART_W - PLOT_RIGHT
@@ -270,6 +271,16 @@ def _chart(screen: Screen) -> str:
     current = screen.impact.current_threshold or CURRENT_THRESHOLD
     belongs = screen.result.threshold
     per_case = screen.result.expected_cost_per_case
+    at_current = screen.result.point_at(current)
+    currency = screen.impact.currency
+    # The sweep is flat until it has a case it could move: below the lowest confidence the model
+    # handles alone, raising the line changes nothing. Unannotated, that plateau reads as a
+    # rendering fault -- its step lands exactly on the "in use" line -- so the chart says what it is.
+    plateau = points[0].expected_cost
+    plateau_end = max(
+        (point.threshold for point in points if abs(point.expected_cost - plateau) < 1e-9),
+        default=0.0,
+    )
 
     parts = [
         S.svg_open(
@@ -288,15 +299,6 @@ def _chart(screen: Screen) -> str:
         )
     ]
 
-    # The band between the two lines: the region the move covers.
-    if belongs != current:
-        left, right = sorted((px(current), px(belongs)))
-        parts.append(
-            S.rect(
-                left, y_top, right - left, y_bottom - y_top, cls="move-band", extra='stroke="none"'
-            )
-        )
-
     # The bootstrap interval on the threshold, drawn and not only printed: a point estimate quoted
     # over a wide interval is the easiest thing on this page to over-read.
     ci_low, ci_high = screen.result.ci_low, screen.result.ci_high
@@ -306,26 +308,26 @@ def _chart(screen: Screen) -> str:
                 px(ci_low),
                 y_top,
                 px(ci_high) - px(ci_low),
-                y_bottom - y_top,
+                strip_bottom - y_top,
                 cls="ci-band",
-                extra='stroke="none"',
+                extra=' stroke="none"',
             )
         )
 
+    # Few gridlines: horizontal only, at round costs. The x axis gets tick marks, not a lattice.
     for value in S.nice_ticks(y_lo, y_hi, target=4):
         y = py(value)
         parts.append(S.line(x0, y, x1, y, cls="grid"))
         parts.append(
-            S.text(x0 - 12, y + 4.5, S.money(value), anchor="end", size=13, mono=True, cls="tick")
+            S.text(x0 - 10, y + 4.5, S.money(value), anchor="end", size=13, mono=True, cls="tick")
         )
     for value in (0.0, 0.25, 0.5, 0.75, 1.0):
         x = px(value)
-        parts.append(S.line(x, y_top, x, strip_bottom, cls="grid", opacity=0.75))
+        parts.append(S.line(x, strip_bottom, x, strip_bottom + 6, cls="axis"))
         parts.append(
             S.text(x, X_TICK_Y, S.fmt(value), anchor="middle", size=13, mono=True, cls="tick")
         )
     parts.append(S.line(x0, y_bottom, x1, y_bottom, cls="axis"))
-    parts.append(S.line(x0, y_top, x0, y_bottom, cls="axis"))
     parts.append(S.line(x0, strip_bottom, x1, strip_bottom, cls="axis"))
     parts.append(
         S.text(
@@ -333,28 +335,17 @@ def _chart(screen: Screen) -> str:
             X_TITLE_Y,
             "threshold: how sure the model has to be before it answers alone",
             anchor="middle",
-            size=13.5,
+            size=13,
             cls="label",
         )
     )
-    if ci_high > ci_low:
-        parts.append(
-            S.text(
-                x0,
-                CHART_H - 4,
-                f"the band is the 95% interval on where the line belongs: {S.fmt(ci_low)}–"
-                f"{S.fmt(ci_high)}",
-                size=12.5,
-                cls="label",
-            )
-        )
     parts.append(
         S.text(
             Y_TITLE_X,
             (y_top + y_bottom) / 2.0,
-            f"cost per case ({CURRENCY})",
+            f"cost per case ({currency})",
             anchor="middle",
-            size=13.5,
+            size=13,
             cls="label",
             rotate=-90,
             rotate_at=(Y_TITLE_X, (y_top + y_bottom) / 2.0),
@@ -366,9 +357,9 @@ def _chart(screen: Screen) -> str:
     if buckets:
         peak = max(count for _lo, _hi, count in buckets) or 1
         for band_lo, band_hi, count in buckets:
-            left = px(band_lo) + 1.5
-            width = max(1.5, px(band_hi) - px(band_lo) - 3.0)
-            height = max(1.5, (count / peak) * STRIP_H)
+            left = px(band_lo) + 1.0
+            width = max(1.0, px(band_hi) - px(band_lo) - 2.0)
+            height = max(1.0, (count / peak) * STRIP_H)
             parts.append(
                 S.rect(
                     left,
@@ -376,18 +367,38 @@ def _chart(screen: Screen) -> str:
                     width,
                     height,
                     cls="dist",
-                    rx=2.0,
-                    extra='stroke="none"',
+                    extra=' stroke="none"',
                 )
             )
+        # Every occupied band carries its count: with one band holding most of the decisions, the
+        # other bars are a few pixels tall, and the number is what makes them readable.
+        for band_lo, band_hi, count in buckets:
+            if count:
+                height = (count / peak) * STRIP_H
+                parts.append(
+                    S.text(
+                        (px(band_lo) + px(band_hi)) / 2.0,
+                        strip_bottom - height - 4,
+                        f"{count:,}",
+                        anchor="middle",
+                        size=13,
+                        mono=True,
+                        cls="tick",
+                    )
+                )
         parts.append(
             S.text(
                 x0,
-                strip_top - 11,
+                strip_top - 9,
                 f"{screen.metrics.n:,} labeled decisions in these bands",
                 size=13,
                 cls="label",
             )
+        )
+        # The strip has its own unit, so it gets its own axis label; without one, bar heights read
+        # as cost levels.
+        parts.append(
+            S.text(x0 - 10, strip_top + 12, "decisions", anchor="end", size=11, cls="tick")
         )
 
     parts.append(
@@ -397,26 +408,66 @@ def _chart(screen: Screen) -> str:
             smooth=True,
         )
     )
+    # Say why the left half of the curve is flat, using the threshold the plateau actually ends at.
+    if plateau_end >= 0.2:
+        parts.append(
+            S.text(
+                x0 + 10,
+                py(plateau) + 18,
+                f"flat to {S.fmt(plateau_end)}: every case the model would handle alone already "
+                "sits above the line",
+                size=12.5,
+                cls="label",
+                halo=True,
+            )
+        )
+    # Direct labels on the two points that matter, so the reader never has to trace to an axis.
+    if at_current is not None:
+        y_now = py(at_current.expected_cost)
+        parts.append(S.dot(px(current), y_now, 4.0, cls="inuse-dot", extra=' stroke="none"'))
+        parts.append(
+            S.text(
+                px(current) - 12,
+                y_now - 10,
+                f"{currency} {at_current.expected_cost:,.2f} per case",
+                anchor="end",
+                size=13,
+                mono=True,
+                cls="tick",
+                halo=True,
+            )
+        )
     parts.append(
         S.dot(
             px(belongs),
             py(per_case),
-            5.5,
+            4.5,
             cls="min-dot",
             tooltip=f"cost minimum at {S.fmt(belongs)}",
-            extra='stroke="none"',
+            extra=' stroke="none"',
+        )
+    )
+    parts.append(
+        S.text(
+            px(belongs) + 10,
+            py(per_case) + 18,
+            f"{currency} {per_case:,.2f} per case",
+            size=13,
+            mono=True,
+            cls="tick",
+            halo=True,
         )
     )
     parts.append(
         _threshold_line(
             px(current),
             y0=y_top,
-            y1=y_bottom,
+            y1=strip_bottom,
             label=f"in use {S.fmt(current)}",
             anchor="end",
             line_cls="inuse-line",
             label_cls="inuse-label",
-            dash="6 4",
+            dash="5 4",
         )
     )
     parts.append(
@@ -430,6 +481,19 @@ def _chart(screen: Screen) -> str:
             label_cls="belongs-label",
         )
     )
+    if ci_high > ci_low:
+        parts.append(
+            S.text(
+                x1,
+                LABEL_Y + 16,
+                f"shaded: 95% interval {S.fmt(ci_low)}–{S.fmt(ci_high)}",
+                anchor="end",
+                size=13,
+                mono=True,
+                cls="tick",
+                halo=True,
+            )
+        )
     parts.append(S.svg_close())
     return "".join(parts)
 
@@ -439,172 +503,179 @@ def _chart(screen: Screen) -> str:
 # --------------------------------------------------------------------------------------
 CSS = """\
 * { box-sizing: border-box; }
+/* Six colours in each scheme: surface, ink, muted, hairline, the one accent (the line the cost
+   minimum points at) and the failure hue. The line in use is drawn in ink, dashed. */
 :root {
-  --bg: #ffffff; --ink: #111418; --muted: #5f6773; --rule: #e3e7ed;
-  --accent: #1f5fd0; --accent-soft: rgba(31,95,208,.09);
-  --inuse: #96660a; --inuse-soft: rgba(150,102,10,.11);
-  --bad: #b3261e; --grid: #eceef3; --dist: #a9b1bf;
-  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  --bg: #ffffff; --ink: #1c1e21; --muted: #6b7280; --rule: #e5e7eb;
+  --belongs: #1d5fcf; --fail: #c5221f;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #0c0e12; --ink: #eef1f6; --muted: #9ba5b3; --rule: #262b33;
-    --accent: #6aa9ff; --accent-soft: rgba(106,169,255,.14);
-    --inuse: #e3a63c; --inuse-soft: rgba(227,166,60,.14);
-    --bad: #ff9187; --grid: #20242b; --dist: #4c545f;
+    --bg: #16181c; --ink: #e6e6e6; --muted: #9aa0a6; --rule: #2c2f36;
+    --belongs: #7fb0ff; --fail: #f28b82;
   }
 }
 html, body { margin: 0; background: var(--bg); color: var(--ink); }
-body {
-  font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, sans-serif;
-  -webkit-font-smoothing: antialiased;
-}
-main { max-width: 1180px; margin: 0 auto; padding: 18px 28px 11px; }
+body { font: 14px/1.5 var(--sans); -webkit-font-smoothing: antialiased; }
+main { max-width: 992px; margin: 0; padding: 20px 16px 16px; }
 
-/* One eyebrow, one claim, one line of body, then the evidence -- five clearly different sizes,
-   because every element at 15px is what makes a page unreadable. */
-.masthead { display: flex; align-items: baseline; gap: 8px 12px; flex-wrap: wrap; font-size: 12.5px; color: var(--muted); }
-.masthead .brand { font-size: 15px; font-weight: 700; letter-spacing: -0.02em; color: var(--ink); }
-.masthead .sep { color: var(--rule); }
+/* A technical report, not a landing page: a small title, a row of facts, then the evidence. Type
+   size, weight and hairline rules carry the hierarchy; nothing is boxed, tinted or shadowed. */
+header p { margin: 0; }
+.kicker { font-size: 12px; color: var(--muted); }
+.kicker .synthetic { color: var(--ink); }
+h1 { margin: 4px 0 0; font-size: 22px; line-height: 1.3; font-weight: 700; }
+h1 .answer { font-family: var(--mono); font-weight: 700; color: var(--belongs); }
+h2 { margin: 12px 0 6px; font-size: 16px; line-height: 1.4; font-weight: 700; padding-bottom: 4px; border-bottom: 1px solid var(--rule); }
+.facts { display: flex; flex-wrap: wrap; gap: 4px 0; margin-top: 8px; padding: 6px 0; border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); font-size: 13px; color: var(--muted); }
+.facts span.fact { padding-right: 10px; margin-right: 10px; border-right: 1px solid var(--rule); }
+.facts span.fact:last-child { border-right: 0; margin-right: 0; padding-right: 0; }
+code, .v { font-family: var(--mono); font-variant-numeric: tabular-nums; color: var(--ink); }
+.v.belongs { color: var(--belongs); font-weight: 600; }
 
-.claim h1 { margin: 12px 0 0; font-size: 29px; line-height: 1.16; letter-spacing: -0.022em; font-weight: 650; }
-.claim h1 em { font-style: normal; color: var(--accent); }
-.claim p { margin: 7px 0 0; font-size: 15px; color: var(--muted); max-width: 64ch; }
+/* The status badge carries the word, with a stroke; readable in greyscale, never colour alone. */
+.badge { display: inline-block; font: 600 11px/1.4 var(--sans); letter-spacing: .04em; padding: 0 6px; border: 1px solid currentColor; border-radius: 2px; vertical-align: 1px; }
+.badge.fail { color: var(--fail); }
+.badge.pass { color: var(--muted); }
 
-.row { display: grid; grid-template-columns: 290px minmax(0, 1fr); gap: 26px; margin-top: 18px; align-items: start; }
-
-.answer { border: 1px solid var(--accent); background: var(--accent-soft); border-radius: 12px; padding: 13px 16px 12px; }
-.eyebrow { font-size: 11.5px; font-weight: 650; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); }
-.answer .big { font-family: var(--mono); font-size: 46px; line-height: 1.02; font-weight: 600; letter-spacing: -0.03em; margin: 4px 0 3px; color: var(--accent); }
-.answer .cost { font-family: var(--mono); font-size: 15.5px; font-weight: 600; }
-.answer .ci { font-family: var(--mono); font-size: 12.5px; color: var(--muted); margin-top: 3px; }
-.answer .now { margin-top: 11px; padding-top: 10px; border-top: 1px solid var(--rule); display: flex; align-items: baseline; gap: 8px; }
-.answer .now .chip { font-family: var(--mono); font-size: 15px; font-weight: 600; color: var(--inuse); background: var(--inuse-soft); border-radius: 6px; padding: 2px 8px; }
-.answer .now .what { font-size: 12.5px; color: var(--muted); }
-
-table { width: 100%; border-collapse: collapse; }
-th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--rule); font-size: 13.5px; }
-th { font-size: 11.5px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); font-weight: 650; padding-top: 0; }
-td.num, th.num { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; }
-tbody tr:last-child td { border-bottom: 0; }
+table { width: 100%; border-collapse: collapse; margin: 2px 0 0; }
+th, td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--rule); vertical-align: top; line-height: 1.45; }
+th { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 600; }
+td.num, th.num { text-align: right; white-space: nowrap; }
+td.num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
 td.was { color: var(--muted); }
-td.now { color: var(--accent); font-weight: 600; }
-td.delta { color: var(--ink); }
-code { font-family: var(--mono); font-size: .93em; }
+td.now { font-weight: 600; }
 
-figure { margin: 12px 0 0; }
+figure { margin: 0; }
 figure svg { display: block; width: 100%; height: auto; }
-figcaption { margin-top: 5px; font-size: 12.5px; color: var(--muted); }
+figcaption { font-size: 12px; color: var(--muted); }
 
 /* Chart colours are classes, so the chart follows prefers-color-scheme like the page does. */
-.grid { stroke: var(--grid); stroke-width: 1; }
-.axis { stroke: var(--rule); stroke-width: 1.2; }
-text.tick { fill: var(--muted); }
-text.label { fill: var(--muted); }
-.curve { fill: none; stroke: var(--ink); stroke-width: 2.6; }
-.move-band { fill: var(--accent); opacity: .07; }
-.ci-band { fill: var(--accent); opacity: .06; }
-.dist { fill: var(--dist); }
-.min-dot { fill: var(--accent); stroke: none; }
-.inuse-line { stroke: var(--inuse); stroke-width: 2; }
-.belongs-line { stroke: var(--accent); stroke-width: 2.6; }
-text.inuse-label { fill: var(--inuse); }
-text.belongs-label { fill: var(--accent); }
+.grid { stroke: var(--rule); stroke-width: 1; }
+.axis { stroke: var(--muted); stroke-width: 1; }
+text.tick, text.label { fill: var(--muted); }
+.halo { paint-order: stroke; stroke: var(--bg); stroke-width: 4px; stroke-linejoin: round; }
+.curve { fill: none; stroke: var(--ink); stroke-width: 1.6; }
+.ci-band { fill: var(--belongs); opacity: .10; }
+.dist { fill: var(--muted); opacity: .45; }
+.min-dot { fill: var(--belongs); }
+.inuse-dot { fill: var(--ink); }
+.inuse-line { stroke: var(--ink); stroke-width: 1.4; }
+.belongs-line { stroke: var(--belongs); stroke-width: 2; }
+text.inuse-label { fill: var(--ink); }
+text.belongs-label { fill: var(--belongs); }
 
-footer { margin-top: 12px; padding-top: 9px; border-top: 1px solid var(--rule); display: flex; flex-wrap: wrap; gap: 4px 18px; font-size: 12.5px; color: var(--muted); }
-footer .fail { color: var(--bad); font-weight: 600; }
-footer .pass { color: var(--muted); }
+details { border-bottom: 1px solid var(--rule); }
+details > summary { cursor: pointer; padding: 6px 0; font-size: 14px; list-style: none; }
+details > summary::-webkit-details-marker { display: none; }
+details > summary::before { content: "+ "; color: var(--muted); font-family: var(--mono); }
+details[open] > summary::before { content: "- "; }
+details .body { padding: 2px 0 10px; font-size: 13px; color: var(--muted); }
+details .body p { margin: 0 0 4px; max-width: 90ch; }
+.fail-text { color: var(--fail); font-weight: 600; }
 
 @media (max-width: 900px) {
-  main { padding: 18px 16px 14px; }
-  .row { grid-template-columns: 1fr; gap: 16px; }
-  .claim h1 { font-size: 26px; }
-  .answer .big { font-size: 42px; }
   table { display: block; max-width: 100%; overflow-x: auto; }
-}
-/* A short window loses the page's breathing room before it loses the chart: a 13" laptop at its
-   default resolution is 1280x800, which is 100px less than the layout wants. */
-@media (max-height: 860px) {
-  main { padding: 12px 28px 8px; }
-  .claim h1 { font-size: 26px; }
-  .claim p { font-size: 14px; margin-top: 6px; }
-  .row { margin-top: 14px; }
-  .answer .big { font-size: 40px; }
-  footer { margin-top: 9px; padding-top: 7px; }
 }
 @media print {
   main { max-width: none; padding: 0; }
-  .answer { background: none; }
+  details { display: block; }
 }
 """
 
 
-def _answer(screen: Screen) -> str:
-    belongs = screen.result.threshold
-    current = screen.impact.current_threshold or CURRENT_THRESHOLD
-    delta = next(
-        (row.change for row in screen.impact.rows if row.label.startswith("cost per case")), ""
-    )
-    return (
-        '<div class="answer">'
-        '<div class="eyebrow">where the line belongs</div>'
-        f'<div class="big">{S.escape(S.fmt(belongs))}</div>'
-        f'<div class="cost">{S.escape(screen.impact.currency)} '
-        f"{screen.result.expected_cost_per_case:,.2f} per case"
-        f"{S.escape(' · ' + delta) if delta else ''}</div>"
-        f'<div class="ci">95% CI {S.escape(S.fmt(screen.result.ci_low))}–'
-        f"{S.escape(S.fmt(screen.result.ci_high))} · n={screen.result.n_records:,}</div>"
-        f'<div class="now"><span class="chip">in use {S.escape(S.fmt(current))}</span>'
-        '<span class="what">which is not where the cost minimum is</span></div>'
-        "</div>"
-    )
-
-
 def _impact_table(impact: ImpactTable) -> str:
     head = (
-        '<tr><th>metric</th><th class="num">in use</th>'
-        '<th class="num">at the minimum</th><th class="num">change</th></tr>'
+        '<tr><th>what changes</th><th class="num">line in use</th>'
+        '<th class="num">line at the cost minimum</th><th class="num">change</th></tr>'
     )
     rows = "".join(
         f'<tr><td>{S.escape(row.label)}</td><td class="num was">{S.escape(row.current)}</td>'
         f'<td class="num now">{S.escape(row.recommended)}</td>'
-        f'<td class="num delta">{S.escape(row.change)}</td></tr>'
+        f'<td class="num">{S.escape(row.change)}</td></tr>'
         for row in impact.rows
     )
     return f'<table class="impact"><thead>{head}</thead><tbody>{rows}</tbody></table>'
 
 
-def _footer(screen: Screen, provenance: str) -> str:
-    """The small print, including the two things a reader would otherwise have to guess.
+def _facts(screen: Screen) -> str:
+    """The row that answers the first questions before any table does: which line, which gate."""
+    current = screen.impact.current_threshold or CURRENT_THRESHOLD
+    result = screen.result
+    gate = (
+        '<span class="badge fail">FAIL</span>'
+        if screen.failures
+        else '<span class="badge pass">PASS</span>'
+    )
+    facts = (
+        f"drift gate {gate}",
+        f'line in use <span class="v">{S.escape(S.fmt(current))}</span>',
+        f'cost minimum <span class="v belongs">{S.escape(S.fmt(result.threshold))}</span>'
+        f' (95% <span class="v">{S.escape(S.fmt(result.ci_low))}–'
+        f"{S.escape(S.fmt(result.ci_high))}</span>)",
+        f'<span class="v">{screen.metrics.n:,}</span> labeled decisions of '
+        f'<span class="v">{S.escape(screen.question)}</span>',
+        f'action <span class="v">{S.escape(screen.question_label)}</span>',
+        f'<span class="v">{len(screen.dataset.questions)}</span> questions',
+    )
+    return '<p class="facts">' + "".join(f'<span class="fact">{f}</span>' for f in facts) + "</p>"
 
-    What "cost" counts, from the cost matrix itself, and the caveat that the same log's drift gate
-    fails: a threshold measured on a model that is drifting is a number with an expiry date.
+
+def _details(screen: Screen) -> str:
+    """The secondary evidence, one click away: what cost counts, and the drift caveat.
+
+    A threshold measured on a model that is drifting is a number with an expiry date, so the failing
+    gate is stated in full here as well as flagged at the top.
     """
     result = screen.result
     costs = (
-        f"cost: an auto-accept miss at {CURRENCY} {result.cost_false_accept:,.0f}, a review at "
-        f"{CURRENCY} {result.cost_escalate:,.0f} (synthetic matrix)"
+        f"Cost counts an auto-accept miss at {CURRENCY} {result.cost_false_accept:,.0f} and a "
+        f"review at {CURRENCY} {result.cost_escalate:,.0f}, from a synthetic cost matrix. The "
+        f"minimum is {CURRENCY} {result.expected_cost_per_case:,.2f} per case; the 95% bootstrap "
+        f"interval on where it sits is {S.fmt(result.ci_low)}–{S.fmt(result.ci_high)}, "
+        f"n={result.n_records:,}. Everything on this page is synthetic."
     )
     failure = screen.failures[0] if screen.failures else None
     gate = (
-        f'<span class="fail">caveat: this log fails the drift gate · {S.escape(failure.check)} '
-        f"+{S.fmt(failure.value, 3)} over the {S.fmt(failure.limit, 3)} limit</span>"
+        f'<span class="fail-text">This log fails the drift gate: {S.escape(failure.check)} '
+        f"+{S.fmt(failure.value, 3)} over the {S.fmt(failure.limit, 3)} limit</span> "
+        f"({S.escape(failure.detail)}). A threshold measured on a model that is changing has an "
+        "expiry date; move the line, and re-measure after the next model version ships."
         if failure is not None
-        else '<span class="pass">this log passes the drift gate</span>'
+        else "This log passes the drift gate."
     )
     return (
-        f"<footer><span>{S.escape(provenance)}</span><span>{S.escape(costs)}</span>{gate}</footer>"
+        "<details><summary>How cost is counted, and the interval on the recommendation</summary>"
+        f'<div class="body"><p>{S.escape(costs)}</p></div></details>'
+        "<details><summary>Why the drift gate "
+        f"{'fails' if failure is not None else 'passes'} on the same log</summary>"
+        f'<div class="body"><p>{gate}</p></div></details>'
     )
 
 
-def render_screen(screen: Screen, *, provenance: str) -> str:
-    """The whole page: one claim, one answer, one chart, one table."""
+def render_screen(screen: Screen, *, provenance: str, models: str) -> str:
+    """The whole page: a claim, a row of facts, the chart, the impact table, the small print."""
     current = screen.impact.current_threshold or CURRENT_THRESHOLD
     belongs = screen.result.threshold
     claim = (
-        f"The line belongs at <em>{S.escape(S.fmt(belongs))}</em>, not {S.escape(S.fmt(current))}."
+        f'The line belongs at <span class="answer">{S.escape(S.fmt(belongs))}</span>, '
+        f"not {S.escape(S.fmt(current))}."
         if belongs != current
         else f"The line in use, {S.escape(S.fmt(current))}, is where the cost minimum is."
+    )
+    delta = next(
+        (row.change for row in screen.impact.rows if row.label.startswith("cost per case")), ""
+    )
+    # A cost curve whose axis starts at its own minimum is the standard way to make a small effect
+    # look like a cliff, so the chart says so in words. Both numbers come from the curve itself.
+    costs = [p.expected_cost for p in screen.result.curve if p.expected_cost == p.expected_cost]
+    zoom_note = (
+        f"The vertical axis is truncated at {S.money(min(costs))} instead of zero, so the drop "
+        f"looks larger than it is: the whole effect is {delta} on cost per case."
+        if costs and delta
+        else ""
     )
     return (
         "<!doctype html>\n"
@@ -612,18 +683,20 @@ def render_screen(screen: Screen, *, provenance: str) -> str:
         '<meta name="viewport" content="width=device-width, initial-scale=1">'
         f"<title>jeval · {S.escape(screen.question)} · where the line belongs</title>"
         f"<style>{CSS}</style></head><body><main>"
-        '<div class="masthead"><span class="brand">jeval</span><span class="sep">·</span>'
-        f"<span>{S.escape(provenance)}</span></div>"
-        f'<div class="claim"><h1>{claim}</h1>'
-        "<p>One number decides whether a case is handled by the model or by a person. This is that "
-        f"number for <code>{S.escape(screen.question_label)}</code>, measured on the "
-        f"{screen.metrics.n:,} labeled decisions of its question.</p></div>"
-        f'<div class="row">{_answer(screen)}{_impact_table(screen.impact)}</div>'
+        f'<header><p class="kicker">jeval · <span class="synthetic">synthetic log</span> · '
+        f"{S.escape(provenance)} · {S.escape(models)}</p>"
+        f"<h1>{claim}</h1>"
+        f"{_facts(screen)}</header>"
+        "<h2>Cost per case against the threshold</h2>"
         f"<figure>{_chart(screen)}"
-        "<figcaption>Cost per case against the threshold, with both lines drawn where they stand. "
-        "The bars underneath are the confidence distribution: they are what moves when the line "
-        "moves.</figcaption></figure>"
-        f"{_footer(screen, provenance)}"
+        "<figcaption>The threshold is how sure the model has to be before it answers alone; both "
+        "lines are drawn where they stand. The shaded band is the 95% interval on the "
+        "recommendation. The bars underneath are the confidence distribution: they are what moves "
+        f"when the line moves. {S.escape(zoom_note)}</figcaption></figure>"
+        f"<h2>What moving the line buys{S.escape(' · cost per case ' + delta) if delta else ''}"
+        "</h2>"
+        f"{_impact_table(screen.impact)}"
+        f"{_details(screen)}"
         "</main></body></html>\n"
     )
 
@@ -644,11 +717,11 @@ def build_document() -> tuple[str, Screen]:
         screen = analyse(serving, candidate, costs_path)
     models = sorted({record.model for record in [*serving, *candidate]})
     provenance = (
-        f"synthetic log · {len(serving):,} decisions in production "
-        f"({screen.dataset.n_labeled_gold:,} labeled) · {len(screen.dataset.questions)} questions · "
-        f"{CURRENCY} at {MONTHLY_VOLUME:,.0f} cases a month · {models[-1]}"
+        f"{len(serving):,} decisions in production ({screen.dataset.n_labeled_gold:,} labeled) · "
+        f"{CURRENCY} at {MONTHLY_VOLUME:,.0f} cases a month"
     )
-    return render_screen(screen, provenance=provenance), screen
+    models_text = "models " + ", ".join(models)
+    return render_screen(screen, provenance=provenance, models=models_text), screen
 
 
 def main(argv: list[str]) -> int:
