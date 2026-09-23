@@ -60,6 +60,9 @@ ignore = ["RUF001", "RUF002", "RUF003"]
 # fully spelled module name repeated hundreds of times in geometry code.
 "jeval/report/*.py" = ["E501", "N812"]
 "jeval/report/charts/*.py" = ["E501", "N812"]
+# The example scripts that build a document do the same two things for the same two reasons: a
+# dashboard is CSS and JavaScript in a string, and it draws with the report's own SVG helpers.
+"examples/*.py" = ["E501", "N812"]
 "tests/*" = ["E501"]
 
 [tool.mypy]
