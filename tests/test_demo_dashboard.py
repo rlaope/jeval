@@ -87,15 +87,30 @@ def test_both_thresholds_are_drawn_and_named() -> None:
     assert html.count('class="min-dot"') == 1
     # The confidence distribution is what makes the line concrete.
     assert 'class="dist"' in html
+    # The 95% interval is drawn as a band, not only printed.
+    assert html.count('class="ci-band"') == 1
+    assert f"shaded: 95% interval {screen.result.ci_low:.2f}" in html
 
 
 def test_the_answer_is_the_loudest_number_on_the_page() -> None:
-    """Hierarchy, guarded: the recommendation is not one of three equal statistics."""
+    """Hierarchy, guarded: the recommendation is not one of three equal statistics.
+
+    The answer sits inside the page's only <h1>, the largest type on the page, in the one accent
+    colour; the line in use is stated beside it in plain ink, and again in the facts row and the
+    table, where it is deliberately quieter.
+    """
     html, screen = _script().build_document()
-    assert f'<div class="big">{screen.result.threshold:.2f}</div>' in html
-    assert 'class="eyebrow">where the line belongs' in html
-    # ... and the line in use is deliberately quieter, in the supporting table and the chip.
-    assert 'class="chip">in use' in html
+    belongs = f"{screen.result.threshold:.2f}"
+    current = f"{screen.impact.current_threshold:.2f}"
+    assert (
+        f'<h1>The line belongs at <span class="answer">{belongs}</span>, not {current}.</h1>'
+        in html
+    )
+    assert html.count('class="answer"') == 1, "one answer, stated once at the top"
+    assert f'line in use <span class="v">{current}</span>' in html
+    assert f'cost minimum <span class="v belongs">{belongs}</span>' in html
+    # The drift gate is answered by a word in a badge, never by colour alone.
+    assert 'class="badge fail">FAIL</span>' in html or 'class="badge pass">PASS</span>' in html
 
 
 def test_the_numbers_on_screen_are_the_computed_ones() -> None:
@@ -108,5 +123,8 @@ def test_the_numbers_on_screen_are_the_computed_ones() -> None:
     for failure in screen.failures:
         # The detail is escaped in the markup, so the check name and the limit are what to assert.
         assert "fails the drift gate" in html, "the drift caveat is not on the page"
+        assert 'class="badge fail">FAIL</span>' in html, (
+            "the failing gate is not flagged at the top"
+        )
         assert failure.check in html, "the drift gate's failing check is not on the page"
         assert f"over the {failure.limit:.3f} limit" in html
