@@ -8,6 +8,7 @@ document when the template does not emit it.
 
 from __future__ import annotations
 
+from jeval.report import svg as chart_svg
 from jeval.report.assets import REPORT_CSS, REPORT_JS, minify
 
 # --------------------------------------------------------------------------------------
@@ -30,6 +31,30 @@ def test_css_has_exactly_one_dark_mode_block() -> None:
     # The dark block overrides the palette; it must not be a second stylesheet.
     for variable in ("--bg:", "--ink:", "--muted:", "--rule:", "--accent:"):
         assert variable in dark
+
+
+def test_css_remaps_every_grey_the_chart_layer_paints() -> None:
+    """Dark mode is a palette swap, and a chart's presentation attribute is the one thing a
+    custom property cannot reach.
+
+    The dark block re-maps those greys by attribute selector, generated from the chart layer's
+    own constants. A grey that exists in only one of the two places is a curve that disappears on
+    a dark-mode reader's laptop, and nothing else in the suite would notice.
+    """
+    dark = REPORT_CSS.split("@media (prefers-color-scheme: dark)", 1)[1]
+    for grey in (
+        chart_svg.INK,
+        chart_svg.MUTED,
+        chart_svg.GRID,
+        chart_svg.DIAGONAL,
+        chart_svg.SHADE,
+    ):
+        assert grey in dark, f"{grey} is painted by the charts but not re-mapped for dark mode"
+    assert f'text[fill="{chart_svg.MUTED}"]' in dark
+    assert "figure svg" in dark
+    # Okabe-Ito carries meaning, so it is deliberately never re-mapped.
+    for hue in chart_svg.PALETTE:
+        assert hue not in dark, f"{hue} carries meaning and must not be re-mapped"
 
 
 def test_css_is_self_contained() -> None:

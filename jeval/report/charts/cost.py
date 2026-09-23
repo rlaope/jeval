@@ -12,12 +12,12 @@ from jeval.report.model import CostPoint, ImpactTable, ThresholdResult
 from jeval.report.svg import escape
 
 WIDTH = 660.0
-HEIGHT = 400.0
+HEIGHT = 430.0
 LEFT = 74.0
 RIGHT = 150.0
 TOP = 40.0
-BOTTOM = 66.0
-CURRENT_COLOUR = "#B00020"
+BOTTOM = 96.0
+CURRENT_COLOUR = S.ALERT
 
 # Impact-row label -> the key the report's JavaScript recomputes for that figure.
 FIGURE_KEYS: dict[str, str] = {
@@ -27,7 +27,9 @@ FIGURE_KEYS: dict[str, str] = {
     "monthly cost": "cost_per_month",
     "cost per month": "cost_per_month",
 }
-MIN_COLOUR = "#111111"
+# The minimum is the mark the report is arguing for, so it wears the accent, not the ink: one
+# colour in this document means "this is the proposal", the other means "this is what you run".
+MIN_COLOUR = S.ACCENT
 
 
 def _finite(points: list[CostPoint]) -> list[CostPoint]:
@@ -41,12 +43,18 @@ def render_cost_curve(
     width: float = WIDTH,
     height: float = HEIGHT,
     title: str | None = None,
+    currency: str = "",
 ) -> str:
     """Expected cost per case against threshold, with its components stacked."""
     points = _finite(list(result.curve))
     heading = title or f"Expected cost per case · {result.action}"
     if not points:
         return _empty(width, heading, "No cost curve: this action has too few labeled decisions.")
+
+    def amount(value: float) -> str:
+        compact = S.money(value)
+        return f"{currency} {compact}" if currency else compact
+
     thresholds = [point.threshold for point in points]
     costs = [point.expected_cost for point in points]
     lo, hi = min(costs), max(costs)
@@ -56,11 +64,17 @@ def render_cost_curve(
 
     desc = (
         f"Expected cost per case across {len(points)} candidate thresholds for the action "
-        f"{result.action}. Minimum at {S.fmt(result.threshold)} with {S.money(result.expected_cost_per_case)} "
-        f"per case over {result.n_records} labeled decisions."
+        f"{result.action}. Minimum at {S.fmt(result.threshold)} with "
+        f"{amount(result.expected_cost_per_case)} per case over {result.n_records} labeled "
+        f"decisions."
     )
     parts: list[str] = [S.svg_open(width, height, title=heading, desc=desc, cls="chart")]
-    parts.append(S.text(LEFT, 20, heading, size=12.5, weight=600))
+    # The component lines are clipped to the plot: the escalation share keeps rising after the
+    # total has turned back down, and an unclipped line would draw over the flat-region label.
+    clip_id = f"cost-clip-{S.slug(result.action)}"
+    parts.append(
+        S.defs(S.clip_rect(clip_id, LEFT, TOP, width - RIGHT - LEFT, height - BOTTOM - TOP))
+    )
 
     if result.flat_region is not None:
         flat_lo, flat_hi = result.flat_region
@@ -74,7 +88,7 @@ def render_cost_curve(
                 x(flat_hi),
                 y0=TOP,
                 y1=height - BOTTOM,
-                fill="#f4f4f4",
+                fill=S.SHADE,
                 label="flat region — anything here is fine",
                 label_x=caption_x,
                 label_y=TOP + 26,
@@ -89,6 +103,7 @@ def render_cost_curve(
     escalate = [
         (x(point.threshold), y(point.escalate_cost / max(1, result.n_records))) for point in points
     ]
+    total = [(x(point.threshold), y(point.expected_cost)) for point in points]
     stacked = [
         (
             x(point.threshold),
@@ -96,11 +111,28 @@ def render_cost_curve(
         )
         for point in points
     ]
-    parts.append(S.polyline(stacked, stroke="#8a8a8a", width=1.2, dash="3 3"))
-    parts.append(S.polyline(escalate, stroke=S.PALETTE[1], width=1.4))
-    parts.append(
-        S.polyline([(x(p.threshold), y(p.expected_cost)) for p in points], stroke=S.INK, width=2.0)
+    # The stacked line earns its ink only when it is not the total line again. When a wrong
+    # auto-accept is the only cost, the two coincide, and a dashed line drawn under a solid one
+    # is noise pretending to be information.
+    stacked_adds = any(
+        abs(
+            point.expected_cost
+            - (point.escalate_cost + point.accept_cost) / max(1, result.n_records)
+        )
+        > 1e-9 * max(1.0, abs(point.expected_cost))
+        for point in points
     )
+    legend: list[tuple[str, str] | tuple[str, str, str]] = [
+        ("total expected cost", S.INK, "line"),
+        ("escalation cost", S.ACCENT, "line"),
+    ]
+    components = ""
+    if stacked_adds:
+        components += S.polyline(stacked, stroke=S.SOFT, width=1.2, dash="3 3")
+        legend.append(("accept + escalate", S.SOFT, "dash"))
+    components += S.polyline(escalate, stroke=S.ACCENT, width=1.4, cls="accent-stroke")
+    parts.append(S.clipped(clip_id, components))
+    parts.append(S.polyline(total, stroke=S.INK, width=2.0))
 
     minimum = min(points, key=lambda point: point.expected_cost)
     parts.append(
@@ -109,19 +141,21 @@ def render_cost_curve(
             y(minimum.expected_cost),
             4.6,
             fill=MIN_COLOUR,
+            cls="accent-dot",
             tooltip=(
                 f"minimum · threshold {S.fmt(minimum.threshold)} · "
-                f"{S.money(minimum.expected_cost)}/case · auto {S.pct(minimum.auto_rate, 0)}"
+                f"{amount(minimum.expected_cost)}/case · auto {S.pct(minimum.auto_rate, 0)}"
             ),
         )
     )
     parts.append(
         S.text(
             x(minimum.threshold) + 8,
-            y(minimum.expected_cost) - 8,
-            f"{S.money(minimum.expected_cost)}/case at {S.fmt(minimum.threshold)}",
+            y(minimum.expected_cost) - 10,
+            f"{amount(minimum.expected_cost)}/case at {S.fmt(minimum.threshold)}",
             size=11,
             weight=600,
+            halo=True,
         )
     )
 
@@ -144,45 +178,37 @@ def render_cost_curve(
                     y(current.expected_cost),
                     4.0,
                     fill=CURRENT_COLOUR,
+                    cls="alert-dot",
                     tooltip=(
                         f"current · threshold {S.fmt(current.threshold)} · "
-                        f"{S.money(current.expected_cost)}/case · auto {S.pct(current.auto_rate, 0)}"
+                        f"{amount(current.expected_cost)}/case · auto {S.pct(current.auto_rate, 0)}"
                     ),
                 )
             )
-            gap = f"{S.money(current.expected_cost - minimum.expected_cost)}/case"
+            gap = amount(current.expected_cost - minimum.expected_cost)
             parts.append(
                 S.text(
                     x(current.threshold) + 8,
-                    y(current.expected_cost) + 16,
-                    f"{gap} worse than the minimum",
+                    y(current.expected_cost) + 18,
+                    f"{gap}/case worse than the minimum",
                     size=10.5,
                     fill=CURRENT_COLOUR,
+                    halo=True,
                 )
             )
 
-    parts.append(
-        S.legend(
-            [
-                ("total expected cost", S.INK),
-                ("escalation share", S.PALETTE[1]),
-                ("accept + escalate", "#8a8a8a"),
-            ],
-            x=LEFT,
-            y=height - 34,
-        )
-    )
+    parts.append(S.legend(legend, x=LEFT, y=height - 30))
     parts.append(
         S.text(
             LEFT,
-            height - 16,
+            height - 12,
             (
                 f"{result.n_records} labeled decisions · "
                 f"CI {S.fmt(result.ci_low)}-{S.fmt(result.ci_high)} · "
                 + (
                     "costs: accept "
-                    f"{S.money(result.cost_false_accept)}, escalate {S.money(result.cost_escalate)}, "
-                    f"miss {S.money(result.cost_false_reject)}"
+                    f"{amount(result.cost_false_accept)}, escalate "
+                    f"{amount(result.cost_escalate)}, miss {amount(result.cost_false_reject)}"
                 )
             ),
             size=10.5,
@@ -190,7 +216,15 @@ def render_cost_curve(
         )
     )
     parts.append(S.axis_x(x, y=height - BOTTOM, tick_values=x_ticks, title="confidence threshold"))
-    parts.append(S.axis_y(y, x=LEFT, tick_values=y_ticks, format_=S.money, title="cost per case"))
+    parts.append(
+        S.axis_y(
+            y,
+            x=LEFT,
+            tick_values=y_ticks,
+            format_=S.money,
+            title=f"cost per case ({currency})" if currency else "cost per case",
+        )
+    )
     parts.append(S.svg_close())
     return "".join(parts)
 
@@ -227,16 +261,23 @@ def _slider_figures(
     Driven by the threshold result rather than by whichever impact rows happen to exist: the
     script updates every ``data-jeval-value`` it finds, so a figure that is never emitted is a
     control that silently does nothing.
+
+    ``tests/test_report_wiring.py`` and the inline script in :mod:`jeval.report.assets` must agree
+    on both the keys and the formatting: the readout sits directly under the impact table, and two
+    spellings of the same number read as two different numbers.
     """
     volume = impact.monthly_volume
+    currency = f"{impact.currency} " if impact.currency else ""
     figures: list[tuple[str, str, str]] = []
     if result is not None and result.curve:
         per_case = result.expected_cost_per_case
-        figures.append(("auto rate", "auto_rate", S.pct(result.auto_rate, 0)))
-        figures.append(("accuracy (auto)", "accuracy_auto", S.pct(result.accuracy_auto, 0)))
-        figures.append(("cost per case", "cost_per_case", S.money(per_case)))
+        figures.append(("auto rate", "auto_rate", f"{result.auto_rate:.0%}"))
+        figures.append(("accuracy (auto)", "accuracy_auto", f"{result.accuracy_auto:.0%}"))
+        figures.append(("cost per case", "cost_per_case", f"{currency}{per_case:,.2f}"))
         if volume:
-            figures.append(("cost per month", "cost_per_month", S.money(per_case * volume)))
+            figures.append(
+                ("cost per month", "cost_per_month", f"{currency}{S.money(per_case * volume)}")
+            )
             figures.append(("auto per month", "auto_per_month", S.money(result.auto_rate * volume)))
             figures.append(
                 (
@@ -294,25 +335,27 @@ def impact_table_html(
     volume = (
         '<label class="volume">monthly cases '
         f'<input type="number" min="0" step="100" value="{int(impact.monthly_volume or 0)}" '
-        f'id="{escape(slider_id)}-volume" data-currency="{escape(impact.currency)}"></label>'
+        f'id="{escape(slider_id)}-volume"></label>'
         if impact.monthly_volume is not None
         else ""
     )
     slider = (
-        f'<div class="slider-block" data-jeval-action="{escape(action)}">'
-        f'<label for="{escape(slider_id)}">try another threshold: '
+        f'<div class="slider" data-jeval-action="{escape(action)}" '
+        f'data-currency="{escape(impact.currency)}">'
+        '<div class="slider-head">'
+        f'<label for="{escape(slider_id)}">try another threshold</label>'
         f'<output data-jeval-threshold for="{escape(slider_id)}" class="num">'
-        f"{S.fmt(impact.recommended_threshold)}</output></label>"
+        f"{S.fmt(impact.recommended_threshold)}</output>"
+        "</div>"
         f'<input type="range" id="{escape(slider_id)}" min="0" max="1" step="0.01" '
         f'value="{impact.recommended_threshold:.2f}" data-action="threshold">'
+        '<div class="scale"><span>0.00</span><span>1.00</span></div>'
+        + volume
         + (f'<div class="figures">{figures_markup}</div>' if figures_markup else "")
         + '<p class="note">Exploration only: the report never writes thresholds.yaml. '
         "Confirm a value with <code>jeval threshold</code>.</p></div>"
     )
-    return (
-        f'<table class="impact"><thead>{head}</thead><tbody>{body}</tbody></table>'
-        f"{note}{volume}{slider}"
-    )
+    return f'<table class="impact"><thead>{head}</thead><tbody>{body}</tbody></table>{note}{slider}'
 
 
 def render_cost_section(
@@ -323,9 +366,15 @@ def render_cost_section(
     slider_id: str = "threshold-slider",
 ) -> str:
     """Curve, its data table, and the impact table when one exists."""
-    chart = render_cost_curve(result, current_threshold=current_threshold)
+    currency = impact.currency if impact is not None else ""
+    chart = render_cost_curve(result, current_threshold=current_threshold, currency=currency)
+    caption = (
+        "<figcaption>The lowest point of the curve is the recommendation. The shaded band is "
+        "the flat region — thresholds inside it cost the same within what this sample can "
+        "resolve.</figcaption>"
+    )
     if not _finite(list(result.curve)):
-        return f"<figure>{chart}</figure>"
+        return f"<figure>{chart}{caption}</figure>"
     table = S.details_table(
         COST_HEADERS, cost_table_rows(result), summary="Every threshold in the sweep"
     )

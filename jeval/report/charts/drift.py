@@ -16,7 +16,7 @@ WIDTH = 660.0
 LEFT = 62.0
 RIGHT = 24.0
 BOTTOM = 70.0
-CHANGE_COLOUR = "#D55E00"
+CHANGE_COLOUR = S.ALERT
 
 
 def render_ece_series(view: DriftView, *, width: float = WIDTH, height: float = 320.0) -> str:
@@ -95,7 +95,7 @@ def render_ece_series(view: DriftView, *, width: float = WIDTH, height: float = 
     )
     parts.append(
         S.legend(
-            [("ECE by slice", S.INK), ("model changed", CHANGE_COLOUR)],
+            [("ECE by slice", S.INK, "dot"), ("model changed", CHANGE_COLOUR, "dash")],
             x=LEFT,
             y=height - 10,
         )
@@ -134,13 +134,22 @@ def render_overlay(
     parts.append(S.grid_x(x, ticks, y0=plot_top, y1=plot_bottom))
     parts.append(S.grid_y(y, ticks, x0=LEFT, x1=width - RIGHT))
     parts.append(S.line(x(0.0), y(0.0), x(1.0), y(1.0), stroke=S.DIAGONAL, width=1.2, dash="5 4"))
-    for metrics, colour, opacity in ((baseline, S.PALETTE[0], 0.45), (current, S.INK, 1.0)):
+    for metrics, colour, opacity, dash in (
+        (baseline, S.SOFT, 0.85, "5 4"),
+        (current, S.INK, 1.0, ""),
+    ):
         curve = [
             (x(min(max(b.mean_confidence, 0.0), 1.0)), y(min(max(b.accuracy, 0.0), 1.0)))
             for b in metrics.bins
         ]
         parts.append(
-            S.polyline(curve, stroke=colour, width=2.0 if opacity == 1.0 else 1.4, opacity=opacity)
+            S.polyline(
+                curve,
+                stroke=colour,
+                width=2.0 if opacity == 1.0 else 1.6,
+                opacity=opacity,
+                dash=dash,
+            )
         )
         for cal_bin, (px, py) in zip(metrics.bins, curve, strict=True):
             parts.append(
@@ -159,16 +168,20 @@ def render_overlay(
                 x(threshold),
                 y0=plot_top,
                 y1=plot_bottom,
-                label=f"threshold {S.fmt(threshold)}",
-                colour="#B00020",
+                label=f"line in use {S.fmt(threshold)}",
+                colour=S.ALERT,
                 label_y=plot_top - 6,
             )
         )
     parts.append(
         S.legend(
             [
-                (f"{baseline_label} (ECE {S.fmt(baseline.ece, 3)}, n={baseline.n})", S.PALETTE[0]),
-                (f"{current_label} (ECE {S.fmt(current.ece, 3)}, n={current.n})", S.INK),
+                (
+                    f"{baseline_label} (ECE {S.fmt(baseline.ece, 3)}, n={baseline.n})",
+                    S.SOFT,
+                    "dash",
+                ),
+                (f"{current_label} (ECE {S.fmt(current.ece, 3)}, n={current.n})", S.INK, "dot"),
             ],
             x=LEFT,
             y=height - 12,
@@ -268,14 +281,27 @@ def render_drift_section(
             )
             + "</ul></div>"
         )
-    parts.append(f"<figure>{render_ece_series(view)}</figure>")
+    parts.append(
+        "<figure>"
+        f"{render_ece_series(view)}"
+        "<figcaption>Expected calibration error per slice. The dashed rule marks the slice where "
+        "the model changed — the break in the series is the evidence, not the label.</figcaption>"
+        "</figure>"
+    )
     if baseline_metrics is not None and current_metrics is not None:
         parts.append(
-            f"<figure>{render_overlay(baseline_metrics, current_metrics, baseline_label=view.baseline_label, current_label=view.current_label, threshold=threshold)}</figure>"
+            f"<figure>{render_overlay(baseline_metrics, current_metrics, baseline_label=view.baseline_label, current_label=view.current_label, threshold=threshold)}"
+            "<figcaption>The same two slices as reliability curves. Two curves pulling apart is "
+            "drift; one curve sitting below the dashed diagonal is overconfidence.</figcaption>"
+            "</figure>"
         )
     steps = render_threshold_steps(view)
     if steps:
-        parts.append(f"<figure>{steps}</figure>")
+        parts.append(
+            f"<figure>{steps}"
+            "<figcaption>A step means the cost-optimal line moved for that slice.</figcaption>"
+            "</figure>"
+        )
     parts.append(
         S.details_table(
             ("Slice", "Model", "Start", "End", "n", "ECE", "Threshold", "Auto rate"),

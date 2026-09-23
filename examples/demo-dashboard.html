@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>jeval · intent · where the line belongs</title><style>* { box-sizing: border-box; }
+:root {
+  --bg: #ffffff; --ink: #111418; --muted: #5f6773; --rule: #e3e7ed;
+  --accent: #1f5fd0; --accent-soft: rgba(31,95,208,.09);
+  --inuse: #96660a; --inuse-soft: rgba(150,102,10,.11);
+  --bad: #b3261e; --grid: #eceef3; --dist: #a9b1bf;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0c0e12; --ink: #eef1f6; --muted: #9ba5b3; --rule: #262b33;
+    --accent: #6aa9ff; --accent-soft: rgba(106,169,255,.14);
+    --inuse: #e3a63c; --inuse-soft: rgba(227,166,60,.14);
+    --bad: #ff9187; --grid: #20242b; --dist: #4c545f;
+  }
+}
+html, body { margin: 0; background: var(--bg); color: var(--ink); }
+body {
+  font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+main { max-width: 1180px; margin: 0 auto; padding: 18px 28px 11px; }
+
+/* One eyebrow, one claim, one line of body, then the evidence -- five clearly different sizes,
+   because every element at 15px is what makes a page unreadable. */
+.masthead { display: flex; align-items: baseline; gap: 8px 12px; flex-wrap: wrap; font-size: 12.5px; color: var(--muted); }
+.masthead .brand { font-size: 15px; font-weight: 700; letter-spacing: -0.02em; color: var(--ink); }
+.masthead .sep { color: var(--rule); }
+
+.claim h1 { margin: 12px 0 0; font-size: 29px; line-height: 1.16; letter-spacing: -0.022em; font-weight: 650; }
+.claim h1 em { font-style: normal; color: var(--accent); }
+.claim p { margin: 7px 0 0; font-size: 15px; color: var(--muted); max-width: 64ch; }
+
+.row { display: grid; grid-template-columns: 290px minmax(0, 1fr); gap: 26px; margin-top: 18px; align-items: start; }
+
+.answer { border: 1px solid var(--accent); background: var(--accent-soft); border-radius: 12px; padding: 13px 16px 12px; }
+.eyebrow { font-size: 11.5px; font-weight: 650; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); }
+.answer .big { font-family: var(--mono); font-size: 46px; line-height: 1.02; font-weight: 600; letter-spacing: -0.03em; margin: 4px 0 3px; color: var(--accent); }
+.answer .cost { font-family: var(--mono); font-size: 15.5px; font-weight: 600; }
+.answer .ci { font-family: var(--mono); font-size: 12.5px; color: var(--muted); margin-top: 3px; }
+.answer .now { margin-top: 11px; padding-top: 10px; border-top: 1px solid var(--rule); display: flex; align-items: baseline; gap: 8px; }
+.answer .now .chip { font-family: var(--mono); font-size: 15px; font-weight: 600; color: var(--inuse); background: var(--inuse-soft); border-radius: 6px; padding: 2px 8px; }
+.answer .now .what { font-size: 12.5px; color: var(--muted); }
+
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--rule); font-size: 13.5px; }
+th { font-size: 11.5px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); font-weight: 650; padding-top: 0; }
+td.num, th.num { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; }
+tbody tr:last-child td { border-bottom: 0; }
+td.was { color: var(--muted); }
+td.now { color: var(--accent); font-weight: 600; }
+td.delta { color: var(--ink); }
+code { font-family: var(--mono); font-size: .93em; }
+
+figure { margin: 12px 0 0; }
+figure svg { display: block; width: 100%; height: auto; }
+figcaption { margin-top: 5px; font-size: 12.5px; color: var(--muted); }
+
+/* Chart colours are classes, so the chart follows prefers-color-scheme like the page does. */
+.grid { stroke: var(--grid); stroke-width: 1; }
+.axis { stroke: var(--rule); stroke-width: 1.2; }
+text.tick { fill: var(--muted); }
+text.label { fill: var(--muted); }
+.curve { fill: none; stroke: var(--ink); stroke-width: 2.6; }
+.move-band { fill: var(--accent); opacity: .07; }
+.ci-band { fill: var(--accent); opacity: .06; }
+.dist { fill: var(--dist); }
+.min-dot { fill: var(--accent); stroke: none; }
+.inuse-line { stroke: var(--inuse); stroke-width: 2; }
+.belongs-line { stroke: var(--accent); stroke-width: 2.6; }
+text.inuse-label { fill: var(--inuse); }
+text.belongs-label { fill: var(--accent); }
+
+footer { margin-top: 12px; padding-top: 9px; border-top: 1px solid var(--rule); display: flex; flex-wrap: wrap; gap: 4px 18px; font-size: 12.5px; color: var(--muted); }
+footer .fail { color: var(--bad); font-weight: 600; }
+footer .pass { color: var(--muted); }
+
+@media (max-width: 900px) {
+  main { padding: 18px 16px 14px; }
+  .row { grid-template-columns: 1fr; gap: 16px; }
+  .claim h1 { font-size: 26px; }
+  .answer .big { font-size: 42px; }
+  table { display: block; max-width: 100%; overflow-x: auto; }
+}
+/* A short window loses the page's breathing room before it loses the chart: a 13" laptop at its
+   default resolution is 1280x800, which is 100px less than the layout wants. */
+@media (max-height: 860px) {
+  main { padding: 12px 28px 8px; }
+  .claim h1 { font-size: 26px; }
+  .claim p { font-size: 14px; margin-top: 6px; }
+  .row { margin-top: 14px; }
+  .answer .big { font-size: 40px; }
+  footer { margin-top: 9px; padding-top: 7px; }
+}
+@media print {
+  main { max-width: none; padding: 0; }
+  .answer { background: none; }
+}
+</style></head><body><main><div class="masthead"><span class="brand">jeval</span><span class="sep">·</span><span>synthetic log · 905 decisions in production (780 labeled) · 4 questions · KRW at 20,000 cases a month · jev-1.14.0</span></div><div class="claim"><h1>The line belongs at <em>0.75</em>, not 0.60.</h1><p>One number decides whether a case is handled by the model or by a person. This is that number for <code>auto_refund</code>, measured on the 244 labeled decisions of its question.</p></div><div class="row"><div class="answer"><div class="eyebrow">where the line belongs</div><div class="big">0.75</div><div class="cost">KRW 1,737.70 per case · -9.8%</div><div class="ci">95% CI 0.74–0.93 · n=244</div><div class="now"><span class="chip">in use 0.60</span><span class="what">which is not where the cost minimum is</span></div></div><table class="impact"><thead><tr><th>metric</th><th class="num">in use</th><th class="num">at the minimum</th><th class="num">change</th></tr></thead><tbody><tr><td>confidence threshold</td><td class="num was">0.60</td><td class="num now">0.75</td><td class="num delta">+0.15</td></tr><tr><td>auto rate</td><td class="num was">33%</td><td class="num now">30%</td><td class="num delta">-2.9 pt</td></tr><tr><td>accuracy (auto)</td><td class="num was">85%</td><td class="num now">91%</td><td class="num delta">+5.4 pt</td></tr><tr><td>cost per case</td><td class="num was">KRW 1,926.23</td><td class="num now">KRW 1,737.70</td><td class="num delta">-9.8%</td></tr><tr><td>monthly cost</td><td class="num was">KRW 38,524,590.16</td><td class="num now">KRW 34,754,098.36</td><td class="num delta">-9.8%</td></tr></tbody></table></div><figure><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1120.00 340.00" class="hero" role="img" aria-label="Expected cost per case against the threshold, with the line in use and the line the cost minimum points at" preserveAspectRatio="xMidYMid meet"><title>Expected cost per case against the threshold, with the line in use and the line the cost minimum points at</title><desc>Cost per case is lowest at threshold 0.75, where it is 1.7k, and higher at the 0.60 currently in use. The bars below the curve show how many decisions sit in each confidence range.</desc><rect x="685.20" y="34.00" width="151.80" height="190.00" class="move-band" fill="none"stroke="none"/><rect x="826.88" y="34.00" width="192.28" height="190.00" class="ci-band" fill="none"stroke="none"/><line x1="78.00" y1="221.66" x2="1090.00" y2="221.66" stroke="#1a1d23" stroke-width="1.00" class="grid"/><text x="66.00" y="226.16" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="13.0" font-weight="400" fill="#1a1d23" class="tick">1.7k</text><line x1="78.00" y1="166.78" x2="1090.00" y2="166.78" stroke="#1a1d23" stroke-width="1.00" class="grid"/><text x="66.00" y="171.28" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="13.0" font-weight="400" fill="#1a1d23" class="tick">1.8k</text><line x1="78.00" y1="111.91" x2="1090.00" y2="111.91" stroke="#1a1d23" stroke-width="1.00" class="grid"/><text x="66.00" y="116.41" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="13.0" font-weight="400" fill="#1a1d23" class="tick">1.9k</text><line x1="78.00" y1="57.03" x2="1090.00" y2="57.03" stroke="#1a1d23" stroke-width="1.00" class="grid"/><text x="66.00" y="61.53" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="13.0" font-weight="400" fill="#1a1d23" class="tick">2.0k</text><line x1="78.00" y1="34.00" x2="78.00" y2="284.00" stroke="#1a1d23" stroke-width="1.00" stroke-opacity="0.75" class="grid"/><text x="78.00" y="304.00" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="13.0" font-weight="400" fill="#1a1d23" class="tick">0.00</text><line x1="331.00" y1="34.00" x2="331.00" y2="284.00" stroke="#1a1d23" stroke-width="1.00" stroke-opacity="0.75" class="grid"/><text x="331.00" y="304.00" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="13.0" font-weight="400" fill="#1a1d23" class="tick">0.25</text><line x1="584.00" y1="34.00" x2="584.00" y2="284.00" stroke="#1a1d23" stroke-width="1.00" stroke-opacity="0.75" class="grid"/><text x="584.00" y="304.00" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="13.0" font-weight="400" fill="#1a1d23" class="tick">0.50</text><line x1="837.00" y1="34.00" x2="837.00" y2="284.00" stroke="#1a1d23" stroke-width="1.00" stroke-opacity="0.75" class="grid"/><text x="837.00" y="304.00" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="13.0" font-weight="400" fill="#1a1d23" class="tick">0.75</text><line x1="1090.00" y1="34.00" x2="1090.00" y2="284.00" stroke="#1a1d23" stroke-width="1.00" stroke-opacity="0.75" class="grid"/><text x="1090.00" y="304.00" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="13.0" font-weight="400" fill="#1a1d23" class="tick">1.00</text><line x1="78.00" y1="224.00" x2="1090.00" y2="224.00" stroke="#1a1d23" stroke-width="1.00" class="axis"/><line x1="78.00" y1="34.00" x2="78.00" y2="224.00" stroke="#1a1d23" stroke-width="1.00" class="axis"/><line x1="78.00" y1="284.00" x2="1090.00" y2="284.00" stroke="#1a1d23" stroke-width="1.00" class="axis"/><text x="584.00" y="325.00" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', ui-sans-serif, Helvetica, Arial, sans-serif" font-size="13.5" font-weight="400" fill="#1a1d23" class="label">threshold: how sure the model has to be before it answers alone</text><text x="78.00" y="336.00" text-anchor="start" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', ui-sans-serif, Helvetica, Arial, sans-serif" font-size="12.5" font-weight="400" fill="#1a1d23" class="label">the band is the 95% interval on where the line belongs: 0.74–0.93</text><text x="20.00" y="129.00" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', ui-sans-serif, Helvetica, Arial, sans-serif" font-size="13.5" font-weight="400" fill="#1a1d23" class="label" transform="rotate(-90.0 20.00 129.00)">cost per case (KRW)</text><rect x="79.50" y="282.50" width="47.60" height="1.50" class="dist" rx="2.00" fill="none"stroke="none"/><rect x="130.10" y="282.50" width="47.60" height="1.50" class="dist" rx="2.00" fill="none"stroke="none"/><rect x="180.70" y="282.50" width="47.60" height="1.50" class="dist" rx="2.00" fill="none"stroke="none"/><rect x="231.30" y="282.50" width="47.60" height="1.50" class="dist" rx="2.00" fill="none"stroke="none"/><rect x="281.90" y="282.50" width="47.60" height="1.50" class="dist" rx="2.00" fill="none"stroke="none"/><rect x="332.50" y="282.50" width="47.60" height="1.50" class="dist" rx="2.00" fill="none"stroke="none"/><rect x="383.10" y="282.50" width="47.60" height="1.50" class="dist" rx="2.00" fill="none"stroke="none"/><rect x="433.70" y="282.50" width="47.60" height="1.50" class="dist" rx="2.00" fill="none"stroke="none"/><rect x="484.30" y="282.50" width="47.60" height="1.50" class="dist" rx="2.00" fill="none"stroke="none"/><rect x="534.90" y="282.50" width="47.60" height="1.50" class="dist" rx="2.00" fill="none"stroke="none"/><rect x="585.50" y="282.50" width="47.60" height="1.50" class="dist" rx="2.00" fill="none"stroke="none"/><rect x="636.10" y="282.50" width="47.60" height="1.50" class="dist" rx="2.00" fill="none"stroke="none"/><rect x="686.70" y="282.50" width="47.60" height="1.50" class="dist" rx="2.00" fill="none"stroke="none"/><rect x="737.30" y="280.45" width="47.60" height="3.55" class="dist" rx="2.00" fill="none"stroke="none"/><rect x="787.90" y="280.99" width="47.60" height="3.01" class="dist" rx="2.00" fill="none"stroke="none"/><rect x="838.50" y="279.08" width="47.60" height="4.92" class="dist" rx="2.00" fill="none"stroke="none"/><rect x="889.10" y="279.08" width="47.60" height="4.92" class="dist" rx="2.00" fill="none"stroke="none"/><rect x="939.70" y="278.26" width="47.60" height="5.74" class="dist" rx="2.00" fill="none"stroke="none"/><rect x="990.30" y="277.99" width="47.60" height="6.01" class="dist" rx="2.00" fill="none"stroke="none"/><rect x="1040.90" y="246.00" width="47.60" height="38.00" class="dist" rx="2.00" fill="none"stroke="none"/><text x="78.00" y="235.00" text-anchor="start" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', ui-sans-serif, Helvetica, Arial, sans-serif" font-size="13.0" font-weight="400" fill="#1a1d23" class="label">244 labeled decisions in these bands</text><path d="M78.00,97.51C83.06,97.51 83.06,97.51 88.12,97.51C93.18,97.51 93.18,97.51 98.24,97.51C103.30,97.51 103.30,97.51 108.36,97.51C113.42,97.51 113.42,97.51 118.48,97.51C123.54,97.51 123.54,97.51 128.60,97.51C133.66,97.51 133.66,97.51 138.72,97.51C143.78,97.51 143.78,97.51 148.84,97.51C153.90,97.51 153.90,97.51 158.96,97.51C164.02,97.51 164.02,97.51 169.08,97.51C174.14,97.51 174.14,97.51 179.20,97.51C184.26,97.51 184.26,97.51 189.32,97.51C194.38,97.51 194.38,97.51 199.44,97.51C204.50,97.51 204.50,97.51 209.56,97.51C214.62,97.51 214.62,97.51 219.68,97.51C224.74,97.51 224.74,97.51 229.80,97.51C234.86,97.51 234.86,97.51 239.92,97.51C244.98,97.51 244.98,97.51 250.04,97.51C255.10,97.51 255.10,97.51 260.16,97.51C265.22,97.51 265.22,97.51 270.28,97.51C275.34,97.51 275.34,97.51 280.40,97.51C285.46,97.51 285.46,97.51 290.52,97.51C295.58,97.51 295.58,97.51 300.64,97.51C305.70,97.51 305.70,97.51 310.76,97.51C315.82,97.51 315.82,97.51 320.88,97.51C325.94,97.51 325.94,97.51 331.00,97.51C336.06,97.51 336.06,97.51 341.12,97.51C346.18,97.51 346.18,97.51 351.24,97.51C356.30,97.51 356.30,97.51 361.36,97.51C366.42,97.51 366.42,97.51 371.48,97.51C376.54,97.51 376.54,97.51 381.60,97.51C386.66,97.51 386.66,97.51 391.72,97.51C396.78,97.51 396.78,97.51 401.84,97.51C406.90,97.51 406.90,97.51 411.96,97.51C417.02,97.51 417.02,97.51 422.08,97.51C427.14,97.51 427.14,97.51 432.20,97.51C437.26,97.51 437.26,97.51 442.32,97.51C447.38,97.51 447.38,97.51 452.44,97.51C457.50,97.51 457.50,97.51 462.56,97.51C467.62,97.51 467.62,97.51 472.68,97.51C477.74,97.51 477.74,97.51 482.80,97.51C487.86,97.51 487.86,97.51 492.92,97.51C497.98,97.51 497.98,97.51 503.04,97.51C508.10,97.51 508.10,97.51 513.16,97.51C518.22,97.51 518.22,97.51 523.28,97.51C528.34,97.51 528.34,97.51 533.40,97.51C538.46,97.51 538.46,97.51 543.52,97.51C548.58,97.51 548.58,97.51 553.64,97.51C558.70,97.51 558.70,97.51 563.76,97.51C568.82,97.51 568.82,97.51 573.88,97.51C578.94,97.51 578.94,97.51 584.00,97.51C589.06,97.51 589.06,97.51 594.12,97.51C599.18,97.51 599.18,97.51 604.24,97.51C609.30,97.51 609.30,97.51 614.36,97.51C619.42,97.51 619.42,97.51 624.48,97.51C629.54,97.51 629.54,97.51 634.60,97.51C639.66,97.51 639.66,97.51 644.72,97.51C649.78,97.51 649.78,97.51 654.84,97.51C659.90,97.51 659.90,97.51 664.96,97.51C670.02,97.51 670.02,97.51 675.08,97.51C680.14,97.51 680.14,97.51 685.20,97.51C690.26,97.51 690.26,97.51 695.32,97.51C700.38,97.51 700.38,97.51 705.44,97.51C710.50,97.51 710.50,97.51 715.56,97.51C720.62,97.51 720.62,97.51 725.68,97.51C730.74,97.51 730.74,97.51 735.80,97.51C740.86,97.51 740.86,97.51 745.92,97.51C750.98,97.51 750.98,97.51 756.04,97.51C761.10,97.51 761.10,97.51 766.16,97.51C771.22,97.51 771.22,97.51 776.28,97.51C781.34,97.51 781.34,138.00 786.40,138.00C791.46,138.00 791.46,138.00 796.52,138.00C801.58,138.00 801.58,138.00 806.64,138.00C811.70,138.00 811.70,160.49 816.76,160.49C821.82,160.49 821.82,160.49 826.88,160.49C831.94,160.49 831.94,200.97 837.00,200.97C842.06,200.97 842.06,196.47 847.12,196.47C852.18,196.47 852.18,191.97 857.24,191.97C862.30,191.97 862.30,191.97 867.36,191.97C872.42,191.97 872.42,191.97 877.48,191.97C882.54,191.97 882.54,178.48 887.60,178.48C892.66,178.48 892.66,173.98 897.72,173.98C902.78,173.98 902.78,169.48 907.84,169.48C912.90,169.48 912.90,164.98 917.96,164.98C923.02,164.98 923.02,160.49 928.08,160.49C933.14,160.49 933.14,155.99 938.20,155.99C943.26,155.99 943.26,155.99 948.32,155.99C953.38,155.99 953.38,151.49 958.44,151.49C963.50,151.49 963.50,173.98 968.56,173.98C973.62,173.98 973.62,191.97 978.68,191.97C983.74,191.97 983.74,178.48 988.80,178.48C993.86,178.48 993.86,173.98 998.92,173.98C1003.98,173.98 1003.98,182.98 1009.04,182.98C1014.10,182.98 1014.10,178.48 1019.16,178.48C1024.22,178.48 1024.22,169.48 1029.28,169.48C1034.34,169.48 1034.34,155.99 1039.40,155.99C1044.46,155.99 1044.46,146.99 1049.52,146.99C1054.58,146.99 1054.58,146.99 1059.64,146.99C1064.70,146.99 1064.70,146.99 1069.76,146.99C1074.82,146.99 1074.82,142.49 1079.88,142.49C1084.94,142.49 1084.94,57.03 1090.00,57.03" fill="none" stroke="#1a1d23" stroke-width="1.80" class="curve"/><circle cx="837.00" cy="200.97" r="5.50" fill="#1a1d23" class="min-dot"stroke="none"><title>cost minimum at 0.75</title></circle><line x1="685.20" y1="34.00" x2="685.20" y2="224.00" stroke="#1a1d23" stroke-width="1.00" stroke-dasharray="6 4" class="inuse-line"/><text x="675.20" y="22.00" text-anchor="end" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', ui-sans-serif, Helvetica, Arial, sans-serif" font-size="13.5" font-weight="650" fill="#1a1d23" class="inuse-label halo">in use 0.60</text><line x1="837.00" y1="34.00" x2="837.00" y2="284.00" stroke="#1a1d23" stroke-width="1.00" class="belongs-line"/><text x="847.00" y="22.00" text-anchor="start" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', ui-sans-serif, Helvetica, Arial, sans-serif" font-size="13.5" font-weight="650" fill="#1a1d23" class="belongs-label halo">where it belongs 0.75</text></svg><figcaption>Cost per case against the threshold, with both lines drawn where they stand. The bars underneath are the confidence distribution: they are what moves when the line moves.</figcaption></figure><footer><span>synthetic log · 905 decisions in production (780 labeled) · 4 questions · KRW at 20,000 cases a month · jev-1.14.0</span><span>cost: an auto-accept miss at KRW 12,000, a review at KRW 2,000 (synthetic matrix)</span><span class="fail">caveat: this log fails the drift gate · ece-increase +0.106 over the 0.050 limit</span></footer></main></body></html>

@@ -13,11 +13,11 @@ from jeval.calibration import CalibrationMetrics
 from jeval.report import svg as S
 
 WIDTH = 660.0
-HEIGHT = 430.0
+HEIGHT = 470.0
 LEFT = 62.0
 RIGHT = 18.0
 TOP = 34.0
-BOTTOM = 96.0
+BOTTOM = 136.0
 DENSITY_HEIGHT = 34.0
 MARGIN = S.MARGIN
 
@@ -55,22 +55,32 @@ def render_reliability(
         f"earned. Vertical bars are Wilson 95% intervals."
     )
     parts: list[str] = [S.svg_open(width, height, title=title, desc=desc, cls="chart")]
+    # The overconfident half is a triangle below the diagonal, not a band across the plot: the
+    # shape is the meaning, and a full-width rectangle would dominate the curve it is explaining.
     parts.append(
-        S.shaded_region(
-            plot_left,
-            plot_right,
-            y0=y(0.78),
-            y1=plot_bottom,
-            label="below this line the model is more confident than it is accurate",
-            label_x=(plot_left + plot_right) / 2.0,
-            label_y=plot_bottom - 12,
+        S.polygon(
+            [
+                (x(0.0), y(0.0)),
+                (x(1.0), y(1.0)),
+                (x(1.0), y(0.0)),
+            ]
+        )
+    )
+    parts.append(
+        S.text(
+            x(0.68),
+            y(0.22),
+            "overconfident",
+            anchor="middle",
+            size=10.5,
+            fill=S.MUTED,
+            halo=True,
         )
     )
     ticks = [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]
     parts.append(S.grid_x(x, ticks, y0=plot_top, y1=plot_bottom))
     parts.append(S.grid_y(y, ticks, x0=plot_left, x1=plot_right))
     parts.append(S.line(x(0.0), y(0.0), x(1.0), y(1.0), stroke=S.DIAGONAL, width=1.2, dash="5 4"))
-    parts.append(S.text(x(1.0) - 6, y(1.0) + 16, "perfect", anchor="end", size=10.5, fill=S.MUTED))
 
     n_max = max((cal_bin.n for cal_bin in metrics.bins), default=0)
     curve: list[tuple[float, float]] = []
@@ -78,7 +88,7 @@ def render_reliability(
         px = x(min(max(cal_bin.mean_confidence, 0.0), 1.0))
         py = y(min(max(cal_bin.accuracy, 0.0), 1.0))
         curve.append((px, py))
-        parts.append(S.error_bar(px, cal_bin.ci_low, cal_bin.ci_high, y, stroke="#8a8a8a"))
+        parts.append(S.error_bar(px, cal_bin.ci_low, cal_bin.ci_high, y, stroke=S.SOFT))
     parts.append(S.polyline(curve, stroke=S.INK, width=1.8))
     for cal_bin, (px, py) in zip(metrics.bins, curve, strict=True):
         tooltip = (
@@ -94,21 +104,29 @@ def render_reliability(
                 x(threshold),
                 y0=plot_top,
                 y1=plot_bottom,
-                label=f"threshold {S.fmt(threshold)}",
-                colour="#B00020",
+                label=f"line in use {S.fmt(threshold)}",
+                colour=S.ALERT,
                 label_y=plot_top - 8,
+                anchor="end" if threshold > 0.78 else "start",
             )
         )
 
-    strip_top = plot_bottom + 34
+    # Budget for the space under the plot, top to bottom: tick labels, the axis title, the density
+    # strip and its own label, then the legend. Overlapping these is what makes a chart look
+    # assembled rather than drawn, so the strip starts clear of the axis title.
+    strip_top = plot_bottom + 56
     parts.append(_density_strip(metrics, x, strip_top, DENSITY_HEIGHT))
     parts.append(S.axis_x(x, y=plot_bottom, tick_values=ticks, title="stated confidence"))
     parts.append(S.axis_y(y, x=plot_left, tick_values=ticks, title="observed accuracy"))
     parts.append(
         S.legend(
-            [("stated = actual", S.DIAGONAL), ("observed", S.INK), ("95% interval", "#8a8a8a")],
+            [
+                ("stated = actual", S.DIAGONAL, "dash"),
+                ("observed", S.INK, "dot"),
+                ("95% interval", S.SOFT, "line"),
+            ],
             x=plot_left,
-            y=height - 12,
+            y=height - 20,
         )
     )
     if subtitle:
@@ -137,11 +155,14 @@ def _density_strip(metrics: CalibrationMetrics, x: S.Scale, top: float, height: 
                 top + height - bar_h,
                 max(1.0, x(hi) - x(lo) - 1.0),
                 bar_h,
-                fill="#c9c9c9",
+                # Kept out of the palette: the strip is a backdrop, and an inline fill keeps it
+                # one shade of the page's own ink in either theme.
+                fill=S.DIAGONAL,
+                extra=' style="fill: var(--ink); fill-opacity: 0.14"',
             )
         )
     parts.append(
-        S.line(x.range[0], top + height, x.range[1], top + height, stroke=S.INK, width=1.0)
+        S.line(x.range[0], top + height, x.range[1], top + height, stroke=S.GRID, width=1.0)
     )
     busiest = max(buckets, key=lambda bucket: bucket[2])
     parts.append(
@@ -208,14 +229,19 @@ def render_reliability_section(
 ) -> str:
     """Chart plus its accessible data table, as one block."""
     chart = render_reliability(metrics, threshold=threshold, title=title, subtitle=subtitle)
+    caption = (
+        "<figcaption>Points below the dashed line are overconfident: the model claimed more "
+        "than it earned. The bars are 95% Wilson intervals, and the strip underneath shows "
+        "where the decisions pile up.</figcaption>"
+    )
     if metrics.n == 0:
-        return f"<figure>{chart}</figure>"
+        return f"<figure>{chart}{caption}</figure>"
     table = S.details_table(
         RELIABILITY_HEADERS,
         reliability_table_rows(metrics),
         summary="Data behind this curve",
     )
-    return f"<figure>{chart}{table}</figure>"
+    return f"<figure>{chart}{caption}{table}</figure>"
 
 
 def ci_span_note(metrics: CalibrationMetrics) -> str:

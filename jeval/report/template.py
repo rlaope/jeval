@@ -167,14 +167,23 @@ def render_document(
 
 
 def _header(model: ReportModel) -> str:
-    meta = [f"Generated {escape(model.generated_at)}"]
+    """Title, one line of intent, and the facts a reader needs to judge the sample.
+
+    The provenance items are separate spans rather than one ``·``-separated line: the demo note is
+    a paragraph's worth of text, and a single run-on line is read as boilerplate and skipped.
+    """
+    items = [f'<span class="meta-item">Generated {escape(model.generated_at)}</span>']
     if model.source_note:
-        meta.append(escape(model.source_note))
+        items.append(f'<span class="meta-item">{escape(model.source_note)}</span>')
     if model.demo_note:
-        meta.append(f"synthetic demo data: {escape(model.demo_note)}")
+        items.append(
+            f'<span class="meta-item">synthetic demo data: {escape(model.demo_note)}</span>'
+        )
     return (
         '<header class="report-header"><h1>jeval report</h1>'
-        f'<p class="meta">{" · ".join(meta)}</p></header>'
+        '<p class="lede">What this classifier&rsquo;s confidence is worth, and where the line '
+        "between the machine deciding and a human deciding belongs.</p>"
+        f'<p class="meta">{"".join(items)}</p></header>'
     )
 
 
@@ -183,7 +192,7 @@ def _verdict_section(model: ReportModel, summary: str) -> str:
     cards = "".join(
         '<div class="stat"><div class="k">'
         + escape(stat.label)
-        + '</div><div class="v">'
+        + '</div><div class="v num">'
         + escape(stat.value)
         + "</div>"
         + (f'<div class="s">{escape(stat.sub)}</div>' if stat.sub else "")
@@ -197,15 +206,20 @@ def _verdict_section(model: ReportModel, summary: str) -> str:
         + f'<p class="headline">{escape(verdict.headline)}</p>'
         + f'<p class="detail">{escape(verdict.detail)}</p>'
         + (f'<div class="stats">{cards}</div>' if cards else "")
+        + '<div class="verdict-actions">'
         + '<button type="button" id="copy-summary" class="copy" data-jeval-copy-summary '
         + 'data-copy-target="jeval-data">Copy summary</button>'
+        + "</div>"
         + "</section>"
     )
 
 
 def _reliability_section(blocks: Sequence[ReliabilityBlock]) -> str:
     if not blocks:
-        return '<section id="reliability"><h2>Reliability</h2><p class="note">No questions found.</p></section>'
+        return (
+            '<section id="reliability"><h2>Reliability</h2>'
+            '<p class="note">No questions found.</p></section>'
+        )
     single = len(blocks) == 1
     tabs = ""
     if not single:
@@ -221,17 +235,18 @@ def _reliability_section(blocks: Sequence[ReliabilityBlock]) -> str:
         )
     figures = []
     for index, block in enumerate(blocks):
-        body = [f"<h3>{escape(block.question_key)}</h3>"]
-        if block.subtitle:
-            body.append(f'<p class="note">{escape(block.subtitle)}</p>')
-        body.append(f'<p class="diag">{escape(block.diagnosis)}</p>')
-        body.append(
+        body = [
+            '<div class="block-head">'
+            f"<h3>{escape(block.question_key)}</h3>"
+            + (f'<p class="block-sub">{escape(block.subtitle)}</p>' if block.subtitle else "")
+            + "</div>",
+            f'<p class="diag">{escape(block.diagnosis)}</p>',
             reliability_charts.render_reliability_section(
                 block.metrics,
                 threshold=block.threshold,
                 title=f"Reliability · {block.question_key}",
-            )
-        )
+            ),
+        ]
         if block.silver_note:
             body.append(f'<p class="note">{escape(block.silver_note)}</p>')
         figures.append(
@@ -364,9 +379,14 @@ def _score_section(model: ReportModel) -> str:
         "a constant, and binary accuracy would call that a failure at every level while rank "
         "correlation calls it a success. Read the gap column — a systematically non-zero gap is "
         "bias, not noise.</p>"
-        f'<p class="metrics">MAE <strong>{view.mae:.3f}</strong> · RMSE '
-        f"<strong>{view.rmse:.3f}</strong> · Spearman rho <strong>{rho}</strong> · n "
-        f"<strong>{view.n}</strong></p>"
+        f'<div class="stats small">'
+        f'<div class="stat"><div class="k">MAE</div><div class="v num">{view.mae:.3f}</div></div>'
+        f'<div class="stat"><div class="k">RMSE</div><div class="v num">{view.rmse:.3f}</div></div>'
+        f'<div class="stat"><div class="k">Spearman rho</div>'
+        f'<div class="v num">{rho}</div></div>'
+        f'<div class="stat"><div class="k">Decisions</div>'
+        f'<div class="v num">{view.n}</div></div>'
+        "</div>"
         f"{table}{note}"
     )
 
@@ -452,13 +472,28 @@ def write_report(
 
 
 def build_blocks(
-    dataset: DatasetReport, *, thresholds: Mapping[str, float] | None = None
+    dataset: DatasetReport,
+    *,
+    thresholds: Mapping[str, float] | None = None,
+    actions: Mapping[str, str] | None = None,
 ) -> list[ReliabilityBlock]:
-    """One block per question, carrying the threshold that applies to it."""
+    """One block per question, carrying the threshold that applies to it.
+
+    ``actions`` names the action each question's line belongs to. Every question has its own line
+    and several questions can share an action, so the number on the chart is not always the number
+    in the verdict: without the action's name beside it, a reader sees two thresholds and assumes
+    one of them is wrong.
+    """
     thresholds = dict(thresholds or {})
+    actions = dict(actions or {})
     blocks: list[ReliabilityBlock] = []
     for question in dataset.questions:
         block_threshold = thresholds.get(question.question_key)
+        line_note = ""
+        if block_threshold is not None:
+            line_note = f" · line in use {S.fmt(block_threshold)}"
+            if actions.get(question.question_key):
+                line_note += f" ({actions[question.question_key]})"
         silver_note = ""
         if question.silver_metrics is not None and question.silver_metrics.n > 0:
             silver_note = (
@@ -471,8 +506,10 @@ def build_blocks(
                 metrics=question.metrics,
                 diagnosis=question.diagnosis,
                 threshold=block_threshold,
-                subtitle=f"{question.question_type} · {question.n_records} records · "
-                f"{question.n_unlabeled} unlabeled",
+                subtitle=(
+                    f"{question.question_type} · {question.n_records} records · "
+                    f"{question.n_unlabeled} unlabeled{line_note}"
+                ),
                 silver_note=silver_note,
             )
         )

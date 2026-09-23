@@ -31,11 +31,18 @@ PALETTE: tuple[str, ...] = (
     "#444444",
 )
 
-INK = "#111111"
-MUTED = "#666666"
-GRID = "#dddddd"
-DIAGONAL = "#999999"
-SHADE = "#f2f2f2"
+INK = "#1a1d23"
+MUTED = "#6b7280"
+GRID = "#e8eaee"
+DIAGONAL = "#a5acb8"
+SHADE = "#f2f4f7"
+SOFT = "#8a93a1"
+
+# Two semantic colours, kept out of the series palette: the mark the report argues for (the
+# recommended threshold) and the one it warns about (the line in use, a model change).
+# `assets.py` builds its dark-mode remap from the grey literals above, so move them together.
+ACCENT = "#2f5fd0"
+ALERT = "#b3261e"
 
 FONT_STACK = (
     "-apple-system, BlinkMacSystemFont, 'Segoe UI', ui-sans-serif, Helvetica, Arial, sans-serif"
@@ -176,12 +183,70 @@ def svg_close() -> str:
     return "</svg>"
 
 
-def rect(x: float, y: float, w: float, h: float, *, fill: str = "none", cls: str = "") -> str:
+def slug(value: str) -> str:
+    """A DOM-safe id fragment. Chart ids have to survive an arbitrary action or segment name."""
+    cleaned = "".join(
+        character if (character.isalnum() or character == "-") else "-"
+        for character in value.lower()
+    ).strip("-")
+    return cleaned or "chart"
+
+
+def defs(*parts: str) -> str:
+    """A ``<defs>`` block, omitted when there is nothing to declare."""
+    body = "".join(part for part in parts if part)
+    return f"<defs>{body}</defs>" if body else ""
+
+
+def clip_rect(clip_id: str, x: float, y: float, w: float, h: float) -> str:
+    """A rectangular clip region.
+
+    A component series can leave the plot's own range -- the escalation share grows without bound
+    as the threshold rises -- and an unclipped line then draws over the axis and the label above
+    it. Clipping says "this continues beyond here" without printing a number the scale cannot
+    support.
+    """
+    return f'<clipPath id="{escape(clip_id)}">{rect(x, y, w, h)}</clipPath>'
+
+
+def clipped(clip_id: str, body: str) -> str:
+    if not body:
+        return ""
+    return f'<g clip-path="url(#{escape(clip_id)})">{body}</g>'
+
+
+def rect(
+    x: float,
+    y: float,
+    w: float,
+    h: float,
+    *,
+    fill: str = "none",
+    cls: str = "",
+    extra: str = "",
+    rx: float | None = None,
+) -> str:
     class_attr = f' class="{cls}"' if cls else ""
+    radius = f' rx="{r2(rx)}"' if rx is not None else ""
     return (
         f'<rect x="{r2(x)}" y="{r2(y)}" width="{r2(max(0.0, w))}" '
-        f'height="{r2(max(0.0, h))}"{class_attr} fill="{fill}"/>'
+        f'height="{r2(max(0.0, h))}"{class_attr}{radius} fill="{fill}"{extra}/>'
     )
+
+
+def polygon(
+    points: Sequence[tuple[float, float]],
+    *,
+    fill: str = SHADE,
+    cls: str = "shade",
+    extra: str = "",
+) -> str:
+    """Closed shape; used for the region below the diagonal, which is a triangle, not a band."""
+    if not points:
+        return ""
+    coords = " ".join(f"{r2(x)},{r2(y)}" for x, y in points)
+    class_attr = f' class="{cls}"' if cls else ""
+    return f'<polygon points="{coords}"{class_attr} fill="{fill}"{extra}/>'
 
 
 def vband(
@@ -208,12 +273,14 @@ def line(
     width: float = 1.0,
     dash: str = "",
     opacity: float = 1.0,
+    cls: str = "",
 ) -> str:
     dash_attr = f' stroke-dasharray="{dash}"' if dash else ""
     opacity_attr = "" if opacity >= 1.0 else f' stroke-opacity="{opacity:.2f}"'
+    class_attr = f' class="{cls}"' if cls else ""
     return (
         f'<line x1="{r2(x1)}" y1="{r2(y1)}" x2="{r2(x2)}" y2="{r2(y2)}" '
-        f'stroke="{stroke}" stroke-width="{width:.2f}"{dash_attr}{opacity_attr}/>'
+        f'stroke="{stroke}" stroke-width="{width:.2f}"{dash_attr}{opacity_attr}{class_attr}/>'
     )
 
 
@@ -225,18 +292,20 @@ def polyline(
     dash: str = "",
     opacity: float = 1.0,
     smooth: bool = False,
+    cls: str = "",
 ) -> str:
     if not points:
         return ""
     dash_attr = f' stroke-dasharray="{dash}"' if dash else ""
     opacity_attr = "" if opacity >= 1.0 else f' stroke-opacity="{opacity:.2f}"'
+    class_attr = f' class="{cls}"' if cls else ""
     if smooth and len(points) > 2:
         d = _smooth_path(points)
     else:
         d = " ".join(f"{'M' if i == 0 else 'L'}{r2(x)},{r2(y)}" for i, (x, y) in enumerate(points))
     return (
         f'<path d="{d}" fill="none" stroke="{stroke}" stroke-width="{width:.2f}"'
-        f"{dash_attr}{opacity_attr}/>"
+        f"{dash_attr}{opacity_attr}{class_attr}/>"
     )
 
 
@@ -313,7 +382,7 @@ def shaded_region(
         return body
     lx = label_x if label_x is not None else (x0 + x1) / 2.0
     ly = label_y if label_y is not None else (y0 + y1) / 2.0
-    return body + text(lx, ly, label, anchor="middle", size=10.5, fill=MUTED)
+    return body + text(lx, ly, label, anchor="middle", size=10.5, fill=MUTED, halo=True)
 
 
 def text(
@@ -330,14 +399,21 @@ def text(
     rotate_at: tuple[float, float] | None = None,
     opacity: float = 1.0,
     cls: str = "",
+    halo: bool = False,
 ) -> str:
+    """One label.
+
+    ``halo`` draws the glyph outline in the page colour first, so an annotation that sits on top
+    of gridlines stays readable in both themes without a background box.
+    """
     family = MONO_STACK if mono else FONT_STACK
     transform = ""
     if rotate is not None:
         cx, cy = rotate_at if rotate_at else (x, y)
         transform = f' transform="rotate({rotate:.1f} {r2(cx)} {r2(cy)})"'
     opacity_attr = "" if opacity >= 1.0 else f' fill-opacity="{opacity:.2f}"'
-    class_attr = f' class="{cls}"' if cls else ""
+    classes = " ".join(part for part in (cls, "halo" if halo else "") if part)
+    class_attr = f' class="{classes}"' if classes else ""
     return (
         f'<text x="{r2(x)}" y="{r2(y)}" text-anchor="{anchor}" font-family="{family}" '
         f'font-size="{size:.1f}" font-weight="{weight}" fill="{fill}"{opacity_attr}{class_attr}'
@@ -412,14 +488,42 @@ def grid_y(scale: Scale, tick_values: Sequence[float], *, x0: float, x1: float) 
     return "".join(line(x0, scale(v), x1, scale(v), stroke=GRID, width=1.0) for v in tick_values)
 
 
-def legend(entries: Sequence[tuple[str, str]], *, x: float, y: float, size: float = 11.0) -> str:
-    """Legend as swatch + label pairs; never colour alone."""
+def legend(
+    entries: Sequence[tuple[str, str] | tuple[str, str, str]],
+    *,
+    x: float,
+    y: float,
+    size: float = 11.0,
+) -> str:
+    """Legend as sample + label pairs; never colour alone.
+
+    Each entry is ``(label, colour)`` or ``(label, colour, kind)``, where ``kind`` is one of
+    ``line`` (default), ``dash``, ``dot``, ``band`` or ``swatch``. The sample is drawn in the
+    same shape as the mark it explains: a legend that represents a curve with a square is a
+    legend a reader has to decode.
+    """
     parts: list[str] = []
     cursor = x
-    for label, colour in entries:
-        parts.append(rect(cursor, y - 9, 10, 10, fill=colour))
-        parts.append(text(cursor + 15, y - 1, label, size=size, fill=MUTED))
-        cursor += 15 + len(label) * size * 0.56 + 18
+    for entry in entries:
+        label, colour = entry[0], entry[1]
+        kind = entry[2] if len(entry) > 2 else "line"
+        top = y - 10.0
+        middle = y - 5.0
+        if kind == "swatch":
+            parts.append(rect(cursor, top, 11, 11, fill=colour))
+        elif kind == "band":
+            parts.append(rect(cursor, top, 14, 11, fill=colour, cls="shade"))
+        elif kind == "dot":
+            parts.append(line(cursor, middle, cursor + 16, middle, stroke=colour, width=1.6))
+            parts.append(dot(cursor + 8, middle, 3.0, fill=colour))
+        elif kind == "dash":
+            parts.append(
+                line(cursor, middle, cursor + 16, middle, stroke=colour, width=1.4, dash="4 3")
+            )
+        else:
+            parts.append(line(cursor, middle, cursor + 16, middle, stroke=colour, width=2.0))
+        parts.append(text(cursor + 23, y - 1, label, size=size, fill=MUTED))
+        cursor += 23 + len(label) * size * 0.56 + 16
     return "".join(parts)
 
 
@@ -429,14 +533,29 @@ def marker_line(
     y0: float,
     y1: float,
     label: str,
-    colour: str = INK,
+    colour: str = ALERT,
     dash: str = "4 3",
     label_y: float | None = None,
+    anchor: str = "start",
 ) -> str:
-    """A vertical rule with a label, used for the current threshold and model changes."""
+    """A vertical rule with a label, used for the current threshold and model changes.
+
+    The rule carries the alert classes rather than its own colour alone: a warning red that is
+    legible on paper is a smudge on a dark screen, so ``--alert`` has one value per theme and the
+    attribute stays as the fallback for a viewer that ignores the stylesheet.
+    """
     ty = label_y if label_y is not None else y0 + 11
-    return line(x, y0, x, y1, stroke=colour, width=1.4, dash=dash) + text(
-        x + 4, ty, label, size=10.5, fill=colour, weight=600
+    offset = 5.0 if anchor == "start" else -5.0
+    return line(x, y0, x, y1, stroke=colour, width=1.4, dash=dash, cls="alert-stroke") + text(
+        x + offset,
+        ty,
+        label,
+        anchor=anchor,
+        size=10.5,
+        fill=colour,
+        weight=600,
+        halo=True,
+        cls="alert-ink",
     )
 
 
