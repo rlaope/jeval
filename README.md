@@ -64,6 +64,13 @@ minimum points at, both drawn and named on the same chart, and what moving it bu
 `examples/make-demo-dashboard.py` from the same library, so every figure on it is computed, and a
 test rebuilds it and requires a byte-for-byte match.
 
+[**The workbench**](examples/workbench.html) puts both on one page: the one-screen argument first,
+and the full example report underneath it, folded into a native `<details>` so one file answers
+"show me everything" without a second window. It is built by `examples/make-workbench.py`, which
+reads `examples/report-example.html` at build time — no JavaScript, no external reference, and
+the same file every time it is rebuilt. [`examples/README.md`](examples/README.md) lists all three
+surfaces with the command that rebuilds each.
+
 ---
 
 ## Install
@@ -468,6 +475,9 @@ Three fields carry most of the value:
   service, step by step, with the output of every step
 * [`docs/skills.md`](docs/skills.md) — the agent skill pack, and where each host reads it
 * [`examples/report-example.html`](examples/report-example.html) — a real generated report
+* [`examples/demo-dashboard.html`](examples/demo-dashboard.html) — the whole argument on one screen
+* [`examples/workbench.html`](examples/workbench.html) — the screen and the report on one page
+* [`examples/README.md`](examples/README.md) — every example surface and the command that rebuilds it
 * [`examples/ci/drift.yml`](examples/ci/drift.yml) — a CI starting point
 * [`CHANGELOG.md`](CHANGELOG.md) — what changed, and why
 
