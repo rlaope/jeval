@@ -1,11 +1,16 @@
-"""The demo dashboard, and the walkthrough it exists for.
+"""The one-screen dashboard, and the recording it exists for.
 
 It is not a product surface -- the report is the product, and a dashboard is explicitly out of scope
 -- but it is a committed artefact that puts a dozen numbers on screen, so it is held to the standards
 of one: one self-contained file, nothing from the machine that built it, and every figure computed
 rather than typed. It can be held to one more thing the report cannot, because nothing in it depends
-on the clock or on an unseeded draw: the committed file is byte-identical to a fresh build, so the
-screenshots in the README cannot quietly stop matching the script.
+on the clock or on an unseeded draw: the committed file is byte-identical to a fresh build, so what
+is on screen in a recording cannot quietly stop matching the script.
+
+The other thing worth guarding is the argument. One screen makes one claim, and the claim has to
+survive the data: the screen draws the line that is in use and the line the cost minimum points at,
+says both in words, and puts the answer in the largest type on the page. Those are the properties a
+"calmer design" would quietly lose.
 """
 
 from __future__ import annotations
@@ -36,7 +41,7 @@ def _artifact() -> str:
 
 
 def test_the_committed_dashboard_is_what_the_script_builds() -> None:
-    html, _analysis = _script().build_document()
+    html, _screen = _script().build_document()
     assert html == _artifact(), (
         "examples/demo-dashboard.html no longer matches examples/make-demo-dashboard.py. "
         "Rebuild it: uv run python examples/make-demo-dashboard.py examples/demo-dashboard.html"
@@ -47,11 +52,8 @@ def test_the_dashboard_is_one_self_contained_file() -> None:
     html = _artifact()
     assert html.startswith("<!doctype html>")
     assert len(html.encode("utf-8")) < 1_048_576
-    for forbidden in ("<script src", 'src="http', 'href="http', "@import", "<link"):
+    for forbidden in ("<script", 'src="http', 'href="http', "@import", "<link", "url(http"):
         assert forbidden not in html, f"the dashboard reaches outside itself: {forbidden}"
-    # A clip path is the one url() reference, and it is local to the document.
-    assert 'clip-path="url(#' in html
-    assert "url(#" in html and "url(http" not in html
 
 
 def test_the_dashboard_carries_nothing_from_this_machine() -> None:
@@ -60,32 +62,51 @@ def test_the_dashboard_carries_nothing_from_this_machine() -> None:
         assert token not in html, f"the dashboard leaks {token!r}"
 
 
-def test_every_screenshot_in_the_walkthrough_has_its_words() -> None:
-    """Five steps, five surfaces: the script's narration is what the video is recorded to."""
+def test_one_screen_makes_one_argument() -> None:
+    """A single claim, a single page, and no navigation to lose the reader in."""
     html = _artifact()
-    assert html.count('data-scene="') == 5
-    for index in range(1, 6):
-        assert f'id="scene-{index}"' in html
-    assert html.count("<p data-caption>") == 1
-    assert html.count('data-narration="') == 5
-    # Every step's control that the recording touches is present.
-    for control in (
-        "threshold-live",
-        "cost-cursor",
-        "data-question-tab",
-        "data-target",
-        "data-step",
+    assert html.count("<h1>") == 1, "one screen carries one headline"
+    for removed in ("data-scene", "data-step", "data-narration", "data-caption"):
+        assert removed not in html, f"the walkthrough's {removed!r} is back"
+
+
+def test_both_thresholds_are_drawn_and_named() -> None:
+    """The claim is about a line, so the line has to be on the chart -- and labelled in words."""
+    html, screen = _script().build_document()
+    current = screen.impact.current_threshold
+    belongs = screen.result.threshold
+    assert current != belongs, "the demo is pointless if the two thresholds agree"
+    for label, text in (
+        ("in use", f"in use {current:.2f}"),
+        ("where it belongs", f"where it belongs {belongs:.2f}"),
     ):
-        assert control in html, f"the walkthrough lost its {control!r} control"
+        assert text in html, f"the chart does not say {label} ({text})"
+    # Two vertical lines and a labelled minimum: one per threshold, one at the cost minimum.
+    assert html.count('class="inuse-line"') == 1
+    assert html.count('class="belongs-line"') == 1
+    assert html.count('class="min-dot"') == 1
+    # The confidence distribution is what makes the line concrete.
+    assert 'class="dist"' in html
+
+
+def test_the_answer_is_the_loudest_number_on_the_page() -> None:
+    """Hierarchy, guarded: the recommendation is not one of three equal statistics."""
+    html, screen = _script().build_document()
+    assert f'<div class="big">{screen.result.threshold:.2f}</div>' in html
+    assert 'class="eyebrow">where the line belongs' in html
+    # ... and the line in use is deliberately quieter, in the supporting table and the chip.
+    assert 'class="chip">in use' in html
 
 
 def test_the_numbers_on_screen_are_the_computed_ones() -> None:
-    """Spot-check the three numbers the narration points at, against a fresh analysis."""
-    html, analysis = _script().build_document()
-    assert f"{analysis.result.threshold:.2f}" in html
-    assert f"{analysis.result.expected_cost_per_case:,.2f}" in html
-    for failure in analysis.failures:
-        question = failure.detail.split(":", 1)[0]
-        row = [line for line in html.split("<li>") if line.startswith(f"<span>{question}</span>")]
-        assert row, f"the drift panel does not show the question the gate failed on: {question}"
-        assert "FAIL" in row[0]
+    html, screen = _script().build_document()
+    assert f"{screen.result.expected_cost_per_case:,.2f}" in html
+    assert f"n={screen.result.n_records:,}" in html
+    assert f"{screen.metrics.n:,} labeled decisions" in html
+    for row in screen.impact.rows:
+        assert row.recommended in html, f"the impact table lost {row.label!r}"
+    for failure in screen.failures:
+        # The detail is escaped in the markup, so the check name and the limit are what to assert.
+        assert "fails the drift gate" in html, "the drift caveat is not on the page"
+        assert failure.check in html, "the drift gate's failing check is not on the page"
+        assert f"over the {failure.limit:.3f} limit" in html

@@ -58,12 +58,11 @@ answers "what if" without writing anything to disk.*
 
 *Where the miscalibration actually lives. A grey bar is a segment with too few labels to judge.*
 
-[**A five-step walkthrough of the same analysis**](examples/demo-dashboard.html) is in this
-repository too — for recording a demo, or for reading the argument in one sitting. Open the file and
-press the arrow keys: the verdict, the cost curve with a live threshold, the four questions, the
-segments, and the drift gate that fails. It is built by `examples/make-demo-dashboard.py` from the
-same library, so every figure on it is computed, and a test rebuilds it and requires a byte-for-byte
-match.
+[**One screen with the whole argument**](examples/demo-dashboard.html) is in this repository too —
+for recording a demo, or for reading the case in one sitting: the line in use, the line the cost
+minimum points at, both drawn and named on the same chart, and what moving it buys. It is built by
+`examples/make-demo-dashboard.py` from the same library, so every figure on it is computed, and a
+test rebuilds it and requires a byte-for-byte match.
 
 ---
 
