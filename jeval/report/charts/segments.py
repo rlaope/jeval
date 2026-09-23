@@ -44,27 +44,33 @@ def render_segments(view: SegmentView, *, title: str = "Segments", width: float 
     for index, bar in enumerate(bars):
         y = TOP + index * ROW_HEIGHT
         fraction = 0.0 if bar.too_few_samples else min(1.0, bar.ece / scale)
-        width_px = max(2.0, fraction * BAR_WIDTH)
-        colour = S.GRID if bar.too_few_samples else S.INK
+        width_px = max(3.0, fraction * BAR_WIDTH)
+        # A track behind every bar keeps the scale readable when two segments are close: without
+        # it a short bar is just a short mark with nothing to compare it to.
+        parts.append(S.rect(BAR_X, y + 3, BAR_WIDTH, 15, fill=S.SHADE, cls="shade", rx=3.0))
         parts.append(
             S.text(
-                0.0, y + 14.0, bar.label, size=11.5, fill=S.MUTED if bar.too_few_samples else S.INK
+                0.0, y + 14.5, bar.label, size=11.5, fill=S.MUTED if bar.too_few_samples else S.INK
             )
         )
         if bar.too_few_samples:
-            parts.append(S.rect(BAR_X, y + 3, width_px, 14, fill=colour))
+            parts.append(S.rect(BAR_X, y + 3, width_px, 15, fill=S.GRID, rx=3.0))
         else:
             slug = segment_slug(bar.key, bar.value)
+            bar_rect = S.rect(BAR_X, y + 3, width_px, 15, fill=S.ACCENT, cls="seg-fill", rx=3.0)
             parts.append(
                 f'<g class="seg-bar" role="button" tabindex="0" data-jeval-segment="{escape(slug)}" '
                 f'data-target="{escape(segment_target(bar))}" aria-expanded="false" '
                 f'aria-label="show the reliability curve for {escape(bar.label)}">'
-                f"{S.rect(BAR_X, y + 3, width_px, 14, fill=colour)}</g>"
+                f"{bar_rect}</g>"
             )
-        value_label = "n/a" if bar.too_few_samples else S.fmt(bar.ece, 2)
-        parts.append(S.text(BAR_X + width_px + 8, y + 14.0, value_label, size=11.0, mono=True))
+        value_label = "" if bar.too_few_samples else S.fmt(bar.ece, 2)
+        if value_label:
+            parts.append(S.text(BAR_X + width_px + 8, y + 14.5, value_label, size=11.0, mono=True))
+        # The right column is anchored to the right edge: a note wider than the chart is a note
+        # that gets cut off, and "too few sam" is not a reason a reader can act on.
         note = "too few samples" if bar.too_few_samples else f"n={bar.n}"
-        parts.append(S.text(BAR_X + BAR_WIDTH + 46, y + 14.0, note, size=10.5, fill=S.MUTED))
+        parts.append(S.text(width - 4, y + 14.5, note, anchor="end", size=10.5, fill=S.MUTED))
     parts.append(
         S.text(
             0.0,
@@ -129,18 +135,22 @@ def render_heatmap(
         for column, xv in enumerate(x_values):
             found = lookup.get((xv, yv))
             shade = 0.0 if found is None else min(1.0, found.ece / peak)
-            grey = int(255 - 150 * shade)
+            # Ink at an opacity, not a computed grey: one ramp that darkens toward the page's own
+            # ink reads correctly in both themes, and stays a single hue instead of a colour of
+            # its own.
             parts.append(
                 S.rect(
                     left + cell * column,
                     top + cell * row,
                     cell - 2,
                     cell - 2,
-                    fill=f"rgb({grey},{grey},{grey})",
+                    fill=S.SHADE,
+                    rx=4.0,
+                    extra=f' style="fill: var(--ink); fill-opacity: {0.05 + 0.55 * shade:.2f}"',
                 )
             )
             if found is not None:
-                ink = "#ffffff" if shade > 0.55 else S.INK
+                label_cls = "heat-strong" if shade > 0.5 else ""
                 parts.append(
                     S.text(
                         left + cell * column + cell / 2.0,
@@ -149,7 +159,8 @@ def render_heatmap(
                         anchor="middle",
                         size=11.0,
                         mono=True,
-                        fill=ink,
+                        fill=S.INK,
+                        cls=label_cls,
                     )
                 )
                 parts.append(
@@ -159,7 +170,8 @@ def render_heatmap(
                         f"n={found.n}",
                         anchor="middle",
                         size=9.5,
-                        fill=ink,
+                        fill=S.INK,
+                        cls=label_cls,
                     )
                 )
     parts.append(S.svg_close())
@@ -173,6 +185,10 @@ def render_segments_section(view: SegmentView, *, title: str = "Segments") -> st
             '<p class="note">No segment breakdown requested, or no segment had enough labels.</p>'
         )
     chart = render_segments(view, title=title)
+    caption = (
+        "<figcaption>Worst first. A grey bar is a segment with too few labels to judge yet — it "
+        "is drawn for completeness, not as a finding.</figcaption>"
+    )
     rows = [
         [
             bar.label,
@@ -202,7 +218,7 @@ def render_segments_section(view: SegmentView, *, title: str = "Segments") -> st
                 [[cell.x, cell.y, S.fmt(cell.ece), str(cell.n)] for cell in view.heatmap],
                 summary="Too many cells for a grid: the numbers instead",
             )
-    return f"<figure>{chart}{table}{heat}</figure>"
+    return f"<figure>{chart}{caption}{table}{heat}</figure>"
 
 
 def _empty(width: float, title: str, message: str) -> str:
