@@ -56,6 +56,7 @@ import yaml
 from numpy.typing import NDArray
 
 from jeval.calibration import DEFAULT_ALPHA
+from jeval.currency import format_amount
 from jeval.report.model import CostPoint, ImpactRow, ImpactTable, ThresholdResult
 from jeval.schema import DecisionRecord
 
@@ -865,7 +866,7 @@ def _fmt_points(delta: float) -> str:
 
 
 def _fmt_money(value: float, currency: str) -> str:
-    return "n/a" if not math.isfinite(value) else f"{currency} {value:,.2f}"
+    return format_amount(value, currency)
 
 
 def _fmt_threshold_delta(recommended: float, current: float) -> str:

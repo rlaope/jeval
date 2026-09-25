@@ -729,8 +729,8 @@ def test_build_impact_uses_the_requested_currency() -> None:
     table = build_impact(impact_result(), current_threshold=0.50, currency="KRW")
 
     cost_row = next(row for row in table.rows if row.label == "cost per case")
-    assert cost_row.current == "KRW 20.00"
-    assert cost_row.recommended == "KRW 8.00"
+    assert cost_row.current == "KRW 20"
+    assert cost_row.recommended == "KRW 8"
     assert table.currency == "KRW"
 
 

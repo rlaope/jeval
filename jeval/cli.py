@@ -15,6 +15,7 @@ from jeval import __version__
 from jeval.calibration import compute_calibration
 from jeval.config import load_config, load_ingest_map, write_default_config
 from jeval.costs import CostAction
+from jeval.currency import normalise_code
 from jeval.evaluate import DatasetReport, evaluate
 from jeval.ingest import ingest_files
 from jeval.report import template
@@ -813,7 +814,8 @@ def report(
     if not records:
         typer.echo(f"no records in {records_path(root)}: run `jeval ingest <file>` first")
         raise typer.Exit(code=1)
-    currency = currency.strip() or "USD"  # a blank code left a leading space before every amount
+    # A blank code left a leading space before every amount; "krw" and "KRW" are the same currency.
+    currency = normalise_code(currency)
     if monthly is not None and monthly < 0:
         typer.echo(f"--monthly {monthly} is not a volume: monthly cases cannot be negative")
         raise typer.Exit(code=1)
