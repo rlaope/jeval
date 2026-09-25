@@ -10,12 +10,12 @@ from jeval.report import svg as S
 from jeval.report.model import HeatmapCell, SegmentBar, SegmentView
 from jeval.report.svg import escape
 
-WIDTH = 660.0
-ROW_HEIGHT = 30.0
-BAR_X = 250.0
-BAR_WIDTH = 300.0
-TOP = 34.0
-BOTTOM = 42.0
+WIDTH = 780.0
+ROW_HEIGHT = 34.0
+BAR_X = 210.0
+BAR_WIDTH = 420.0
+TOP = 40.0
+BOTTOM = 8.0
 HEATMAP_MAX_CELLS = 20
 
 
@@ -25,6 +25,11 @@ def render_segments(view: SegmentView, *, title: str = "Segments", width: float 
     if not bars:
         return _empty(width, title, "No segment had enough labeled decisions to break down.")
     height = TOP + ROW_HEIGHT * len(bars) + BOTTOM
+    # The bar column starts after the longest label, so "customer_tier = enterprise_plus" is not
+    # drawn over its own track; the track gives up the width the labels take.
+    widest = max(S.text_width(bar.label, 12.5, mono=True) for bar in bars)
+    bar_x = max(BAR_X, widest + 20.0)
+    bar_width = max(160.0, BAR_WIDTH - (bar_x - BAR_X))
     strongest = max((bar.ece for bar in bars if not bar.too_few_samples), default=0.0)
     scale = max(strongest, 0.02)
     desc = (
@@ -37,27 +42,34 @@ def render_segments(view: SegmentView, *, title: str = "Segments", width: float 
             0.0,
             20.0,
             f"ECE by segment · bar scale 0 to {S.fmt(scale, 2)} · grey = too few samples",
-            size=11.5,
+            size=12,
             fill=S.MUTED,
         )
     )
     for index, bar in enumerate(bars):
         y = TOP + index * ROW_HEIGHT
         fraction = 0.0 if bar.too_few_samples else min(1.0, bar.ece / scale)
-        width_px = max(3.0, fraction * BAR_WIDTH)
+        width_px = max(3.0, fraction * bar_width)
         # A track behind every bar keeps the scale readable when two segments are close: without
         # it a short bar is just a short mark with nothing to compare it to.
-        parts.append(S.rect(BAR_X, y + 3, BAR_WIDTH, 15, fill=S.SHADE, cls="shade", rx=3.0))
+        parts.append(S.rect(bar_x, y + 4, bar_width, 16, fill=S.SHADE, cls="shade", rx=2.0))
         parts.append(
             S.text(
-                0.0, y + 14.5, bar.label, size=11.5, fill=S.MUTED if bar.too_few_samples else S.INK
+                0.0,
+                y + 16.5,
+                bar.label,
+                size=12.5,
+                mono=True,
+                fill=S.MUTED if bar.too_few_samples else S.INK,
             )
         )
         if bar.too_few_samples:
-            parts.append(S.rect(BAR_X, y + 3, width_px, 15, fill=S.GRID, rx=3.0))
+            parts.append(S.rect(bar_x, y + 4, width_px, 16, fill=S.GRID, rx=2.0))
         else:
             slug = segment_slug(bar.key, bar.value)
-            bar_rect = S.rect(BAR_X, y + 3, width_px, 15, fill=S.ACCENT, cls="seg-fill", rx=3.0)
+            # Data in ink, decisions in colour: an ECE bar is a measurement, not a proposal, so it
+            # does not borrow the accent the recommended threshold wears.
+            bar_rect = S.rect(bar_x, y + 4, width_px, 16, fill=S.INK, cls="seg-fill", rx=2.0)
             parts.append(
                 f'<g class="seg-bar" role="button" tabindex="0" data-jeval-segment="{escape(slug)}" '
                 f'data-target="{escape(segment_target(bar))}" aria-expanded="false" '
@@ -66,20 +78,11 @@ def render_segments(view: SegmentView, *, title: str = "Segments", width: float 
             )
         value_label = "" if bar.too_few_samples else S.fmt(bar.ece, 2)
         if value_label:
-            parts.append(S.text(BAR_X + width_px + 8, y + 14.5, value_label, size=11.0, mono=True))
+            parts.append(S.text(bar_x + width_px + 8, y + 16.5, value_label, size=12.5, weight=600))
         # The right column is anchored to the right edge: a note wider than the chart is a note
         # that gets cut off, and "too few sam" is not a reason a reader can act on.
         note = "too few samples" if bar.too_few_samples else f"n={bar.n}"
-        parts.append(S.text(width - 4, y + 14.5, note, anchor="end", size=10.5, fill=S.MUTED))
-    parts.append(
-        S.text(
-            0.0,
-            height - 14.0,
-            "Lower is better. A greyed segment needs more labels before it means anything.",
-            size=10.5,
-            fill=S.MUTED,
-        )
-    )
+        parts.append(S.text(width - 4, y + 16.5, note, anchor="end", size=12, fill=S.MUTED))
     parts.append(S.svg_close())
     return "".join(parts)
 
@@ -92,14 +95,14 @@ def render_heatmap(
     x_axis: str,
     y_axis: str,
     title: str = "Segment grid",
-    cell: float = 78.0,
+    cell: float = 84.0,
     width: float | None = None,
 ) -> str:
     """ECE grid for two segment axes, or a table when the grid would be unreadable."""
     if not cells or len(cells) > HEATMAP_MAX_CELLS:
         return ""
-    left = 120.0
-    top = 56.0
+    left = max(90.0, 24.0 + max((S.text_width(v, 12.5, mono=True) for v in y_values), default=0.0))
+    top = 82.0
     total_width = width or (left + cell * len(x_values) + 24.0)
     height = top + cell * len(y_values) + 40.0
     peak = max((c.ece for c in cells), default=0.02) or 0.02
@@ -109,16 +112,18 @@ def render_heatmap(
         f"Darker means worse calibrated. Values are printed in every cell."
     )
     parts: list[str] = [S.svg_open(total_width, height, title=title, desc=desc, cls="chart")]
-    parts.append(S.text(0.0, 20.0, f"ECE · {y_axis} × {x_axis}", size=11.5, fill=S.MUTED))
+    parts.append(S.text(0.0, 20.0, f"ECE · {y_axis} × {x_axis}", size=12, fill=S.MUTED))
+    parts.append(S.text(0.0, 38.0, "darker = worse calibrated", size=11.5, fill=S.MUTED))
     for column, xv in enumerate(x_values):
         parts.append(
             S.text(
                 left + cell * column + cell / 2.0,
-                top - 10,
+                top - 12,
                 xv,
                 anchor="middle",
-                size=10.5,
-                fill=S.MUTED,
+                size=12.5,
+                mono=True,
+                fill=S.INK,
             )
         )
     for row, yv in enumerate(y_values):
@@ -128,8 +133,9 @@ def render_heatmap(
                 top + cell * row + cell / 2.0 + 4,
                 yv,
                 anchor="end",
-                size=10.5,
-                fill=S.MUTED,
+                size=12.5,
+                mono=True,
+                fill=S.INK,
             )
         )
         for column, xv in enumerate(x_values):
@@ -142,10 +148,10 @@ def render_heatmap(
                 S.rect(
                     left + cell * column,
                     top + cell * row,
-                    cell - 2,
-                    cell - 2,
+                    cell - 3,
+                    cell - 3,
                     fill=S.SHADE,
-                    rx=4.0,
+                    rx=2.0,
                     extra=f' style="fill: var(--ink); fill-opacity: {0.05 + 0.55 * shade:.2f}"',
                 )
             )
@@ -157,8 +163,8 @@ def render_heatmap(
                         top + cell * row + cell / 2.0,
                         S.fmt(found.ece, 2),
                         anchor="middle",
-                        size=11.0,
-                        mono=True,
+                        size=15.0,
+                        weight=600,
                         fill=S.INK,
                         cls=label_cls,
                     )
@@ -166,10 +172,10 @@ def render_heatmap(
                 parts.append(
                     S.text(
                         left + cell * column + cell / 2.0,
-                        top + cell * row + cell / 2.0 + 14,
+                        top + cell * row + cell / 2.0 + 17,
                         f"n={found.n}",
                         anchor="middle",
-                        size=9.5,
+                        size=11.0,
                         fill=S.INK,
                         cls=label_cls,
                     )
@@ -186,8 +192,8 @@ def render_segments_section(view: SegmentView, *, title: str = "Segments") -> st
         )
     chart = render_segments(view, title=title)
     caption = (
-        "<figcaption>Worst first. A grey bar is a segment with too few labels to judge yet — it "
-        "is drawn for completeness, not as a finding.</figcaption>"
+        "<figcaption>Lower is better, worst first. A grey bar is a segment with too few labels "
+        "to judge yet: it is drawn for completeness, not as a finding.</figcaption>"
     )
     rows = [
         [

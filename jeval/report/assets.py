@@ -42,7 +42,8 @@ Elements the script looks for, all optional:
 ``[data-jeval-action="<action>"]``
     Slider box. Contains ``input[type="range"]``, ``[data-jeval-threshold]`` for the slider's
     own label, one ``[data-jeval-value="<key>"]`` per displayed figure, and optionally a
-    ``data-currency`` attribute (e.g. ``KRW``) and an ``input[type="number"]`` for the monthly
+    ``data-currency`` attribute (e.g. ``KRW``) with its ``data-currency-digits`` (``0`` for KRW, from
+    :func:`jeval.currency.minor_units`), and an ``input[type="number"]`` for the monthly
     volume. Keys: ``auto_rate``, ``accuracy_auto``, ``measured_accuracy``, ``cost_per_case``,
     ``cost_per_month``, ``auto_per_month``, ``escalations_per_month``.
 ``[data-jeval-copy-summary]``
@@ -71,6 +72,7 @@ __all__ = ["REPORT_CSS", "REPORT_JS", "minify"]
 _GREY_RULES: tuple[tuple[str, str, str, str], ...] = (
     ('text[fill="{v}"]', "fill", "ink", chart_svg.INK),
     ('circle[fill="{v}"]', "fill", "ink", chart_svg.INK),
+    ('polygon[fill="{v}"]', "fill", "ink", chart_svg.INK),
     ('line[stroke="{v}"]', "stroke", "ink", chart_svg.INK),
     ('path[stroke="{v}"]', "stroke", "ink", chart_svg.INK),
     ('text[fill="{v}"]', "fill", "muted", chart_svg.MUTED),
@@ -78,7 +80,7 @@ _GREY_RULES: tuple[tuple[str, str, str, str], ...] = (
     ('path[stroke="{v}"]', "stroke", "muted", chart_svg.SOFT),
     ('circle[fill="{v}"]', "fill", "muted", chart_svg.SOFT),
     ('line[stroke="{v}"]', "stroke", "rule", chart_svg.GRID),
-    ('line[stroke="{v}"]', "stroke", "rule", chart_svg.DIAGONAL),
+    ('line[stroke="{v}"]', "stroke", "muted", chart_svg.DIAGONAL),
     ('rect[fill="{v}"]', "fill", "rule", chart_svg.GRID),
     ('rect[fill="{v}"]', "fill", "shade", chart_svg.SHADE),
     ('polygon[fill="{v}"]', "fill", "shade", chart_svg.SHADE),
@@ -97,266 +99,422 @@ _GREY_REMAP = "".join(
 _CSS = """\
 :root {
   color-scheme: light dark;
-  --bg: #fbfbfc;
+  /* Surfaces: warm paper, one step of lift for panels, one step of recess for tracks. */
+  --bg: #f7f6f2;
   --panel: #ffffff;
-  --panel-alt: #f4f6f9;
-  --ink: #16181d;
-  --muted: #5f6773;
-  --rule: #e6e8ec;
-  --accent: #2f5fd0;
-  --accent-soft: #eef3fd;
-  --good: #10795c;
-  --warn: #95590a;
+  --panel-alt: #f0eee8;
+  --shade: #f2efe9;
+  /* Ink: three steps, all at or above 4.5:1 on --bg. */
+  --ink: #1b1a17;
+  --ink-2: #3f3d38;
+  --muted: #6f6b63;
+  --rule: #e4e0d8;
+  --rule-strong: #cfcac0;
+  /* The two semantic hues. Text in either wears the darker -ink step so it clears 4.5:1. */
+  --accent: #1f5fbf;
+  --accent-ink: #1a4f9e;
+  --accent-soft: #e9f0fa;
+  --alert: #d1491f;
+  --alert-ink: #ad3a14;
+  --alert-soft: #fbece5;
+  --good: #1d7a4b;
+  --warn: #a06000;
   --bad: #b3261e;
-  --alert: #b3261e;
-  --shade: #f2f4f7;
-  --shadow: 0 1px 2px rgba(22, 24, 29, 0.08);
-  --radius: 10px;
-  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
-  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --shadow: 0 1px 0 rgba(27, 26, 23, 0.04), 0 1px 3px rgba(27, 26, 23, 0.06);
+  --radius: 6px;
+  /* No web font: the report never fetches anything. Each stack names the best face a reader is
+     likely to have, then falls through to the platform's own. */
+  --font: Inter, "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text",
+    "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --serif: "Iowan Old Style", Charter, "Bitstream Charter", "Sitka Heading", "Source Serif Pro",
+    Cambria, Georgia, serif;
+  --mono: "JetBrains Mono", "SF Mono", SFMono-Regular, ui-monospace, "Cascadia Mono",
+    "Roboto Mono", Menlo, Consolas, monospace;
+  /* Type scale: 12 / 13 / 14 / 15 (body) / 17 / 22 / 26 / 34. */
+  --fs-xs: 12px;
+  --fs-sm: 13px;
+  --fs-md: 14px;
+  --fs-body: 15px;
+  --fs-lg: 17px;
+  --fs-h2: 22px;
+  --fs-head: 26px;
+  --fs-h1: 34px;
 }
 /* A shaded band in a chart is a tint, not a colour of its own: as a variable it follows the
    theme instead of staying near-white in a dark report. */
 .shade { fill: var(--shade); }
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
-html { -webkit-text-size-adjust: 100%; }
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 body {
   margin: 0;
   background: var(--bg);
   color: var(--ink);
-  font: 15px/1.6 var(--font);
+  font: var(--fs-body)/1.65 var(--font);
+  font-feature-settings: "cv11", "ss01";
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
-/* One column, wide enough for a 660pt chart to scale up and short enough to read: 880px is the
-   measure this report is typeset for. */
-main { max-width: 880px; margin: 0 auto; padding: 44px 24px 96px; }
-h1 { font-size: 28px; line-height: 1.2; letter-spacing: -0.02em; margin: 0 0 10px; }
-.lede { font-size: 16px; line-height: 1.55; color: var(--muted); max-width: 58ch; margin: 0 0 20px; }
+/* One column. 960px holds a 660px chart beside its key figures, and keeps prose inside 72ch. */
+main { max-width: 1008px; margin: 0 auto; padding: 48px 24px 112px; }
+h1, h2, .verdict .headline { font-family: var(--serif); font-weight: 600; color: var(--ink); }
+h1 { font-size: var(--fs-h1); line-height: 1.12; letter-spacing: -0.015em; margin: 0 0 12px; }
 h2 {
-  font-size: 20px; line-height: 1.3; letter-spacing: -0.01em;
-  margin: 46px 0 14px; padding-bottom: 8px; border-bottom: 1px solid var(--rule);
+  display: flex; align-items: baseline; gap: 14px;
+  font-size: var(--fs-h2); line-height: 1.25; letter-spacing: -0.01em;
+  margin: 72px 0 8px; padding-top: 20px; border-top: 1px solid var(--rule-strong);
 }
-h3 { font-size: 15px; line-height: 1.45; margin: 26px 0 6px; }
-p { margin: 0 0 12px; }
-ul { margin: 0 0 12px; padding-left: 22px; }
+h2 .idx {
+  font-family: var(--mono); font-size: var(--fs-xs); font-weight: 500; letter-spacing: 0.04em;
+  color: var(--muted); min-width: 22px;
+}
+h3 { font-size: var(--fs-lg); line-height: 1.4; font-weight: 600; margin: 40px 0 6px; letter-spacing: -0.005em; }
+h4 { font-size: var(--fs-md); font-weight: 600; margin: 24px 0 6px; }
+p { margin: 0 0 14px; }
+ul { margin: 0 0 14px; padding-left: 20px; }
 li { margin: 0 0 6px; }
-a { color: var(--accent); }
-section { margin: 0 0 10px; }
-code, kbd, samp { font-family: var(--mono); font-size: 0.94em; }
-.num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
-.note { color: var(--muted); font-size: 12.5px; }
+li::marker { color: var(--muted); }
+a { color: var(--accent-ink); text-decoration-thickness: 1px; text-underline-offset: 3px; }
+section { margin: 0; }
+code, kbd, samp {
+  font-family: var(--mono); font-size: 0.86em;
+  background: var(--panel-alt); border-radius: 3px; padding: 1px 5px;
+}
+strong { font-weight: 600; }
+.num { font-family: var(--font); font-variant-numeric: tabular-nums lining-nums; white-space: nowrap; }
+.note { color: var(--muted); font-size: var(--fs-sm); line-height: 1.6; max-width: 80ch; }
+.intro { color: var(--ink-2); font-size: var(--fs-body); max-width: 70ch; margin-bottom: 20px; }
+.ident { font-family: var(--mono); font-size: 0.9em; }
 /* The template emits sections in SECTION_ORDER, so the verdict is already first in the
    document; the rule below keeps it first if a container is ever flexed or reordered. */
-#verdict { order: -1; margin: 0 0 10px; }
+#verdict { order: -1; }
 
-/* Provenance: one item per line. As a single `·`-separated run it reads as boilerplate and gets
-   skipped, which is exactly the part a reader needs to judge the sample. */
-.meta { display: flex; flex-direction: column; gap: 4px; margin: 0; color: var(--muted); font-size: 12.5px; line-height: 1.5; }
-.meta-item { display: block; max-width: 86ch; }
+/* Masthead: the name, what the page is for, and where its numbers came from. */
+.masthead { margin: 0 0 28px; }
+.brand {
+  display: flex; align-items: center; gap: 10px; margin: 0 0 22px;
+  font-size: var(--fs-xs); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted);
+}
+.brand .mark {
+  font-family: var(--mono); font-weight: 700; letter-spacing: 0; text-transform: none;
+  font-size: var(--fs-sm); color: var(--panel); background: var(--ink);
+  border-radius: 3px; padding: 2px 7px;
+}
+.lede { font-size: var(--fs-lg); line-height: 1.55; color: var(--ink-2); max-width: 60ch; margin: 0 0 24px; }
+/* Provenance as a definition list: one item per row, label left, value right. A single run-on
+   line is read as boilerplate and skipped, which is exactly the part a reader needs. */
+.provenance {
+  display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 20px;
+  margin: 0; padding: 14px 0 0; border-top: 1px solid var(--rule);
+  font-size: var(--fs-sm); line-height: 1.55;
+}
+.provenance dt { color: var(--muted); }
+.provenance dd { margin: 0; color: var(--ink-2); overflow-wrap: anywhere; max-width: 88ch; }
+.provenance dd.path { font-family: var(--mono); font-size: var(--fs-xs); padding-top: 1px; }
 
-/* The verdict. One card, one coloured edge for the status, and the three figures that carry it
-   underneath — no shadow, no second frame. */
+/* Section index: the reading order, as links. */
+.toc {
+  display: flex; flex-wrap: wrap; gap: 4px 18px; margin: 0 0 32px; padding: 10px 0;
+  border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule);
+  font-size: var(--fs-sm);
+}
+.toc a { color: var(--muted); text-decoration: none; }
+.toc a:hover { color: var(--ink); }
+.toc .idx { font-family: var(--mono); font-size: var(--fs-xs); margin-right: 6px; opacity: 0.6; }
+
+/* The verdict. A status line with a word and a mark, the headline, what it rests on, then the
+   line in use and the recommended line drawn on one ruler, and the three figures. */
 .verdict {
-  border: 1px solid var(--rule);
-  border-left: 3px solid var(--accent);
-  border-radius: var(--radius);
-  background: var(--panel);
-  padding: 20px 24px;
+  background: var(--panel); border: 1px solid var(--rule); border-radius: var(--radius);
+  box-shadow: var(--shadow); padding: 26px 30px 24px; position: relative; overflow: hidden;
 }
-#verdict[data-status="too_low"].verdict, #verdict[data-status="too_high"].verdict { border-left-color: var(--warn); }
-#verdict[data-status="insufficient_data"].verdict { border-left-color: var(--muted); }
-.verdict .headline { font-size: 21px; line-height: 1.32; letter-spacing: -0.01em; font-weight: 600; margin: 0 0 8px; }
-.verdict .detail { margin: 0; font-size: 14.5px; line-height: 1.6; color: var(--muted); max-width: 68ch; }
+.verdict::before {
+  content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: var(--accent);
+}
+#verdict[data-status="too_low"].verdict::before, #verdict[data-status="too_high"].verdict::before { background: var(--alert); }
+#verdict[data-status="insufficient_data"].verdict::before { background: var(--muted); }
+.status {
+  display: inline-flex; align-items: center; gap: 8px; margin: 0 0 12px;
+  font-size: var(--fs-xs); font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--accent-ink);
+}
+.status::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+#verdict[data-status="too_low"] .status, #verdict[data-status="too_high"] .status { color: var(--alert-ink); }
+#verdict[data-status="insufficient_data"] .status { color: var(--muted); }
+.verdict .headline { font-size: var(--fs-head); line-height: 1.22; letter-spacing: -0.012em; margin: 0 0 10px; }
+.verdict .detail { margin: 0; font-size: var(--fs-body); line-height: 1.65; color: var(--ink-2); max-width: 70ch; }
+.ruler { margin: 22px 0 0; }
+.ruler svg { display: block; max-width: 100%; height: auto; }
+.ruler .narrow { display: none; }
 .stats {
-  display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-  gap: 18px 28px; margin: 20px 0 0; padding-top: 18px; border-top: 1px solid var(--rule);
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 18px 32px; margin: 22px 0 0; padding-top: 20px; border-top: 1px solid var(--rule);
 }
-.stat .k { font-size: 12px; color: var(--muted); }
-.stat .v { font-size: 22px; line-height: 1.25; font-weight: 600; letter-spacing: -0.01em; margin-top: 4px; }
-.stat .s { font-size: 12.5px; line-height: 1.5; color: var(--muted); margin-top: 2px; }
-.stats.small { gap: 14px 24px; margin-top: 16px; }
-.stats.small .stat .v { font-size: 17px; }
-.verdict-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 18px; }
+.stat .k { display: flex; align-items: center; gap: 8px; font-size: var(--fs-xs); color: var(--muted); letter-spacing: 0.02em; }
+.stat .v {
+  font-size: 30px; line-height: 1.15; font-weight: 600; letter-spacing: -0.02em; margin-top: 6px;
+  font-variant-numeric: tabular-nums lining-nums;
+}
+.stat .s { font-size: var(--fs-sm); line-height: 1.5; color: var(--muted); margin-top: 3px; }
+/* A key swatch that matches the ruler's mark, so the figure and the line are one thing. */
+.swatch { display: inline-block; width: 14px; height: 0; border-top: 2px solid var(--muted); }
+.swatch.current { border-top: 2px dashed var(--alert); }
+.swatch.recommended { border-top-color: var(--accent); }
+.stats.small { gap: 14px 28px; margin-top: 12px; }
+.stats.small .stat .v { font-size: 22px; }
+.verdict-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 22px; }
 
 /* Tabs as one segmented control: a row of loose labels reads as text, not as a control. */
 .tabs {
   display: inline-flex; flex-wrap: wrap; gap: 2px; padding: 3px;
-  margin: 16px 0; border: 1px solid var(--rule); border-radius: var(--radius);
+  margin: 8px 0 4px; border: 1px solid var(--rule); border-radius: 8px;
   background: var(--panel-alt);
 }
 .tab {
   -webkit-appearance: none; appearance: none; cursor: pointer;
   border: 0; background: none; color: var(--muted);
-  font: inherit; font-size: 13px; padding: 6px 12px; border-radius: 7px;
+  font: inherit; font-family: var(--mono); font-size: var(--fs-sm); padding: 6px 14px; border-radius: 6px;
 }
-.tab:hover { color: var(--ink); background: var(--panel); }
+.tab:hover { color: var(--ink); }
 .tab[aria-selected="true"], .tab.is-active {
   color: var(--ink); background: var(--panel); font-weight: 600; box-shadow: var(--shadow);
 }
-.tab:focus-visible, button:focus-visible, input:focus-visible,
+.tab:focus-visible, button:focus-visible, input:focus-visible, a:focus-visible,
 [data-jeval-segment]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.block-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin: 26px 0 4px; }
-.block-head h3 { margin: 0; }
-.block-sub { margin: 0; font-size: 12.5px; color: var(--muted); }
+.block-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px; margin: 28px 0 6px; }
+.block-head h3 { margin: 0; font-family: var(--mono); font-size: var(--fs-lg); font-weight: 600; }
+.block-sub { margin: 0; font-size: var(--fs-sm); font-weight: 400; color: var(--muted); }
+.action-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
+.action-head .ident { font-size: var(--fs-lg); font-weight: 600; }
 
-/* Callouts. The left edge carries the status, the tint only separates them from the page. */
+/* Callouts. The left edge carries the kind, the tint only separates them from the page. */
 .diag {
-  border: 1px solid var(--rule); border-left: 3px solid var(--accent); border-radius: 0 8px 8px 0;
-  background: var(--accent-soft); padding: 12px 16px; margin: 12px 0 18px;
-  font-size: 14.5px; line-height: 1.6;
+  border-left: 3px solid var(--accent); border-radius: 0 var(--radius) var(--radius) 0;
+  background: var(--accent-soft); padding: 12px 16px; margin: 10px 0 20px;
+  font-size: var(--fs-md); line-height: 1.6; color: var(--ink); max-width: 80ch;
 }
 .warn {
-  border: 1px solid var(--rule); border-left: 3px solid var(--warn); border-radius: 0 8px 8px 0;
-  background: var(--panel-alt); padding: 12px 16px; margin: 16px 0 20px;
-  font-size: 14.5px; line-height: 1.6;
+  border-left: 3px solid var(--alert); border-radius: 0 var(--radius) var(--radius) 0;
+  background: var(--alert-soft); padding: 12px 16px; margin: 16px 0 20px;
+  font-size: var(--fs-md); line-height: 1.6; color: var(--ink);
 }
 .warn ul { margin: 8px 0 0; }
 .good { color: var(--good); }
 .bad { color: var(--bad); }
 
-figure { margin: 18px 0 24px; }
-figure svg { display: block; width: 100%; height: auto; }
-figcaption { margin-top: 10px; color: var(--muted); font-size: 12.5px; line-height: 1.55; max-width: 74ch; }
+figure { margin: 18px 0 28px; }
+figure svg { display: block; max-width: 100%; height: auto; }
+figcaption { margin-top: 10px; color: var(--muted); font-size: var(--fs-sm); line-height: 1.6; max-width: 76ch; }
+svg text { font-variant-numeric: tabular-nums; }
+/* A chart beside the figures that summarise it; stacks on a narrow screen. */
+.chart-row { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 20px 36px; }
+.chart-row > svg { flex: 0 1 auto; }
+.keyfigs {
+  flex: 1 1 200px; margin: 34px 0 0; display: grid; gap: 16px;
+  border-left: 1px solid var(--rule); padding-left: 24px;
+}
+.keyfigs div { display: flex; flex-direction: column; gap: 2px; }
+.keyfigs dt { font-size: var(--fs-xs); color: var(--muted); letter-spacing: 0.02em; }
+.keyfigs dd { margin: 0; font-size: 20px; font-weight: 600; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }
+.keyfigs dd small { display: block; font-size: var(--fs-xs); font-weight: 400; color: var(--muted); letter-spacing: 0; }
 
-table { border-collapse: collapse; width: 100%; margin: 14px 0 20px; font-size: 13.5px; }
-caption { caption-side: top; text-align: left; color: var(--muted); font-size: 12.5px; padding: 0 0 8px; }
-th, td { padding: 9px 12px; border-bottom: 1px solid var(--rule); text-align: right; vertical-align: baseline; }
-th:first-child, td:first-child { text-align: left; }
-th {
-  color: var(--muted); font-weight: 600; font-size: 11.5px;
-  text-transform: uppercase; letter-spacing: 0.06em;
+/* Tables. Text reads left, numbers right in tabular figures, a heavier rule under the header and
+   hairlines between rows; long prose in a cell wraps at a measure instead of stretching a row. */
+table { border-collapse: collapse; width: 100%; margin: 14px 0 22px; font-size: var(--fs-md); line-height: 1.5; }
+caption { caption-side: top; text-align: left; color: var(--muted); font-size: var(--fs-sm); padding: 0 0 8px; }
+th, td { padding: 10px 14px; border-bottom: 1px solid var(--rule); text-align: left; vertical-align: top; }
+th:first-child, td:first-child { padding-left: 0; }
+th:last-child, td:last-child { padding-right: 0; }
+thead th {
+  color: var(--muted); font-weight: 600; font-size: var(--fs-xs); letter-spacing: 0.02em;
+  border-bottom: 1px solid var(--rule-strong); padding-top: 6px; padding-bottom: 8px; white-space: nowrap;
 }
 th.num, td.num { text-align: right; }
-tbody tr:hover td { background: var(--panel-alt); }
+td.num.l { text-align: left; }
+td.ident { font-family: var(--mono); font-size: var(--fs-sm); white-space: nowrap; }
+table.kv { max-width: 620px; }
+table.kv td:first-child { color: var(--ink-2); }
+td.prose { color: var(--ink-2); font-size: var(--fs-sm); min-width: 22ch; max-width: 46ch; }
+td.label { font-weight: 500; }
+tbody tr:hover td { background: color-mix(in srgb, var(--panel-alt) 55%, transparent); }
 tbody tr:last-child td { border-bottom: 0; }
-/* The recommended column is the proposal this whole document argues for; a tint says so
-   without a second colour legend. */
-table.impact th:nth-child(3), table.impact td:nth-child(3) { background: var(--accent-soft); }
-table.impact td:first-child { font-weight: 500; }
+.tag {
+  display: inline-block; font-size: var(--fs-xs); font-weight: 600; line-height: 1.5;
+  padding: 0 7px; border-radius: 3px; background: var(--panel-alt); color: var(--ink-2); white-space: nowrap;
+}
+.tag.yes { background: var(--accent-soft); color: var(--accent-ink); }
+
+/* The impact table: the proposal this document argues for is the recommended column, so it is
+   the one with a ground and a heavier figure; the change column says which way things moved. */
+table.impact { margin-top: 18px; }
+table.impact th:nth-child(3), table.impact td:nth-child(3) {
+  background: var(--accent-soft); padding-left: 16px; padding-right: 16px;
+}
+table.impact thead th:nth-child(3) { color: var(--accent-ink); box-shadow: inset 0 2px 0 var(--accent); }
+table.impact td:nth-child(3) { font-weight: 600; }
+table.impact td:first-child { color: var(--ink-2); }
+table.impact tr.impact-monthly td { border-top: 1px solid var(--rule-strong); }
+.delta { display: inline-flex; align-items: baseline; gap: 5px; }
+.delta::before { font-size: 0.72em; color: var(--muted); }
+.delta.up::before { content: "\\25B2"; }
+.delta.down::before { content: "\\25BC"; }
+.delta.better { color: var(--good); }
+.delta.worse { color: var(--bad); }
+.delta.better::before, .delta.worse::before { color: inherit; }
 
 /* Collapsible data tables: closed by default, obviously openable, and print when open. */
-details {
-  border: 1px solid var(--rule); border-radius: var(--radius); background: var(--panel);
-  margin: 14px 0 20px;
+details { border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); margin: 16px 0 22px; }
+details + details { margin-top: -23px; }
+details > summary {
+  cursor: pointer; list-style: none; padding: 10px 0; font-size: var(--fs-sm); color: var(--muted);
+  display: flex; align-items: center; gap: 8px;
 }
-details > summary { cursor: pointer; list-style: none; padding: 11px 16px; font-size: 13px; color: var(--muted); }
 details > summary:hover { color: var(--ink); }
 details > summary::-webkit-details-marker { display: none; }
-details > summary::before { content: "▸"; display: inline-block; width: 14px; color: var(--muted); }
-details[open] > summary { border-bottom: 1px solid var(--rule); }
-details[open] > summary::before { content: "▾"; }
-details table { margin: 0; }
-details th:first-child, details td:first-child { padding-left: 16px; }
-details th:last-child, details td:last-child { padding-right: 16px; }
+details > summary::before {
+  content: ""; width: 6px; height: 6px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg); transition: transform 0.15s ease; margin: 0 4px 0 2px;
+}
+details[open] > summary::before { transform: rotate(45deg); }
+details[open] > summary { color: var(--ink); }
+details table { margin: 0 0 12px; font-size: var(--fs-sm); }
+.table-wrap { overflow-x: auto; }
 
 button, .button {
   -webkit-appearance: none; appearance: none; cursor: pointer;
-  border: 1px solid var(--rule); border-radius: 8px; background: var(--panel);
-  color: var(--ink); font: inherit; font-size: 13px; padding: 7px 14px;
+  border: 1px solid var(--rule-strong); border-radius: 6px; background: var(--panel);
+  color: var(--ink); font: inherit; font-size: var(--fs-sm); font-weight: 500; padding: 7px 14px;
 }
-button:hover, .button:hover { border-color: var(--accent); color: var(--accent); }
+button:hover, .button:hover { border-color: var(--ink); }
 .copy-summary { white-space: nowrap; }
 
-/* The threshold explorer. Everything the slider rewrites sits below the rule, so a reader can
+/* The threshold explorer. Everything the slider rewrites sits inside this panel, so a reader can
    see at a glance which numbers are live and which ones are the report's own measurement. */
 .controls, .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 12px 0; }
 .slider {
   border: 1px solid var(--rule); border-radius: var(--radius); background: var(--panel);
-  padding: 16px 18px; margin: 16px 0 20px;
+  padding: 18px 22px 16px; margin: 18px 0 24px;
 }
 .slider-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 10px 16px; }
-.slider-title { display: inline-flex; align-items: baseline; gap: 10px; }
-.slider-title label { font-size: 13px; color: var(--muted); }
+.slider-head label { font-size: var(--fs-sm); font-weight: 600; color: var(--ink); }
 .slider [data-jeval-threshold], [data-jeval-threshold] {
-  font-family: var(--mono); font-size: 18px; font-weight: 600; font-variant-numeric: tabular-nums;
+  font-family: var(--font); font-size: 24px; font-weight: 600; letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums; color: var(--accent-ink);
 }
-.volume { display: inline-flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--muted); }
+.volume { display: inline-flex; align-items: center; gap: 8px; font-size: var(--fs-sm); color: var(--muted); margin-top: 10px; }
 input[type="number"] {
-  font: inherit; font-family: var(--mono); font-size: 13px; width: 96px;
-  padding: 5px 8px; border: 1px solid var(--rule); border-radius: 8px;
+  font: inherit; font-size: var(--fs-sm); font-variant-numeric: tabular-nums; width: 110px;
+  padding: 5px 8px; border: 1px solid var(--rule-strong); border-radius: 5px;
   background: var(--bg); color: var(--ink);
 }
 input[type="range"] {
   -webkit-appearance: none; appearance: none; display: block;
-  width: 100%; height: 24px; margin: 8px 0 0; background: transparent; cursor: ew-resize;
+  width: 100%; height: 24px; margin: 10px 0 0; background: transparent; cursor: ew-resize;
 }
 input[type="range"]::-webkit-slider-runnable-track {
-  height: 6px; border-radius: 999px; background: var(--rule);
+  height: 4px; border-radius: 999px; background: var(--rule-strong);
 }
 input[type="range"]::-webkit-slider-thumb {
   -webkit-appearance: none; appearance: none; width: 18px; height: 18px;
-  margin-top: -6px; border: 2px solid var(--panel); border-radius: 50%;
-  background: var(--accent); box-shadow: var(--shadow);
+  margin-top: -7px; border: 3px solid var(--panel); border-radius: 50%;
+  background: var(--accent); box-shadow: 0 0 0 1px var(--accent);
 }
-input[type="range"]::-moz-range-track { height: 6px; border-radius: 999px; background: var(--rule); }
+input[type="range"]::-moz-range-track { height: 4px; border-radius: 999px; background: var(--rule-strong); }
 input[type="range"]::-moz-range-thumb {
-  width: 18px; height: 18px; border: 2px solid var(--panel); border-radius: 50%; background: var(--accent);
+  width: 14px; height: 14px; border: 3px solid var(--panel); border-radius: 50%; background: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
 }
-.scale { display: flex; justify-content: space-between; font-family: var(--mono); font-size: 11.5px; color: var(--muted); }
+.scale { display: flex; justify-content: space-between; font-size: var(--fs-xs); color: var(--muted); font-variant-numeric: tabular-nums; }
 .figures {
   display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 14px 24px; margin: 16px 0 4px; padding-top: 16px; border-top: 1px solid var(--rule);
+  gap: 16px 28px; margin: 18px 0 6px; padding-top: 16px; border-top: 1px solid var(--rule);
 }
 .figures .figure { display: flex; flex-direction: column; gap: 2px; }
-.figures .k { color: var(--muted); font-size: 12px; }
-.figures .v { font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.figures .k { color: var(--muted); font-size: var(--fs-xs); }
+.figures .v { font-size: var(--fs-lg); font-weight: 600; }
 
 /* Segment bars: the track behind them is what makes two lengths comparable. */
 .seg-bar { cursor: pointer; }
-.seg-bar:hover .seg-fill, .seg-bar.is-open .seg-fill { opacity: 0.82; }
-.seg-fill { fill: var(--accent); }
+.seg-bar:hover .seg-fill, .seg-bar.is-open .seg-fill { opacity: 0.8; }
+.seg-fill { fill: var(--ink-2); }
 .accent-stroke { stroke: var(--accent); }
+.accent-fill { fill: var(--accent); }
+.accent-ink { fill: var(--accent-ink); }
 .accent-dot { fill: var(--accent); }
+.accent-band { fill: var(--accent); fill-opacity: 0.13; }
 /* The line in use, and a model change: the same warning in two charts, one value per theme. */
 .alert-stroke { stroke: var(--alert); }
-.alert-ink { fill: var(--alert); }
+.alert-ink { fill: var(--alert-ink); }
 .alert-dot { fill: var(--alert); }
 /* An annotation drawn on top of a gridline needs its own ground; a box would be louder. */
-.halo { paint-order: stroke; stroke: var(--bg); stroke-width: 3px; stroke-linejoin: round; }
+.halo { paint-order: stroke; stroke: var(--panel); stroke-width: 4px; stroke-linejoin: round; }
 [data-jeval-segment] { cursor: pointer; }
 [data-jeval-segment][aria-expanded="true"] { font-weight: 600; }
 [data-jeval-segment-chart] { margin-top: 12px; }
 
-footer {
-  margin-top: 56px; border-top: 1px solid var(--rule); padding-top: 18px;
-  color: var(--muted); font-size: 12.5px;
+/* Charts sit on the panel colour, so the halo, the page and the plot agree. */
+.plate {
+  background: var(--panel); border: 1px solid var(--rule); border-radius: var(--radius);
+  padding: 20px 22px 16px; margin: 16px 0 24px;
 }
-footer p { margin: 0 0 6px; }
-@media (max-width: 640px) {
-  main { padding: 28px 16px 64px; }
-  h1 { font-size: 24px; }
-  h2 { margin-top: 34px; }
+.plate > figure { margin: 0; }
+
+.limits li { color: var(--ink-2); }
+footer {
+  margin-top: 80px; border-top: 1px solid var(--rule-strong); padding-top: 20px;
+  color: var(--muted); font-size: var(--fs-sm);
+  display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px 24px;
+}
+footer p { margin: 0; max-width: 72ch; }
+@media screen and (max-width: 720px) {
+  main { padding: 28px 16px 72px; }
+  h1 { font-size: 28px; }
+  h2 { margin-top: 52px; font-size: 20px; }
+  .verdict { padding: 20px 18px 18px; }
+  .verdict .headline { font-size: 22px; }
+  .stat .v { font-size: 24px; }
   .stats, .figures { grid-template-columns: 1fr 1fr; }
-  /* A table of currency amounts has a minimum width wider than a phone: "KRW 38,524,590.16" cannot
-     wrap, so at 100% the table wins and drags the whole page sideways — header, paragraphs and all.
-     The table takes the overflow itself instead, and the type comes down so that what is hidden is
-     a column edge rather than half the row. */
-  table { display: block; max-width: 100%; overflow-x: auto; font-size: 12px; }
-  th, td { padding: 7px 8px; }
-  th:first-child, td:first-child { padding-left: 0; }
-  /* The last column holds the shortest value in the table, so it gives up its padding first. */
-  th:last-child, td:last-child { padding-right: 4px; }
+  .keyfigs { border-left: 0; padding-left: 0; margin-top: 0; grid-template-columns: 1fr 1fr; }
+  .plate { padding: 14px 12px 10px; overflow-x: auto; }
+  .ruler .ruler-svg { display: none; }
+  .ruler .narrow { display: block; width: 100%; }
+  /* A wide chart keeps a readable size and scrolls sideways inside its own plate, rather than
+     shrinking every label on it below what a phone can render. */
+  figure { overflow-x: auto; }
+  svg.chart[width="660.00"], svg.chart[width="780.00"], svg.chart[width="880.00"] {
+    max-width: none; width: 480px; height: auto; flex-shrink: 0;
+  }
+  .provenance { grid-template-columns: 1fr; gap: 0; }
+  .provenance dd { margin-bottom: 8px; }
+  /* A wide table takes its own horizontal scroll instead of dragging the page sideways. */
+  table { display: block; max-width: 100%; overflow-x: auto; font-size: var(--fs-sm); }
+  th, td { padding: 8px 10px; }
+  td.prose { min-width: 26ch; }
 }
 /* One block, custom properties only: every colour in the report is a var(), so dark mode is
    a palette swap and nothing else has to know it happened. */
 @media (prefers-color-scheme: dark) {
   :root {
     color-scheme: dark;
-    --bg: #12141a;
-    --panel: #181b22;
-    --panel-alt: #1f232b;
-    --shade: #22262f;
-    --ink: #e7eaef;
-    --muted: #9aa3b1;
-    --rule: #2a2f39;
-    --accent: #7ea6ff;
-    --accent-soft: #1b2436;
-    --good: #4fc99f;
+    --bg: #141412;
+    --panel: #1b1b18;
+    --panel-alt: #25241f;
+    --shade: #23221e;
+    --ink: #eeece6;
+    --ink-2: #cfccc3;
+    --muted: #a19d93;
+    --rule: #2e2d28;
+    --rule-strong: #45433c;
+    --accent: #4f8be8;
+    --accent-ink: #8fb6f5;
+    --accent-soft: #1b2535;
+    --alert: #e8683a;
+    --alert-ink: #f59a74;
+    --alert-soft: #2f1f18;
+    --good: #5cc98f;
     --warn: #e0b357;
     --bad: #ff8f85;
-    --alert: #ff9d92;
-    --shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+    --shadow: 0 1px 0 rgba(0, 0, 0, 0.3);
   }
   /* Charts are painted with fixed grey values, because SVG has no custom properties of its own
      for a presentation attribute. The greys are re-mapped by attribute selector rather than
@@ -365,10 +523,10 @@ footer p { margin: 0 0 6px; }
      from jeval.report.svg, so a new grey cannot be forgotten here. */
 /*__GREY_REMAP__*/
 }
-/* Text inside a dark heatmap cell, in both themes: a cell painted with the page's own ink at
-   high opacity is the one cell whose label needs the page's own background. This rule sits
-   after the dark-mode block on purpose -- it has to beat the grey remap above it. */
-.heat-strong { fill: var(--bg); }
+/* Text inside a dark heatmap cell, in both themes: a cell painted at high opacity is the one cell
+   whose label needs the page's own background. This rule sits after the dark-mode block on
+   purpose -- it has to beat the grey remap above it. */
+.heat-strong { fill: var(--panel); }
 @page { size: A4 portrait; margin: 12mm; }
 /* One page: verdict, reliability chart and impact table. Everything interactive or repeated
    is chrome and goes; collapsed details stay collapsed; nothing splits across a page. */
@@ -378,35 +536,40 @@ footer p { margin: 0 0 6px; }
     --bg: #ffffff;
     --panel: #ffffff;
     --panel-alt: #f5f5f5;
-    --shade: #f5f5f5;
+    --shade: #f3f3f3;
     --ink: #000000;
-    --muted: #333333;
-    --rule: #b8b8b8;
-    --accent: #1a3f8f;
-    --accent-soft: #f0f0f0;
-    --alert: #a01b14;
+    --ink-2: #222222;
+    --muted: #454545;
+    --rule: #c8c8c8;
+    --rule-strong: #888888;
+    --accent: #1a4f9e;
+    --accent-ink: #1a4f9e;
+    --accent-soft: #eef2f8;
+    --alert: #a8360f;
+    --alert-ink: #a8360f;
     --shadow: none;
   }
   body { background: #fff; color: #000; font-size: 10.5pt; line-height: 1.45; }
   main { max-width: none; margin: 0; padding: 0; }
-  nav, .report-nav, .tabs, .tab, .controls, .actions, .verdict-actions, button, .button,
+  nav, .toc, .tabs, .tab, .controls, .actions, .verdict-actions, button, .button,
   .copy-summary, .no-print, footer, .slider { display: none !important; }
   .lede { font-size: 10pt; margin-bottom: 3mm; }
-  .meta { font-size: 8pt; }
+  .provenance { font-size: 8pt; }
   #verdict { order: -1; break-after: avoid; page-break-after: avoid; }
   section { break-inside: avoid; page-break-inside: avoid; margin: 0 0 5mm; }
   details:not([open]) { display: none !important; }
   details > summary { display: none !important; }
-  details, .verdict, figure, .diag, .warn { break-inside: avoid; page-break-inside: avoid; }
+  details, .verdict, figure, .diag, .warn, .plate { break-inside: avoid; page-break-inside: avoid; }
+  .verdict, .plate { box-shadow: none; }
   table { break-inside: avoid; page-break-inside: avoid; font-size: 9.5pt; }
   tr, th, td { break-inside: avoid; page-break-inside: avoid; }
   thead { display: table-header-group; }
   figure svg { max-height: 56mm; width: auto; margin: 0 auto; }
-  h1 { font-size: 16pt; margin-bottom: 1mm; }
-  h2 { font-size: 12pt; margin: 4mm 0 1.5mm; }
+  h1 { font-size: 18pt; margin-bottom: 1mm; }
+  h2 { font-size: 12pt; margin: 4mm 0 1.5mm; padding-top: 2mm; }
   .verdict .headline { font-size: 14pt; }
   .stats { grid-template-columns: repeat(3, 1fr); gap: 2mm; }
-  .stat .v { font-size: 13pt; }
+  .stat .v { font-size: 14pt; }
   figcaption { font-size: 8pt; margin-top: 1.5mm; }
 }
 """
@@ -447,22 +610,6 @@ REPORT_JS = """\
     return Math.round(number * 100) + "%";
   }
 
-  function grouped(value) {
-    var number = finite(value);
-    if (number === null) { return "n/a"; }
-    var text = String(Math.round(number));
-    var sign = text.charAt(0) === "-" ? "-" : "";
-    if (sign) { text = text.slice(1); }
-    var out = "";
-    var count = 0;
-    for (var i = text.length - 1; i >= 0; i -= 1) {
-      out = text.charAt(i) + out;
-      count += 1;
-      if (count % 3 === 0 && i > 0) { out = "," + out; }
-    }
-    return sign + out;
-  }
-
   function amount(value, digits) {
     var number = finite(value);
     if (number === null) { return "n/a"; }
@@ -479,19 +626,63 @@ REPORT_JS = """\
     return (number < 0 ? "-" : "") + out;
   }
 
+  // Mirrors jeval.currency: the currency's own decimals, widened only for an average smaller than
+  // one minor unit, and three significant figures once a suffix is needed.
+  function amountDigits(value, base) {
+    var magnitude = Math.abs(value);
+    if (magnitude === 0 || magnitude >= Math.pow(10, -base)) { return base; }
+    var needed = 1 - Math.floor(Math.log(magnitude) / Math.LN10);
+    return Math.min(base + 2, needed);
+  }
+
   function withCurrency(text, currency) {
     if (text === "n/a") { return text; }
     return currency ? currency + " " + text : text;
   }
 
-  function money(value) {
+  function noNegativeZero(text) {
+    if (text.charAt(0) === "-" && Number(text.replace(/,/g, "")) === 0) { return text.slice(1); }
+    return text;
+  }
+
+  function formatAmount(value, currency, base) {
+    var number = finite(value);
+    if (number === null) { return "n/a"; }
+    var digits = amountDigits(number, base);
+    var text = noNegativeZero(amount(number, digits));
+    if (digits > base && Number(text.replace(/,/g, "")) === 0) { text = amount(0, base); }
+    return withCurrency(text, currency);
+  }
+
+  var LADDER = [[1e3, "k"], [1e6, "M"], [1e9, "B"], [1e12, "T"]];
+
+  function scaledText(scaled) {
+    var size = Math.abs(scaled);
+    var text = noNegativeZero(amount(scaled, size >= 100 ? 0 : (size >= 10 ? 1 : 2)));
+    if (text.indexOf(".") >= 0) {
+      text = text.replace(/0+$/, "");
+      if (text.charAt(text.length - 1) === ".") { text = text.slice(0, -1); }
+    }
+    return text.replace(/,/g, "");
+  }
+
+  function compact(value, currency, base) {
     var number = finite(value);
     if (number === null) { return "n/a"; }
     var magnitude = Math.abs(number);
-    if (magnitude >= 1e9) { return (number / 1e9).toFixed(1) + "B"; }
-    if (magnitude >= 1e6) { return (number / 1e6).toFixed(1) + "M"; }
-    if (magnitude >= 1e3) { return (number / 1e3).toFixed(1) + "k"; }
-    return grouped(number);
+    for (var i = 0; i < LADDER.length; i += 1) {
+      var fits = magnitude >= LADDER[i][0] && (i + 1 >= LADDER.length || magnitude < LADDER[i + 1][0]);
+      if (!fits) { continue; }
+      var step = LADDER[i];
+      var text = scaledText(number / step[0]);
+      if (Math.abs(Number(text)) >= 1000 && i + 1 < LADDER.length) {
+        step = LADDER[i + 1];
+        text = scaledText(number / step[0]);
+      }
+      return withCurrency(text + step[1], currency);
+    }
+    if (currency) { return formatAmount(number, currency, base); }
+    return noNegativeZero(amount(number, magnitude >= 10 || magnitude === 0 ? 0 : 2));
   }
 
   function setText(node, value) {
@@ -579,6 +770,8 @@ REPORT_JS = """\
     var spec = first(actions, [action]);
     if (!spec) { return; }
     var currency = box.getAttribute("data-currency") || "";
+    var digits = finite(box.getAttribute("data-currency-digits"));
+    if (digits === null) { digits = 2; }
     var volumeInput = box.querySelector('input[type="number"]');
     var curve = first(spec, ["curve", "points"]);
     if (!Array.isArray(curve)) { curve = []; }
@@ -603,14 +796,14 @@ REPORT_JS = """\
         renderValue(box, "measured_accuracy", pct(point.accuracy_auto));
       }
       if (point.cost !== null) {
-        renderValue(box, "cost_per_case", withCurrency(amount(point.cost, 2), currency));
+        renderValue(box, "cost_per_case", formatAmount(point.cost, currency, digits));
         if (live !== null) {
-          renderValue(box, "cost_per_month", withCurrency(money(point.cost * live), currency));
+          renderValue(box, "cost_per_month", compact(point.cost * live, currency, digits));
         }
       }
       if (point.auto_rate !== null && live !== null) {
-        renderValue(box, "auto_per_month", money(point.auto_rate * live));
-        renderValue(box, "escalations_per_month", money((1 - point.auto_rate) * live));
+        renderValue(box, "auto_per_month", compact(point.auto_rate * live, "", 0));
+        renderValue(box, "escalations_per_month", compact((1 - point.auto_rate) * live, "", 0));
       }
     }
 

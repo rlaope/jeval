@@ -214,3 +214,24 @@ def test_the_summary_is_the_single_formatter_from_verdict() -> None:
     expected = verdict_summary(model)
     assert template.markdown_summary(model) == expected
     assert 'summary_markdown":' in document.replace(" ", "")
+
+
+def test_a_currency_without_minor_units_is_printed_without_them() -> None:
+    """KRW has no minor unit: the slider must be told so, and no figure may carry cents."""
+    document = _document()
+    assert 'data-currency="KRW" data-currency-digits="0"' in document
+    slider = document.split('data-jeval-action="auto_refund"', 1)[1].split("</div></div>", 1)[0]
+    # A compact figure ("KRW 17.6M") carries a suffix and three significant figures; a full
+    # amount carries none of the cents the won does not have.
+    amounts = re.findall(r"KRW [0-9][0-9,]*(?:\.[0-9]+)?[kMBT]?", slider)
+    assert amounts, "the slider should show at least one KRW figure"
+    full = [amount for amount in amounts if amount[-1].isdigit()]
+    assert full and all("." not in amount for amount in full), amounts
+
+
+def test_the_verdict_draws_both_lines_on_one_ruler() -> None:
+    document = _document()
+    verdict = document.split('id="verdict"', 1)[1].split("</section>", 1)[0]
+    assert 'class="ruler"' in verdict
+    assert "in use 0.60" in verdict and "recommended 0.68" in verdict
+    assert verdict.count("<title>") >= 1 and verdict.count("<desc>") >= 1

@@ -91,7 +91,8 @@ def test_css_styles_tabs_sliders_and_numbers() -> None:
     assert "::-webkit-slider-thumb" in REPORT_CSS
     assert "::-moz-range-thumb" in REPORT_CSS
     assert "[data-jeval-threshold]" in REPORT_CSS
-    assert ".num { font-family: var(--mono)" in REPORT_CSS
+    assert "font-variant-numeric: tabular-nums" in REPORT_CSS
+    assert ".num { font-family: var(--font)" in REPORT_CSS
 
 
 def test_css_referenced_attributes_match_the_javascript_contract() -> None:
@@ -181,12 +182,14 @@ def test_js_accepts_the_hooks_the_template_already_ships() -> None:
     assert "doc.getElementById(target)" in REPORT_JS
 
 
-def test_js_formats_money_the_way_the_svg_helpers_do() -> None:
-    # The slider's monthly figures use the same 1.2M / 45.3k / 890 compaction as the charts.
-    assert '"B"' in REPORT_JS
-    assert '"M"' in REPORT_JS
-    assert '"k"' in REPORT_JS
-    assert "toFixed(1)" in REPORT_JS
+def test_js_formats_money_the_way_the_python_helpers_do() -> None:
+    # The slider's figures follow jeval.currency: the same suffixes, three significant figures,
+    # and the currency's own decimals read from data-currency-digits rather than a fixed two.
+    for suffix in ('"T"', '"B"', '"M"', '"k"'):
+        assert suffix in REPORT_JS
+    assert "size >= 100 ? 0 : (size >= 10 ? 1 : 2)" in REPORT_JS
+    assert 'getAttribute("data-currency-digits")' in REPORT_JS
+    assert "amount(point.cost, 2)" not in REPORT_JS, "a fixed two decimals prints KRW with cents"
 
 
 # --------------------------------------------------------------------------------------
@@ -249,3 +252,21 @@ def test_minified_js_is_still_one_iife() -> None:
     assert "//" not in js
     assert "jeval-data" in js
     assert "summary_markdown" in js
+
+
+def test_dark_mode_remaps_the_ink_polygons_too() -> None:
+    # The verdict ruler's arrowhead is an ink polygon; unmapped, it is a black triangle on a dark
+    # panel while its shaft turns light.
+    dark = REPORT_CSS.split("@media (prefers-color-scheme: dark)", 1)[1]
+    assert f'polygon[fill="{chart_svg.INK}"]' in dark
+
+
+def test_one_axis_keeps_its_decimals_at_billion_scale() -> None:
+    ticks = [0.0, 5e8, 1e9, 1.5e9]
+    render = chart_svg.tick_format(ticks)
+    assert [render(value) for value in ticks] == ["0", "0.5B", "1.0B", "1.5B"]
+
+
+def test_the_phone_layout_does_not_leak_into_print() -> None:
+    assert "@media screen and (max-width: 720px)" in REPORT_CSS
+    assert "@media (max-width: 720px)" not in REPORT_CSS

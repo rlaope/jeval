@@ -323,3 +323,19 @@ def test_format_md_prints_only_the_paste_ready_summary(tmp_path: Path) -> None:
     assert "<html" not in result.stdout
     assert "**" in result.stdout
     assert not (project / "report.html").exists()
+
+
+def test_a_long_segment_label_does_not_run_into_its_bar() -> None:
+    import re
+
+    from jeval.report import svg as chart_svg
+    from jeval.report.charts import segments as segment_charts
+    from jeval.report.model import SegmentView
+
+    bars = segment_charts.bars_from_ece(
+        (("customer_tier", "enterprise_plus", 0.12, 200), ("lang", "en", 0.05, 300))
+    )
+    svg = segment_charts.render_segments(SegmentView(bars=bars))
+    label_width = chart_svg.text_width("customer_tier = enterprise_plus", 12.5, mono=True)
+    tracks = [float(x) for x in re.findall(r'<rect x="([0-9.]+)" y="[0-9.]+" width', svg)]
+    assert tracks and min(tracks) > label_width

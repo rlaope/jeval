@@ -43,10 +43,11 @@ main > .kicker { margin: 0; }
    pixel from the screen below it: the separation is a hairline, and the links carry the weight. */
 .index { margin: 0; font-size: 12px; color: var(--muted); border-top: 1px solid var(--rule); padding-top: 4px; }
 .index p { margin: 0; }
-.index a { color: var(--ink); font-weight: 650; text-decoration: underline; text-decoration-color: var(--ink); text-underline-offset: 2px; }
-.index a:hover { text-decoration-thickness: 2px; }
-.index code { font-size: 12px; }
-details.report > summary { margin-top: 8px; }
+.index a { color: var(--ink); font-weight: 600; text-decoration: underline; text-decoration-color: var(--rule-strong); text-decoration-thickness: 1px; text-underline-offset: 3px; }
+.index a:hover { text-decoration-color: var(--ink); }
+.index code, details.report code { font-size: 11.5px; background: none; padding: 0; color: var(--ink-2); }
+#screen h1 { margin-top: 8px; }
+details.report > summary { margin-top: 8px; color: var(--ink); }
 details.report .frame { padding: 0 0 10px; }
 details.report iframe { display: block; width: 100%; height: FRAME_HEIGHTpx; border: 1px solid var(--rule); background: transparent; }
 details.report .note { margin: 4px 0 0; font-size: 12px; color: var(--muted); }
