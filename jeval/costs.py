@@ -56,7 +56,7 @@ import yaml
 from numpy.typing import NDArray
 
 from jeval.calibration import DEFAULT_ALPHA
-from jeval.currency import format_amount
+from jeval.currency import format_amount, format_percent
 from jeval.report.model import CostPoint, ImpactRow, ImpactTable, ThresholdResult
 from jeval.schema import DecisionRecord
 
@@ -858,7 +858,7 @@ def _fmt_threshold(value: float) -> str:
 
 
 def _fmt_share(value: float) -> str:
-    return "n/a" if not math.isfinite(value) else f"{value:.0%}"
+    return format_percent(value)
 
 
 def _fmt_points(delta: float) -> str:

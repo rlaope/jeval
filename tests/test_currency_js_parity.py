@@ -13,7 +13,7 @@ import subprocess
 
 import pytest
 
-from jeval.currency import format_amount, format_compact, minor_units
+from jeval.currency import format_amount, format_compact, format_percent, minor_units
 from jeval.report.assets import REPORT_JS
 
 NODE = shutil.which("node")
@@ -72,3 +72,15 @@ def test_the_slider_prints_every_amount_the_way_the_table_does() -> None:
         if got != want
     ]
     assert mismatches == []
+
+
+def test_the_slider_prints_every_share_the_way_the_table_does() -> None:
+    shares = [0.0, 0.005, 0.125, 0.3, 0.335, 0.5, 0.905, 0.995, 1.0, 17 / 136, 45 / 200]
+    script = (
+        _functions()
+        + f"console.log(JSON.stringify({json.dumps(shares)}.map(function (v) {{ return pct(v); }})));"
+    )
+    result = subprocess.run(
+        [NODE or "node", "-e", script], capture_output=True, text=True, check=True, timeout=30
+    )
+    assert json.loads(result.stdout) == [format_percent(value) for value in shares]

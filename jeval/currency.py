@@ -1,4 +1,4 @@
-"""Money formatting that respects the currency it is formatting.
+"""Money formatting that respects the currency it is formatting, and the shares printed beside it.
 
 A cost matrix is written in whatever currency the business thinks in, and each currency has its own
 smallest unit. ``KRW 38,524,590.16`` is not a figure anyone in Seoul has ever read: the won has no
@@ -25,6 +25,7 @@ __all__ = [
     "format_amount",
     "format_compact",
     "format_delta",
+    "format_percent",
     "minor_units",
     "normalise_code",
 ]
@@ -183,3 +184,15 @@ def format_delta(value: float, code: str | None, *, unit: bool = True) -> str:
     else:
         sign = "+" if value > 0 else "-"
     return f"{sign}{normalise_code(code)} {body}" if unit else f"{sign}{body}"
+
+
+def format_percent(value: float, digits: int = 0) -> str:
+    """A share as a percentage, rounded the way the report's slider rounds it.
+
+    Not money, but it sits in the same table as money and is re-rendered by the same script: with
+    Python's half-to-even rule a share of exactly 12.5% read "12%" in the table and "13%" in the
+    live readout under it.
+    """
+    if not math.isfinite(value):
+        return "n/a"
+    return _fixed(value * 100.0, digits, grouped=False) + "%"

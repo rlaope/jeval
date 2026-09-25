@@ -79,7 +79,11 @@ def test_css_has_a_one_page_print_stylesheet() -> None:
     assert "break-inside: avoid" in print_block
     assert "table" in print_block
     assert "tr, th, td" in print_block
-    assert "figure svg { max-height:" in print_block
+    # A chart capped by height printed with five-point labels; it only ever shrinks to the width.
+    assert "figure svg { max-width: 100%; height: auto; }" in print_block
+    assert "max-height" not in print_block
+    # The printout says it is a summary, and names what it left in the file.
+    assert ".print-only { display: block !important;" in print_block
 
 
 def test_css_styles_tabs_sliders_and_numbers() -> None:
