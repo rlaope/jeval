@@ -8,6 +8,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- `jeval/currency.py`: money is printed in the currency's own decimals. `KRW` and `JPY` have no
+  minor unit, so a month reads `KRW 38,524,590` instead of `KRW 38,524,590.16`; `BHD`, `KWD` and
+  the other three-decimal currencies get three; most get two. An average smaller than one minor unit
+  keeps two significant figures instead of rounding to zero, and a free-form unit such as `credits`
+  is printed as written. The report's slider reads the decimals from `data-currency-digits`, so the
+  live readout and the table can no longer spell the same amount two ways. `--currency krw` is
+  normalised to `KRW`.
+- The verdict draws the line in use and the recommended line on one 0-1 ruler, with the
+  recommendation's 95% interval as a band and the move between them as an arrow. A phone gets its own
+  narrow drawing rather than a scaled-down one.
+- The reliability chart has its key figures beside it: ECE with its interval, MCE, Brier score,
+  labeled decisions and the widest bin gap.
 - `examples/workbench.html`: the one-screen argument and the full example report on one page. A
   kicker, an index of anchors, the one-argument screen inside the first 900px, and the report folded
   into a native `<details>` as an inline frame whose document is read from
@@ -28,6 +40,23 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   requires a byte-for-byte match.
 
 ### Changed
+- The report has a new design: a masthead with provenance as a definition list, a numbered section
+  index, a serif for headings over a sans for reading, tabular lining figures instead of monospace
+  digits, a warm paper palette with a separately chosen dark palette, and charts on white plates.
+  The two semantic hues are now blue for the recommendation and vermilion for the line in use,
+  validated as a colour-vision-deficiency-safe pair. Charts render at the size they were drawn for
+  instead of stretching their labels with the column, so the segment grid no longer prints 30px
+  numbers. Tables align text left and numbers right, wrap long reasons at a measure, keep
+  identifiers on one line, and mark each change with a direction and, where it has one, whether it
+  helps. The data-quality table is shown instead of folded away.
+- The cost curve names both lines above the plot, draws the recommendation as a line rather than
+  only a dot, places each point label on whichever side the curve leaves clear, and moves the
+  flat-region caption into the legend so it can no longer sit on top of the marker. Component lines
+  are grey, so blue only ever means "recommended". The footnote gives the cost matrix in full amounts
+  on its own line instead of running off the chart.
+- Axis ticks share one number format per axis (`1,800 / 1,900 / 2,000`, never `1.8k / 1.9k / 2k`).
+- The demo screen and the workbench follow the same design language and currency formatting.
+
 - The report is one calm document instead of a stack of bordered panels. A real type scale, more
   generous spacing, and two semantic colours — the accent for the line the report recommends, the
   alert for the line in use — replaced the old boxed-and-shadowed layout. The header states its
@@ -54,6 +83,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   reader from install to an open report in three lines.
 
 ### Fixed
+- The verdict described the threshold in use as "auto below it". Cases at or above the threshold run
+  automatically, and the label now says so.
+- An empty generation stamp printed a bare "Generated" label in the header; the row is now omitted.
 - A dark-mode report painted the chart layer's greys with their light-theme values, so near-black
   text sat on a dark panel. The dark block's grey re-map is generated from the chart layer's own
   constants now, and a test fails when a new grey is added without one. The alert red is themed for

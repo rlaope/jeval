@@ -30,8 +30,8 @@ IMPACT_ROWS = (
     ("confidence threshold", "0.60", "0.75", "+0.15"),
     ("auto rate", "33%", "30%", "-2.9 pt"),
     ("accuracy (auto)", "85%", "91%", "+5.4 pt"),
-    ("cost per case", "KRW 1,926.23", "KRW 1,737.70", "-9.8%"),
-    ("monthly cost", "KRW 38,524,590.16", "KRW 34,754,098.36", "-9.8%"),
+    ("cost per case", "KRW 1,926", "KRW 1,738", "-9.8%"),
+    ("monthly cost", "KRW 38,524,590", "KRW 34,754,098", "-9.8%"),
 )
 
 
@@ -71,7 +71,9 @@ def test_the_example_report_carries_nothing_from_this_machine() -> None:
     html = _artifact()
     for token in ("/Users/", "khope", "@sionic", "Desktop", "/home/"):
         assert token not in html, f"the example report leaks {token!r}"
-    assert "source: examples/" in html, "the source note should be a repository-relative path"
+    assert '<dt>Source</dt><dd class="path">examples/' in html, (
+        "the source note should be a repository-relative path"
+    )
 
 
 def test_the_artifact_is_reproducible_from_the_documented_command() -> None:

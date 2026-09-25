@@ -52,13 +52,18 @@ a byte-for-byte match, one `<h1>`, both thresholds named in words, and no `<scri
 
 ### Design language
 
-All three follow the same contract, measured off comparable open-source generated evaluation
-reports rather than invented: 14px body, a 20-22px title (never a display-size number standing in
-for a heading), 16px section headings, 11px uppercase muted table headers, one left-aligned column
-around 930-1000px, corners of 0-2px, no cards or shadows, sans for human labels and monospace for
-every machine value, numbers right-aligned, a colour budget of greyscale plus two semantic hues and
-at most one accent (re-chosen for dark mode so the hues stay separable), and a status badge that
-carries the word `PASS` or `FAIL` so nothing depends on colour alone.
+All three share one design language, and the report's stylesheet
+(`jeval/report/assets.py`) is where it is written down:
+
+| | |
+| --- | --- |
+| **Surfaces** | warm paper `#f7f6f2` with white plates for charts; dark mode is its own palette (`#141412`), not an inversion |
+| **Type** | a serif for the title and section headings (Iowan Old Style, Charter, Cambria, Georgia), a sans for everything read (Inter, SF Pro, Segoe UI, Roboto), and a mono only for identifiers and code. No web font: each stack names the best face a reader is likely to have and falls through to the platform's own |
+| **Scale** | 12 / 13 / 14 / 15 body / 17 / 22 / 26 / 34 px; chart labels 11.5-12.5 px, drawn at the chart's own size and never stretched |
+| **Numbers** | tabular lining figures in the sans face, right-aligned; money in the currency's own decimals (`KRW 38,524,590`, `USD 1,926.23`) from `jeval.currency` |
+| **Tables** | sentence-case 12 px headers over a heavier rule, hairlines between rows, text left and numbers right, long reasons wrapped at a measure; the recommended column carries a tint, and a change carries an arrow and "better / worse" colour on top of its sign |
+| **Colour** | greys for data; blue `#1f5fbf` for the line the report recommends and vermilion `#d1491f` for the line in use, a pair validated for colour-vision deficiency (CVD delta-E 24.6 on white). Neither is ever the only signal: every mark is also named, dashed or solid |
+| **Charts** | inline SVG with `<title>` and `<desc>`, no y-axis spine, labels placed where the curve leaves room, and a status word (`PASS`, `FAIL`, `Threshold too low`) wherever a colour states a verdict |
 
 ## Run the sample
 

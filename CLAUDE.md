@@ -40,6 +40,7 @@ and a pull request adding them will be closed:
 | `jeval/evaluate.py` | record set to report-ready structures; gold/silver separation |
 | `jeval/synth.py` | synthetic logs with known miscalibration; shared by tests and `jeval demo` |
 | `jeval/costs.py` | cost matrix, threshold sweep, the bootstrap interval on the threshold, impact table |
+| `jeval/currency.py` | money formatting in each currency's own decimals (ISO 4217 minor units); presentation only, never conversion |
 | `jeval/drift.py` | slices by model version or period, model-change detection, `--fail-on` checks, CI text block |
 | `jeval/baseline.py` | baseline snapshots: measurements only, never records |
 | `jeval/collect.py` | the provider-neutral recorder: `track()`/`record()`, env-gated, best-effort, never raises |
