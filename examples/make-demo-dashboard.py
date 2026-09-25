@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from jeval.cli import resolve_cost_actions, sweep_actions
+from jeval.currency import format_amount
 from jeval.drift import parse_fail_on, run_checks
 from jeval.evaluate import DatasetReport, evaluate
 from jeval.report import svg as S
@@ -239,8 +240,8 @@ def _threshold_line(
                 LABEL_Y,
                 label,
                 anchor=anchor,
-                size=13.5,
-                weight=700,
+                size=13,
+                weight=600,
                 cls=label_cls,
                 halo=True,
             ),
@@ -292,7 +293,8 @@ def _chart(screen: Screen) -> str:
             ),
             desc=(
                 f"Cost per case is lowest at threshold {S.fmt(belongs)}, where it is "
-                f"{S.money(per_case)}, and higher at the {S.fmt(current)} currently in use. The "
+                f"{format_amount(per_case, currency)}, and higher at the {S.fmt(current)} currently "
+                "in use. The "
                 "bars below the curve show how many decisions sit in each confidence range."
             ),
             cls="hero",
@@ -315,19 +317,17 @@ def _chart(screen: Screen) -> str:
         )
 
     # Few gridlines: horizontal only, at round costs. The x axis gets tick marks, not a lattice.
-    for value in S.nice_ticks(y_lo, y_hi, target=4):
+    y_ticks = S.nice_ticks(y_lo, y_hi, target=4)
+    y_label = S.tick_format(y_ticks)
+    for value in y_ticks:
         y = py(value)
         parts.append(S.line(x0, y, x1, y, cls="grid"))
-        parts.append(
-            S.text(x0 - 10, y + 4.5, S.money(value), anchor="end", size=13, mono=True, cls="tick")
-        )
+        parts.append(S.text(x0 - 10, y + 4, y_label(value), anchor="end", size=11.5, cls="tick"))
     for value in (0.0, 0.25, 0.5, 0.75, 1.0):
         x = px(value)
         parts.append(S.line(x, strip_bottom, x, strip_bottom + 6, cls="axis"))
-        parts.append(
-            S.text(x, X_TICK_Y, S.fmt(value), anchor="middle", size=13, mono=True, cls="tick")
-        )
-    parts.append(S.line(x0, y_bottom, x1, y_bottom, cls="axis"))
+        parts.append(S.text(x, X_TICK_Y, S.fmt(value), anchor="middle", size=11.5, cls="tick"))
+    parts.append(S.line(x0, y_bottom, x1, y_bottom, cls="baseline"))
     parts.append(S.line(x0, strip_bottom, x1, strip_bottom, cls="axis"))
     parts.append(
         S.text(
@@ -335,7 +335,8 @@ def _chart(screen: Screen) -> str:
             X_TITLE_Y,
             "threshold: how sure the model has to be before it answers alone",
             anchor="middle",
-            size=13,
+            size=12,
+            weight=500,
             cls="label",
         )
     )
@@ -345,7 +346,8 @@ def _chart(screen: Screen) -> str:
             (y_top + y_bottom) / 2.0,
             f"cost per case ({currency})",
             anchor="middle",
-            size=13,
+            size=12,
+            weight=500,
             cls="label",
             rotate=-90,
             rotate_at=(Y_TITLE_X, (y_top + y_bottom) / 2.0),
@@ -381,8 +383,7 @@ def _chart(screen: Screen) -> str:
                         strip_bottom - height - 4,
                         f"{count:,}",
                         anchor="middle",
-                        size=13,
-                        mono=True,
+                        size=11.5,
                         cls="tick",
                     )
                 )
@@ -391,14 +392,14 @@ def _chart(screen: Screen) -> str:
                 x0,
                 strip_top - 9,
                 f"{screen.metrics.n:,} labeled decisions in these bands",
-                size=13,
-                cls="label",
+                size=12,
+                cls="note",
             )
         )
         # The strip has its own unit, so it gets its own axis label; without one, bar heights read
         # as cost levels.
         parts.append(
-            S.text(x0 - 10, strip_top + 12, "decisions", anchor="end", size=11, cls="tick")
+            S.text(x0 - 10, strip_top + 12, "decisions", anchor="end", size=11.5, cls="tick")
         )
 
     parts.append(
@@ -416,8 +417,8 @@ def _chart(screen: Screen) -> str:
                 py(plateau) + 18,
                 f"flat to {S.fmt(plateau_end)}: every case the model would handle alone already "
                 "sits above the line",
-                size=12.5,
-                cls="label",
+                size=12,
+                cls="note",
                 halo=True,
             )
         )
@@ -429,11 +430,11 @@ def _chart(screen: Screen) -> str:
             S.text(
                 px(current) - 12,
                 y_now - 10,
-                f"{currency} {at_current.expected_cost:,.2f} per case",
+                f"{format_amount(at_current.expected_cost, currency)} per case",
                 anchor="end",
-                size=13,
-                mono=True,
-                cls="tick",
+                size=12.5,
+                weight=600,
+                cls="inuse-value",
                 halo=True,
             )
         )
@@ -451,10 +452,10 @@ def _chart(screen: Screen) -> str:
         S.text(
             px(belongs) + 10,
             py(per_case) + 18,
-            f"{currency} {per_case:,.2f} per case",
-            size=13,
-            mono=True,
-            cls="tick",
+            f"{format_amount(per_case, currency)} per case",
+            size=12.5,
+            weight=600,
+            cls="belongs-value",
             halo=True,
         )
     )
@@ -488,9 +489,8 @@ def _chart(screen: Screen) -> str:
                 LABEL_Y + 16,
                 f"shaded: 95% interval {S.fmt(ci_low)}–{S.fmt(ci_high)}",
                 anchor="end",
-                size=13,
-                mono=True,
-                cls="tick",
+                size=12,
+                cls="note",
                 halo=True,
             )
         )
@@ -503,78 +503,136 @@ def _chart(screen: Screen) -> str:
 # --------------------------------------------------------------------------------------
 CSS = """\
 * { box-sizing: border-box; }
-/* Six colours in each scheme: surface, ink, muted, hairline, the one accent (the line the cost
-   minimum points at) and the failure hue. The line in use is drawn in ink, dashed. */
+/* The report's palette, one step smaller: warm paper, three inks, two hairlines, and two semantic
+   hues -- blue for the line the cost minimum points at, vermilion for the line in use and for a
+   failing gate. Text in either hue wears its darker -ink step so it clears 4.5:1. */
 :root {
-  --bg: #ffffff; --ink: #1c1e21; --muted: #6b7280; --rule: #e5e7eb;
-  --belongs: #1d5fcf; --fail: #c5221f;
-  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color-scheme: light dark;
+  --bg: #f7f6f2; --panel: #ffffff; --panel-alt: #f0eee8;
+  --ink: #1b1a17; --ink-2: #3f3d38; --muted: #6f6b63; --rule: #e4e0d8; --rule-strong: #cfcac0;
+  --accent: #1f5fbf; --accent-ink: #1a4f9e; --accent-soft: #e9f0fa;
+  --alert: #d1491f; --alert-ink: #ad3a14; --good: #1d7a4b;
+  /* No web font: nothing is fetched. Numbers use the sans face with tabular figures; the mono
+     face is for identifiers only. */
+  --font: Inter, "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text",
+    "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --serif: "Iowan Old Style", Charter, "Bitstream Charter", "Sitka Heading", "Source Serif Pro",
+    Cambria, Georgia, serif;
+  --mono: "JetBrains Mono", "SF Mono", SFMono-Regular, ui-monospace, "Cascadia Mono",
+    "Roboto Mono", Menlo, Consolas, monospace;
 }
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #16181c; --ink: #e6e6e6; --muted: #9aa0a6; --rule: #2c2f36;
-    --belongs: #7fb0ff; --fail: #f28b82;
+    color-scheme: dark;
+    --bg: #141412; --panel: #1b1b18; --panel-alt: #25241f;
+    --ink: #eeece6; --ink-2: #cfccc3; --muted: #a19d93; --rule: #2e2d28; --rule-strong: #45433c;
+    --accent: #4f8be8; --accent-ink: #8fb6f5; --accent-soft: #1b2535;
+    --alert: #e8683a; --alert-ink: #f59a74; --good: #5cc98f;
   }
 }
 html, body { margin: 0; background: var(--bg); color: var(--ink); }
-body { font: 14px/1.5 var(--sans); -webkit-font-smoothing: antialiased; }
-main { max-width: 992px; margin: 0; padding: 20px 16px 16px; }
+body {
+  font: 15px/1.5 var(--font); font-feature-settings: "cv11", "ss01";
+  -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;
+}
+main { max-width: 992px; margin: 0; padding: 18px 16px 16px; }
 
-/* A technical report, not a landing page: a small title, a row of facts, then the evidence. Type
-   size, weight and hairline rules carry the hierarchy; nothing is boxed, tinted or shadowed. */
+/* A technical report, not a landing page: a small kicker, the claim in the serif, a row of facts,
+   then the evidence. Type size, weight and hairline rules carry the hierarchy. */
 header p { margin: 0; }
 .kicker { font-size: 12px; color: var(--muted); }
-.kicker .synthetic { color: var(--ink); }
-h1 { margin: 4px 0 0; font-size: 22px; line-height: 1.3; font-weight: 700; }
-h1 .answer { font-family: var(--mono); font-weight: 700; color: var(--belongs); }
-h2 { margin: 12px 0 6px; font-size: 16px; line-height: 1.4; font-weight: 700; padding-bottom: 4px; border-bottom: 1px solid var(--rule); }
-.facts { display: flex; flex-wrap: wrap; gap: 4px 0; margin-top: 8px; padding: 6px 0; border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); font-size: 13px; color: var(--muted); }
-.facts span.fact { padding-right: 10px; margin-right: 10px; border-right: 1px solid var(--rule); }
+.kicker .synthetic { color: var(--ink-2); font-weight: 600; }
+h1 {
+  margin: 4px 0 0; font-family: var(--serif); font-size: 26px; line-height: 1.2;
+  font-weight: 600; letter-spacing: -0.012em;
+}
+h1 .answer { font-variant-numeric: tabular-nums lining-nums; color: var(--accent-ink); }
+h2 {
+  margin: 12px 0 4px; padding-top: 8px; border-top: 1px solid var(--rule-strong);
+  font-family: var(--serif); font-size: 17px; line-height: 1.3; font-weight: 600;
+}
+/* The facts row already closes the header with a hairline; a second rule under it is noise. */
+header + h2 { margin-top: 10px; padding-top: 0; border-top: 0; }
+.facts {
+  display: flex; flex-wrap: wrap; gap: 4px 0; margin-top: 8px; padding: 6px 0;
+  border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule);
+  font-size: 13px; color: var(--muted);
+}
+.facts span.fact { padding-right: 12px; margin-right: 12px; border-right: 1px solid var(--rule); }
 .facts span.fact:last-child { border-right: 0; margin-right: 0; padding-right: 0; }
-code, .v { font-family: var(--mono); font-variant-numeric: tabular-nums; color: var(--ink); }
-.v.belongs { color: var(--belongs); font-weight: 600; }
+.v { font-variant-numeric: tabular-nums lining-nums; color: var(--ink); font-weight: 600; }
+.v.belongs { color: var(--accent-ink); }
+code {
+  font-family: var(--mono); font-size: 0.86em; color: var(--ink-2);
+  background: var(--panel-alt); border-radius: 3px; padding: 1px 5px;
+}
 
 /* The status badge carries the word, with a stroke; readable in greyscale, never colour alone. */
-.badge { display: inline-block; font: 600 11px/1.4 var(--sans); letter-spacing: .04em; padding: 0 6px; border: 1px solid currentColor; border-radius: 2px; vertical-align: 1px; }
-.badge.fail { color: var(--fail); }
-.badge.pass { color: var(--muted); }
+.badge {
+  display: inline-block; font: 600 11px/1.45 var(--font); letter-spacing: .04em;
+  padding: 0 6px; border: 1px solid currentColor; border-radius: 3px; vertical-align: 1px;
+}
+.badge.fail { color: var(--alert-ink); }
+.badge.pass { color: var(--good); }
 
-table { width: 100%; border-collapse: collapse; margin: 2px 0 0; }
-th, td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--rule); vertical-align: top; line-height: 1.45; }
-th { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 600; }
+/* Text reads left, numbers right in tabular figures; a heavier rule under the header, hairlines
+   between rows. The column the page argues for is the one with a ground. */
+table { width: 100%; border-collapse: collapse; margin: 2px 0 0; font-size: 14px; }
+th, td { text-align: left; padding: 4px 12px; border-bottom: 1px solid var(--rule); vertical-align: top; line-height: 1.4; }
+th:first-child, td:first-child { padding-left: 0; }
+thead th {
+  font-size: 12px; font-weight: 600; color: var(--muted); white-space: nowrap;
+  border-bottom: 1px solid var(--rule-strong); padding-top: 2px;
+}
 td.num, th.num { text-align: right; white-space: nowrap; }
-td.num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+td.num { font-variant-numeric: tabular-nums lining-nums; }
+td:first-child { color: var(--ink-2); }
 td.was { color: var(--muted); }
+table.impact th:nth-child(3), table.impact td:nth-child(3) { background: var(--accent-soft); }
+table.impact thead th:nth-child(3) { color: var(--accent-ink); box-shadow: inset 0 2px 0 var(--accent); }
 td.now { font-weight: 600; }
+tbody tr:last-child td { border-bottom: 0; }
 
 figure { margin: 0; }
 figure svg { display: block; width: 100%; height: auto; }
-figcaption { font-size: 12px; color: var(--muted); }
+figcaption { font-size: 12px; line-height: 1.5; color: var(--muted); }
+svg text { font-variant-numeric: tabular-nums; }
 
 /* Chart colours are classes, so the chart follows prefers-color-scheme like the page does. */
 .grid { stroke: var(--rule); stroke-width: 1; }
-.axis { stroke: var(--muted); stroke-width: 1; }
-text.tick, text.label { fill: var(--muted); }
+.axis { stroke: var(--ink-2); stroke-width: 1; }
+.baseline { stroke: var(--rule-strong); stroke-width: 1; }
+text.tick, text.note { fill: var(--muted); }
+text.label { fill: var(--ink); }
 .halo { paint-order: stroke; stroke: var(--bg); stroke-width: 4px; stroke-linejoin: round; }
-.curve { fill: none; stroke: var(--ink); stroke-width: 1.6; }
-.ci-band { fill: var(--belongs); opacity: .10; }
-.dist { fill: var(--muted); opacity: .45; }
-.min-dot { fill: var(--belongs); }
-.inuse-dot { fill: var(--ink); }
-.inuse-line { stroke: var(--ink); stroke-width: 1.4; }
-.belongs-line { stroke: var(--belongs); stroke-width: 2; }
-text.inuse-label { fill: var(--ink); }
-text.belongs-label { fill: var(--belongs); }
+.curve { fill: none; stroke: var(--ink); stroke-width: 2; }
+.ci-band { fill: var(--accent); opacity: .10; }
+.dist { fill: var(--muted); opacity: .38; }
+.min-dot { fill: var(--accent); stroke: var(--bg); stroke-width: 2px; }
+.inuse-dot { fill: var(--alert); stroke: var(--bg); stroke-width: 2px; }
+.inuse-line { stroke: var(--alert); stroke-width: 1.6; }
+.belongs-line { stroke: var(--accent); stroke-width: 2; }
+text.inuse-label { fill: var(--alert-ink); }
+text.belongs-label { fill: var(--accent-ink); }
+text.inuse-value { fill: var(--alert-ink); }
+text.belongs-value { fill: var(--accent-ink); }
 
 details { border-bottom: 1px solid var(--rule); }
-details > summary { cursor: pointer; padding: 6px 0; font-size: 14px; list-style: none; }
+details > summary {
+  cursor: pointer; padding: 6px 0; font-size: 13px; color: var(--ink-2); list-style: none;
+}
+details > summary:hover { color: var(--ink); }
 details > summary::-webkit-details-marker { display: none; }
-details > summary::before { content: "+ "; color: var(--muted); font-family: var(--mono); }
-details[open] > summary::before { content: "- "; }
-details .body { padding: 2px 0 10px; font-size: 13px; color: var(--muted); }
+details > summary::before {
+  content: ""; display: inline-block; vertical-align: 2px; width: 6px; height: 6px;
+  margin: 0 10px 0 2px;
+  border-right: 1.5px solid var(--muted); border-bottom: 1.5px solid var(--muted);
+  transform: rotate(-45deg);
+}
+details[open] > summary::before { transform: rotate(45deg); }
+details .body { padding: 2px 0 10px; font-size: 13px; color: var(--ink-2); }
 details .body p { margin: 0 0 4px; max-width: 90ch; }
-.fail-text { color: var(--fail); font-weight: 600; }
+.fail-text { color: var(--alert-ink); font-weight: 600; }
 
 @media (max-width: 900px) {
   table { display: block; max-width: 100%; overflow-x: auto; }
@@ -616,8 +674,8 @@ def _facts(screen: Screen) -> str:
         f' (95% <span class="v">{S.escape(S.fmt(result.ci_low))}–'
         f"{S.escape(S.fmt(result.ci_high))}</span>)",
         f'<span class="v">{screen.metrics.n:,}</span> labeled decisions of '
-        f'<span class="v">{S.escape(screen.question)}</span>',
-        f'action <span class="v">{S.escape(screen.question_label)}</span>',
+        f"<code>{S.escape(screen.question)}</code>",
+        f"action <code>{S.escape(screen.question_label)}</code>",
         f'<span class="v">{len(screen.dataset.questions)}</span> questions',
     )
     return '<p class="facts">' + "".join(f'<span class="fact">{f}</span>' for f in facts) + "</p>"
@@ -631,9 +689,10 @@ def _details(screen: Screen) -> str:
     """
     result = screen.result
     costs = (
-        f"Cost counts an auto-accept miss at {CURRENCY} {result.cost_false_accept:,.0f} and a "
-        f"review at {CURRENCY} {result.cost_escalate:,.0f}, from a synthetic cost matrix. The "
-        f"minimum is {CURRENCY} {result.expected_cost_per_case:,.2f} per case; the 95% bootstrap "
+        f"Cost counts an auto-accept miss at {format_amount(result.cost_false_accept, CURRENCY)} "
+        f"and a review at {format_amount(result.cost_escalate, CURRENCY)}, from a synthetic cost "
+        f"matrix. The minimum is {format_amount(result.expected_cost_per_case, CURRENCY)} per "
+        "case; the 95% bootstrap "
         f"interval on where it sits is {S.fmt(result.ci_low)}–{S.fmt(result.ci_high)}, "
         f"n={result.n_records:,}. Everything on this page is synthetic."
     )
@@ -682,7 +741,8 @@ def render_body(screen: Screen, *, kicker: str) -> str:
     # look like a cliff, so the chart says so in words. Both numbers come from the curve itself.
     costs = [p.expected_cost for p in screen.result.curve if p.expected_cost == p.expected_cost]
     zoom_note = (
-        f"The vertical axis is truncated at {S.money(min(costs))} instead of zero, so the drop "
+        f"The vertical axis is truncated near {format_amount(min(costs), screen.impact.currency)} "
+        "instead of zero, so the drop "
         f"looks larger than it is: the whole effect is {delta} on cost per case."
         if costs and delta
         else ""

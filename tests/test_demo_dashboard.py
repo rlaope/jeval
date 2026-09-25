@@ -20,6 +20,8 @@ import sys
 from pathlib import Path
 from types import ModuleType
 
+from jeval.currency import format_amount
+
 REPO = Path(__file__).resolve().parent.parent
 SCRIPT = REPO / "examples" / "make-demo-dashboard.py"
 ARTIFACT = REPO / "examples" / "demo-dashboard.html"
@@ -115,7 +117,7 @@ def test_the_answer_is_the_loudest_number_on_the_page() -> None:
 
 def test_the_numbers_on_screen_are_the_computed_ones() -> None:
     html, screen = _script().build_document()
-    assert f"{screen.result.expected_cost_per_case:,.2f}" in html
+    assert format_amount(screen.result.expected_cost_per_case, screen.impact.currency) in html
     assert f"n={screen.result.n_records:,}" in html
     assert f"{screen.metrics.n:,} labeled decisions" in html
     for row in screen.impact.rows:
