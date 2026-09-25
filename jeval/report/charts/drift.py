@@ -19,7 +19,7 @@ BOTTOM = 70.0
 CHANGE_COLOUR = S.ALERT
 
 
-def render_ece_series(view: DriftView, *, width: float = WIDTH, height: float = 320.0) -> str:
+def render_ece_series(view: DriftView, *, width: float = WIDTH, height: float = 340.0) -> str:
     """ECE per slice with a vertical marker wherever the serving model changed."""
     slices = view.slices
     if not slices:
@@ -27,11 +27,14 @@ def render_ece_series(view: DriftView, *, width: float = WIDTH, height: float = 
     values = [s.ece for s in slices if s.ece == s.ece]
     if not values:
         return ""
-    top = 44.0
+    top = 64.0
     lo, hi = min(values), max(values)
     pad = max(0.005, (hi - lo) * 0.15)
     plot_top, plot_bottom = top, height - BOTTOM
-    x = S.lin_scale((0.0, max(1.0, len(slices) - 1.0)), (LEFT, width - RIGHT))
+    # Points sit inside the plot, not on its edges: a slice drawn on the right edge has nowhere to
+    # put its label or its model-change marker's name.
+    inset = 60.0
+    x = S.lin_scale((0.0, max(1.0, len(slices) - 1.0)), (LEFT + inset, width - RIGHT - inset))
     y = S.lin_scale((0.0, hi + pad), (plot_bottom, plot_top))
 
     desc = (
@@ -40,8 +43,8 @@ def render_ece_series(view: DriftView, *, width: float = WIDTH, height: float = 
     )
     parts: list[str] = [
         S.svg_open(width, height, title="ECE over time", desc=desc, cls="chart"),
-        S.text(LEFT, 22, "ECE over time", size=12.5, weight=600),
-        S.text(LEFT, 38, f"{view.baseline_label} → {view.current_label}", size=11, fill=S.MUTED),
+        S.text(LEFT, 20, "ECE over time", size=13, weight=600),
+        S.text(LEFT, 38, f"{view.baseline_label} → {view.current_label}", size=11.5, fill=S.MUTED),
     ]
     y_ticks = S.nice_ticks(0.0, hi + pad, target=4)
     parts.append(S.grid_y(y, y_ticks, x0=LEFT, x1=width - RIGHT))
@@ -54,15 +57,19 @@ def render_ece_series(view: DriftView, *, width: float = WIDTH, height: float = 
     for model, index in changed.items():
         if index == 0:
             continue
+        marker_x = x(float(index))
+        label = f"model changed: {model}"
+        anchor = "start" if marker_x + 6 + S.text_width(label, 11.5) <= width - 4 else "end"
         parts.append(
             S.marker_line(
-                x(float(index)),
+                marker_x,
                 y0=plot_top,
                 y1=plot_bottom,
-                label=model,
+                label=label,
                 colour=CHANGE_COLOUR,
                 dash="4 3",
-                label_y=plot_top - 8,
+                label_y=plot_top - 10,
+                anchor=anchor,
             )
         )
 
@@ -80,16 +87,22 @@ def render_ece_series(view: DriftView, *, width: float = WIDTH, height: float = 
                 tooltip=f"{sl.label} · {sl.model} · ECE {S.fmt(sl.ece, 3)} · n={sl.n}",
             )
         )
+        # The slice's name, then the model it ran on: two slices of one question are otherwise
+        # labelled identically, and the reader cannot tell which point is which version.
         parts.append(
-            S.text(
-                x(float(index)),
-                plot_bottom + 32,
-                sl.label,
-                anchor="middle",
-                size=10.0,
-                fill=S.MUTED,
-            )
+            S.text(x(float(index)), plot_bottom + 22, sl.label, anchor="middle", size=11.5)
         )
+        if sl.model and sl.model != sl.label:
+            parts.append(
+                S.text(
+                    x(float(index)),
+                    plot_bottom + 38,
+                    f"{sl.model} · n={sl.n:,}",
+                    anchor="middle",
+                    size=11,
+                    fill=S.MUTED,
+                )
+            )
     parts.append(
         S.axis_y(y, x=LEFT, tick_values=y_ticks, format_=lambda v: S.fmt(v, 2), title="ECE")
     )
@@ -97,7 +110,7 @@ def render_ece_series(view: DriftView, *, width: float = WIDTH, height: float = 
         S.legend(
             [("ECE by slice", S.INK, "dot"), ("model changed", CHANGE_COLOUR, "dash")],
             x=LEFT,
-            y=height - 10,
+            y=height - 6,
         )
     )
     parts.append(S.svg_close())
@@ -282,25 +295,32 @@ def render_drift_section(
             + "</ul></div>"
         )
     parts.append(
-        "<figure>"
+        '<div class="plate"><figure>'
         f"{render_ece_series(view)}"
         "<figcaption>Expected calibration error per slice. The dashed rule marks the slice where "
         "the model changed — the break in the series is the evidence, not the label.</figcaption>"
-        "</figure>"
+        "</figure></div>"
     )
     if baseline_metrics is not None and current_metrics is not None:
         parts.append(
-            f"<figure>{render_overlay(baseline_metrics, current_metrics, baseline_label=view.baseline_label, current_label=view.current_label, threshold=threshold)}"
-            "<figcaption>The same two slices as reliability curves. Two curves pulling apart is "
+            '<div class="plate"><figure>'
+            + render_overlay(
+                baseline_metrics,
+                current_metrics,
+                baseline_label=view.baseline_label,
+                current_label=view.current_label,
+                threshold=threshold,
+            )
+            + "<figcaption>The same two slices as reliability curves. Two curves pulling apart is "
             "drift; one curve sitting below the dashed diagonal is overconfidence.</figcaption>"
-            "</figure>"
+            "</figure></div>"
         )
     steps = render_threshold_steps(view)
     if steps:
         parts.append(
-            f"<figure>{steps}"
+            f'<div class="plate"><figure>{steps}'
             "<figcaption>A step means the cost-optimal line moved for that slice.</figcaption>"
-            "</figure>"
+            "</figure></div>"
         )
     parts.append(
         S.details_table(
