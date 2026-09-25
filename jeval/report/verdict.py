@@ -275,7 +275,7 @@ def _stats(
     stats: list[VerdictStat] = []
     if current is not None:
         stats.append(
-            VerdictStat(label="Current threshold", value=fmt(current, 2), sub="auto below it")
+            VerdictStat(label="Current threshold", value=fmt(current, 2), sub="auto at or above it")
         )
     if metrics.n > 0:
         stats.append(VerdictStat(label="Measured accuracy", value=accuracy, sub=accuracy_sub))
