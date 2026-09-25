@@ -337,7 +337,7 @@ And what acting on it would change:
 </table>
 
 None of these numbers were typed in by hand, because the report itself is in the repository. Open
-[`examples/report-example.html`](examples/report-example.html) in a browser (one 285 KB file, no
+[`examples/report-example.html`](examples/report-example.html) in a browser (one 292 KB file, no
 network, no server), or build it again yourself:
 
 ```sh
@@ -347,7 +347,8 @@ cp examples/report-example/report.html examples/report-example.html
 
 ### Money is written the way its currency is
 
-Costs are printed in the currency you name with `--currency` (default `USD`), using that currency's
+Costs are printed in the currency you name with `--currency` (default `USD`) — in the report and in
+`jeval threshold`'s terminal output alike — using that currency's
 own decimals from ISO 4217: `KRW` and `JPY` have none, so a month reads `KRW 38,524,590` rather than
 `KRW 38,524,590.16`; `BHD` and `KWD` have three; most others have two. A per-case average smaller than
 one unit keeps two significant figures instead of rounding to zero, and any unit you pass that is

@@ -7,6 +7,7 @@ the QA report: observability, degenerate inputs, and claims the report made with
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -261,3 +262,28 @@ def test_unparseable_log_lines_still_name_their_file_and_line(tmp_path: Path) ->
 
     assert "bad.jsonl row 1" in result.stdout
     assert read_records(tmp_path / ".jeval" / "records.jsonl") == []
+
+
+def test_the_terminal_writes_money_the_way_the_report_does(tmp_path: Path) -> None:
+    """QA: the report said "KRW 1,738" while `jeval threshold` printed "1,738" or "1,737.70"."""
+    _demo(tmp_path)
+    result = runner.invoke(
+        app,
+        [
+            "threshold",
+            "--root",
+            str(tmp_path),
+            "--costs",
+            str(tmp_path / "costs.yaml"),
+            "--currency",
+            "krw",
+            "--by",
+            "lang",
+            "-o",
+            str(tmp_path / "t.yaml"),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert re.search(r"· KRW [0-9][0-9,]* per case", result.output)
+    assert "cost/case (KRW)" in result.output
+    assert not re.search(r"KRW [0-9,]+\.[0-9]", result.output), "the won has no minor unit"

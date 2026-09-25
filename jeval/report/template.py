@@ -95,9 +95,12 @@ def render_document(
                     "curve": [
                         {
                             "t": round(point.threshold, 4),
-                            "cost": round(point.expected_cost, 6),
-                            "auto": round(point.auto_rate, 6),
-                            "acc": round(point.accuracy_auto, 6),
+                            # Full precision: the slider formats these with the same
+                            # rounding as the table above it, and a value cut to six decimals
+                            # can land on the other side of a tie.
+                            "cost": point.expected_cost,
+                            "auto": point.auto_rate,
+                            "acc": point.accuracy_auto,
                         }
                         for point in result.curve
                     ],
@@ -123,6 +126,11 @@ def render_document(
         '<main class="report">',
     ]
     parts.append(_header(model))
+    parts.append(
+        '<p class="print-only">Printed summary: the verdict, the reliability of the question open on '
+        "screen, and the first action's cost and impact. Segments, score questions, labels, drift "
+        "and the data tables are in the HTML file this was printed from.</p>"
+    )
     parts.append(_toc(sections))
     if model.data_quality.silver_only:
         parts.append(
@@ -396,7 +404,7 @@ def _cost_section(
             "<code>jeval threshold</code>.</p></section>"
         )
     body = "".join(
-        '<h3 class="action-head">'
+        '<div class="action-block"><h3 class="action-head">'
         f'<span class="ident">{escape(result.action)}</span>'
         + (
             f' <span class="block-sub">{escape(result.question)} = {escape(result.when)} · '
@@ -411,6 +419,7 @@ def _cost_section(
             impact=model.impacts.get(result.action) or model.impact,
             slider_id=f"threshold-slider-{_slug(result.action)}",
         )
+        + "</div>"
         for result in thresholds
     )
     splits = ""
@@ -430,7 +439,7 @@ def _cost_section(
             for row in model.segment_thresholds
         )
         splits = (
-            "<h3>Does one threshold fit every segment?</h3>"
+            '<div class="splits"><h3>Does one threshold fit every segment?</h3>'
             '<p class="intro">A split is recommended only when a segment&rsquo;s own optimum moves '
             "by more than one sweep step <em>and</em> adopting it changes cost per case by more "
             "than 2%. Everything else is the same threshold with extra machinery, and this table "
@@ -440,7 +449,7 @@ def _cost_section(
             '<thead><tr><th>Segment</th><th class="num">Threshold</th>'
             f'<th class="num">Cost / case ({escape(currency)})</th>'
             f'<th class="num">vs global</th><th class="num">n</th><th>Verdict</th></tr></thead>'
-            f"<tbody>{rows}</tbody></table></div>"
+            f"<tbody>{rows}</tbody></table></div></div>"
         )
     return (
         head

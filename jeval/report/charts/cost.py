@@ -14,7 +14,13 @@ from __future__ import annotations
 import math
 from itertools import pairwise
 
-from jeval.currency import format_amount, format_compact, format_delta, minor_units
+from jeval.currency import (
+    format_amount,
+    format_compact,
+    format_delta,
+    format_percent,
+    minor_units,
+)
 from jeval.report import svg as S
 from jeval.report.model import CostPoint, ImpactRow, ImpactTable, ThresholdResult
 from jeval.report.svg import escape
@@ -541,8 +547,8 @@ def _slider_figures(
     figures: list[tuple[str, str, str]] = []
     if result is not None and result.curve:
         per_case = result.expected_cost_per_case
-        figures.append(("auto rate", "auto_rate", f"{result.auto_rate:.0%}"))
-        figures.append(("accuracy (auto)", "accuracy_auto", f"{result.accuracy_auto:.0%}"))
+        figures.append(("auto rate", "auto_rate", format_percent(result.auto_rate)))
+        figures.append(("accuracy (auto)", "accuracy_auto", format_percent(result.accuracy_auto)))
         figures.append(("cost per case", "cost_per_case", format_amount(per_case, code)))
         if volume:
             figures.append(

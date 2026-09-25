@@ -15,7 +15,7 @@ from jeval import __version__
 from jeval.calibration import compute_calibration
 from jeval.config import load_config, load_ingest_map, write_default_config
 from jeval.costs import CostAction
-from jeval.currency import normalise_code
+from jeval.currency import format_amount, format_delta, normalise_code
 from jeval.evaluate import DatasetReport, evaluate
 from jeval.ingest import ingest_files
 from jeval.report import template
@@ -911,7 +911,8 @@ def report(
             typer.echo(
                 f"threshold {result.action}: {result.threshold:.2f} "
                 f"(95% CI {result.ci_low:.2f}-{result.ci_high:.2f}) · "
-                f"{result.expected_cost_per_case:,.0f} cost/case · auto {result.auto_rate:.0%}"
+                f"{format_amount(result.expected_cost_per_case, currency)} per case · "
+                f"auto {result.auto_rate:.0%}"
             )
     typer.echo(f"report: {Path(written)}")
     if open_browser:
@@ -938,12 +939,16 @@ def threshold(
     min_records: Annotated[
         int, typer.Option("--min-records", help="Smallest segment worth sweeping.")
     ] = 100,
+    currency: Annotated[
+        str, typer.Option("--currency", help="Currency code for money labels.")
+    ] = "USD",
 ) -> None:
     """Turn a cost matrix into per-action thresholds, with confidence intervals."""
     from jeval.costs import write_thresholds_yaml
 
     config = load_config(root)
     records = _load_records(root)
+    currency = normalise_code(currency)
     actions, costs_note = resolve_cost_actions(costs, root)
     if not actions:
         typer.echo(
@@ -978,7 +983,8 @@ def threshold(
         typer.echo(
             f"{result.action}: threshold {result.threshold:.2f} "
             f"(95% CI {result.ci_low:.2f}-{result.ci_high:.2f}, width {span:.2f}) · "
-            f"auto {result.auto_rate:.0%} · {result.expected_cost_per_case:,.0f} per case"
+            f"auto {result.auto_rate:.0%} · "
+            f"{format_amount(result.expected_cost_per_case, currency)} per case"
         )
         if span > 0.2:
             typer.echo(
@@ -988,7 +994,9 @@ def threshold(
     typer.echo("your application reads this file; jeval never sits in the request path.")
     if by:
         typer.echo("")
-        _print_segment_sweep(actions, results, records, by, min_records=min_records, steps=steps)
+        _print_segment_sweep(
+            actions, results, records, by, min_records=min_records, steps=steps, currency=currency
+        )
 
 
 def _print_segment_sweep(
@@ -999,6 +1007,7 @@ def _print_segment_sweep(
     *,
     min_records: int,
     steps: int,
+    currency: str = "USD",
 ) -> None:
     """Print whether giving each segment its own threshold pays for itself."""
     from jeval.costs import sweep_by_segment
@@ -1019,20 +1028,21 @@ def _print_segment_sweep(
         stated += 1
         typer.echo(f"{result.action} by {axis}: global threshold {result.threshold:.2f}")
         typer.echo(
-            f"  {'segment':<18} {'threshold':>9} {'cost/case':>10} "
+            f"  {'segment':<18} {'threshold':>9} {f'cost/case ({currency})':>18} "
             f"{'vs global':>10} {'n':>6}  verdict"
         )
         for segment in segments:
             if segment.threshold != segment.threshold:  # NaN: never swept
                 typer.echo(
-                    f"  {segment.label:<18} {'—':>9} {'—':>10} {'—':>10} {segment.n_records:>6}  "
+                    f"  {segment.label:<18} {'—':>9} {'—':>18} {'—':>10} {segment.n_records:>6}  "
                     f"{segment.reason}"
                 )
                 continue
             verdict = "split" if segment.worth_splitting else segment.reason
             typer.echo(
                 f"  {segment.label:<18} {segment.threshold:>9.2f} "
-                f"{segment.expected_cost_per_case:>10,.2f} {segment.cost_delta_vs_global:>10,.2f} "
+                f"{format_amount(segment.expected_cost_per_case, currency, unit=False):>18} "
+                f"{format_delta(segment.cost_delta_vs_global, currency, unit=False):>10} "
                 f"{segment.n_records:>6}  {verdict}"
             )
     if not stated:

@@ -5,8 +5,8 @@ that the template inlines. Nothing here reads the filesystem, and nothing it emi
 network -- no ``@import``, no ``url()``, no web font, no CDN script.
 
 All colour lives in custom properties, so a single ``@media (prefers-color-scheme: dark)``
-block restyles the whole report, and the ``@media print`` block lays the argument out for one
-A4 portrait page. The one thing custom properties cannot reach is a chart's own presentation
+block restyles the whole report, and the ``@media print`` block prints a three-page A4 summary
+that says it is one. The one thing custom properties cannot reach is a chart's own presentation
 attributes, so the dark block also re-maps the chart layer's greys from the same constants
 that layer paints with.
 
@@ -145,6 +145,7 @@ _CSS = """\
 .shade { fill: var(--shade); }
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
+.print-only { display: none; }
 html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 body {
   margin: 0;
@@ -549,28 +550,50 @@ footer p { margin: 0; max-width: 72ch; }
     --alert-ink: #a8360f;
     --shadow: none;
   }
-  body { background: #fff; color: #000; font-size: 10.5pt; line-height: 1.45; }
+  body { background: #fff; color: #000; font-size: 10pt; line-height: 1.45; }
   main { max-width: none; margin: 0; padding: 0; }
+  /* A printed report is a summary, and says so: the verdict, the reliability chart open on
+     screen, and the first action's cost and impact. Everything interactive, repeated or
+     exploratory stays in the file. */
   nav, .toc, .tabs, .tab, .controls, .actions, .verdict-actions, button, .button,
-  .copy-summary, .no-print, footer, .slider { display: none !important; }
+  .copy-summary, .no-print, footer, .slider, #segments, #score, #labels, #drift,
+  #data-quality, .splits, .action-block ~ .action-block, .question-block > .note,
+  #cost > .intro, #reliability > .intro { display: none !important; }
+  .print-only { display: block !important; font-size: 8.5pt; color: var(--muted);
+    border-top: 0.5pt solid var(--rule); border-bottom: 0.5pt solid var(--rule); padding: 1.5mm 0; }
+  .masthead { margin-bottom: 4mm; }
+  .brand { margin-bottom: 3mm; }
   .lede { font-size: 10pt; margin-bottom: 3mm; }
-  .provenance { font-size: 8pt; }
-  #verdict { order: -1; break-after: avoid; page-break-after: avoid; }
-  section { break-inside: avoid; page-break-inside: avoid; margin: 0 0 5mm; }
+  .provenance { font-size: 7.5pt; padding-top: 2mm; }
+  #verdict { order: -1; break-after: auto; }
+  .verdict { padding: 5mm 6mm; margin-bottom: 4mm; }
   details:not([open]) { display: none !important; }
   details > summary { display: none !important; }
   details, .verdict, figure, .diag, .warn, .plate { break-inside: avoid; page-break-inside: avoid; }
   .verdict, .plate { box-shadow: none; }
-  table { break-inside: avoid; page-break-inside: avoid; font-size: 9.5pt; }
+  .plate { padding: 3mm 4mm; margin: 2mm 0 4mm; }
+  table { break-inside: avoid; page-break-inside: avoid; font-size: 9pt; }
   tr, th, td { break-inside: avoid; page-break-inside: avoid; }
+  th, td { padding: 1.6mm 2.5mm; }
   thead { display: table-header-group; }
-  figure svg { max-height: 56mm; width: auto; margin: 0 auto; }
-  h1 { font-size: 18pt; margin-bottom: 1mm; }
-  h2 { font-size: 12pt; margin: 4mm 0 1.5mm; padding-top: 2mm; }
-  .verdict .headline { font-size: 14pt; }
-  .stats { grid-template-columns: repeat(3, 1fr); gap: 2mm; }
-  .stat .v { font-size: 14pt; }
+  /* Charts print at their drawn proportions, only ever shrunk to the page width: a chart capped
+     by height is a chart with five-point labels. */
+  figure { margin: 0; }
+  figure svg { max-width: 100%; height: auto; }
+  .ruler .narrow { display: none !important; }
+  .chart-row { display: block; }
+  .keyfigs { display: grid; grid-template-columns: repeat(5, 1fr); gap: 2mm; margin: 3mm 0 0;
+    border-left: 0; padding: 2mm 0 0; border-top: 0.5pt solid var(--rule); }
+  .keyfigs dd { font-size: 12pt; }
+  h1 { font-size: 20pt; margin-bottom: 1mm; }
+  h2 { font-size: 13pt; margin: 5mm 0 2mm; padding-top: 2mm; break-after: avoid; }
+  h3, .block-head, .action-head { break-after: avoid; margin-top: 3mm; }
+  .verdict .headline { font-size: 15pt; }
+  .stats { grid-template-columns: repeat(3, 1fr); gap: 2mm; margin-top: 3mm; padding-top: 3mm; }
+  .stat .v { font-size: 15pt; }
   figcaption { font-size: 8pt; margin-top: 1.5mm; }
+  .diag { font-size: 9pt; padding: 2mm 3mm; margin: 2mm 0; }
+  #cost { break-before: page; }
 }
 """
 
@@ -607,7 +630,8 @@ REPORT_JS = """\
     if (number === null) { return "n/a"; }
     // Whole percent, matching how the impact table and the charts write a rate: a live readout
     // that disagrees with the table above it by half a point reads as a second, wrong number.
-    return Math.round(number * 100) + "%";
+    // toFixed on the magnitude rounds a tie away from zero, which is jeval.currency.format_percent.
+    return noNegativeZero((number < 0 ? "-" : "") + Math.abs(number * 100).toFixed(0)) + "%";
   }
 
   function amount(value, digits) {
