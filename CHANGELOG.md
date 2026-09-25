@@ -8,6 +8,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- `jeval threshold --currency`: the terminal prints per-case costs and the segment table in the same
+  currency format as the report (`KRW 1,738 per case`), where it used to print a bare `1,738` or
+  `1,737.70`.
+- A printed report is a labelled three-page summary: the verdict, the reliability chart open on
+  screen, and the first action's cost and impact, with a line saying what stayed in the file. It
+  used to print eleven pages, charts capped at 56mm tall with unreadable labels, and a first page
+  holding only the header.
 - `jeval/currency.py`: money is printed in the currency's own decimals. `KRW` and `JPY` have no
   minor unit, so a month reads `KRW 38,524,590` instead of `KRW 38,524,590.16`; `BHD`, `KWD` and
   the other three-decimal currencies get three; most get two. An average smaller than one minor unit
@@ -83,6 +90,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   reader from install to an open report in three lines.
 
 ### Fixed
+- Shares are rounded the way the slider rounds them: a rate of exactly 12.5% read "12%" in the
+  impact table and "13%" in the live readout under it. The slider also receives the cost curve at
+  full precision instead of six decimals, which could land a value on the other side of a tie.
+- The drift chart named its slices after the question alone, so two points both read
+  "department"; each now carries its model and sample size. Points sit inside the plot, so the
+  model-change label and the last slice's name are no longer cut off at the right edge.
 - The verdict described the threshold in use as "auto below it". Cases at or above the threshold run
   automatically, and the label now says so.
 - An empty generation stamp printed a bare "Generated" label in the header; the row is now omitted.
