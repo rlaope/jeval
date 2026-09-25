@@ -67,7 +67,7 @@ def test_the_report_says_when_it_was_generated(tmp_path: Path) -> None:
     )
     html = (tmp_path / "r.html").read_text(encoding="utf-8")
 
-    assert "Generated 20" in html  # a date, not an empty field
+    assert "<dt>Generated</dt><dd>20" in html  # a date, not an empty field
 
 
 def test_impossible_report_inputs_are_refused(tmp_path: Path) -> None:

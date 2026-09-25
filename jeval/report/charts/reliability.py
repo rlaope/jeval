@@ -13,11 +13,11 @@ from jeval.calibration import CalibrationMetrics
 from jeval.report import svg as S
 
 WIDTH = 660.0
-HEIGHT = 470.0
-LEFT = 62.0
+HEIGHT = 480.0
+LEFT = 66.0
 RIGHT = 18.0
 TOP = 34.0
-BOTTOM = 136.0
+BOTTOM = 142.0
 DENSITY_HEIGHT = 34.0
 MARGIN = S.MARGIN
 
@@ -72,7 +72,7 @@ def render_reliability(
             y(0.22),
             "overconfident",
             anchor="middle",
-            size=10.5,
+            size=11.5,
             fill=S.MUTED,
             halo=True,
         )
@@ -96,7 +96,16 @@ def render_reliability(
             f"actual {S.fmt(cal_bin.accuracy)} "
             f"[{S.fmt(cal_bin.ci_low)}, {S.fmt(cal_bin.ci_high)}]"
         )
-        parts.append(S.dot(px, py, _radius(cal_bin.n, n_max), fill=S.INK, tooltip=tooltip))
+        parts.append(
+            S.dot(
+                px,
+                py,
+                _radius(cal_bin.n, n_max),
+                fill=S.INK,
+                tooltip=tooltip,
+                extra=' style="stroke: var(--panel); stroke-width: 1.5px"',
+            )
+        )
 
     if threshold is not None and 0.0 <= threshold <= 1.0:
         parts.append(
@@ -114,7 +123,7 @@ def render_reliability(
     # Budget for the space under the plot, top to bottom: tick labels, the axis title, the density
     # strip and its own label, then the legend. Overlapping these is what makes a chart look
     # assembled rather than drawn, so the strip starts clear of the axis title.
-    strip_top = plot_bottom + 56
+    strip_top = plot_bottom + 62
     parts.append(_density_strip(metrics, x, strip_top, DENSITY_HEIGHT))
     parts.append(S.axis_x(x, y=plot_bottom, tick_values=ticks, title="stated confidence"))
     parts.append(S.axis_y(y, x=plot_left, tick_values=ticks, title="observed accuracy"))
@@ -126,7 +135,7 @@ def render_reliability(
                 ("95% interval", S.SOFT, "line"),
             ],
             x=plot_left,
-            y=height - 20,
+            y=height - 14,
         )
     )
     if subtitle:
@@ -143,7 +152,7 @@ def _density_strip(metrics: CalibrationMetrics, x: S.Scale, top: float, height: 
     part of the curve carries the traffic.
     """
     buckets = metrics.confidence_buckets
-    parts = [S.text(x.range[0], top - 6, "where the decisions are", size=10.5, fill=S.MUTED)]
+    parts = [S.text(x.range[0], top - 7, "where the decisions are", size=11.5, fill=S.MUTED)]
     if not buckets:
         return "".join(parts)
     peak = max(count for _, _, count in buckets) or 1
@@ -168,10 +177,10 @@ def _density_strip(metrics: CalibrationMetrics, x: S.Scale, top: float, height: 
     parts.append(
         S.text(
             x.range[1],
-            top - 6,
-            f"peak {S.fmt(busiest[0])}-{S.fmt(busiest[1])} · n={busiest[2]}",
+            top - 7,
+            f"peak {S.fmt(busiest[0])}–{S.fmt(busiest[1])} · n={busiest[2]}",
             anchor="end",
-            size=10.5,
+            size=11.5,
             fill=S.MUTED,
         )
     )
@@ -220,6 +229,36 @@ RELIABILITY_HEADERS: tuple[str, ...] = (
 )
 
 
+def key_figures(metrics: CalibrationMetrics) -> str:
+    """The numbers a reader quotes from this chart, beside it rather than under it."""
+    rows: list[tuple[str, str, str]] = [
+        (
+            "ECE",
+            S.fmt(metrics.ece, 3),
+            f"95% CI {S.fmt(metrics.ece_ci_low, 3)}–{S.fmt(metrics.ece_ci_high, 3)}",
+        ),
+        ("MCE", S.fmt(metrics.mce, 3), "largest bin gap"),
+        ("Brier score", S.fmt(metrics.brier, 3), "lower is better"),
+        ("Labeled decisions", f"{metrics.n:,}", f"{len(metrics.bins)} bins, {metrics.binning}"),
+    ]
+    worst = metrics.worst_bin
+    if worst is not None:
+        rows.append(
+            (
+                "Widest gap",
+                f"{worst.gap:+.2f}",
+                f"{worst.label}: stated {S.pct(worst.mean_confidence, 0)}, "
+                f"observed {S.pct(worst.accuracy, 0)}",
+            )
+        )
+    items = "".join(
+        f"<div><dt>{S.escape(label)}</dt><dd>{S.escape(value)}"
+        f"<small>{S.escape(sub)}</small></dd></div>"
+        for label, value, sub in rows
+    )
+    return f'<dl class="keyfigs">{items}</dl>'
+
+
 def render_reliability_section(
     metrics: CalibrationMetrics,
     *,
@@ -227,21 +266,25 @@ def render_reliability_section(
     title: str = "Reliability",
     subtitle: str = "",
 ) -> str:
-    """Chart plus its accessible data table, as one block."""
+    """Chart beside its key figures, then the accessible data table, as one block."""
     chart = render_reliability(metrics, threshold=threshold, title=title, subtitle=subtitle)
     caption = (
         "<figcaption>Points below the dashed line are overconfident: the model claimed more "
-        "than it earned. The bars are 95% Wilson intervals, and the strip underneath shows "
-        "where the decisions pile up.</figcaption>"
+        "than it earned. Dot size follows the number of decisions in the bin, the bars are 95% "
+        "Wilson intervals, and the strip underneath shows where the decisions pile up."
+        "</figcaption>"
     )
     if metrics.n == 0:
-        return f"<figure>{chart}{caption}</figure>"
+        return f'<div class="plate"><figure>{chart}{caption}</figure></div>'
     table = S.details_table(
         RELIABILITY_HEADERS,
         reliability_table_rows(metrics),
         summary="Data behind this curve",
     )
-    return f"<figure>{chart}{caption}{table}</figure>"
+    return (
+        f'<div class="plate"><figure><div class="chart-row">{chart}{key_figures(metrics)}</div>'
+        f"{caption}</figure></div>{table}"
+    )
 
 
 def ci_span_note(metrics: CalibrationMetrics) -> str:

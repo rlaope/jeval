@@ -17,6 +17,9 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from html import escape as _html_escape
+from itertools import pairwise
+
+from jeval.currency import format_compact
 
 # Okabe-Ito: distinguishable under the common colour-vision deficiencies. Never rely on a
 # single channel to say good or bad; position and label carry that.
@@ -31,23 +34,32 @@ PALETTE: tuple[str, ...] = (
     "#444444",
 )
 
-INK = "#1a1d23"
-MUTED = "#6b7280"
-GRID = "#e8eaee"
-DIAGONAL = "#a5acb8"
-SHADE = "#f2f4f7"
-SOFT = "#8a93a1"
+# Warm neutrals: the report is read like a printed technical note, and a paper-toned grey sits
+# more quietly under data than a blue-cast one. `assets.py` builds its dark-mode remap from these
+# literals, so move them together.
+INK = "#1b1a17"
+MUTED = "#6f6b63"
+GRID = "#ebe8e1"
+DIAGONAL = "#a9a499"
+SHADE = "#f2efe9"
+SOFT = "#98938a"
 
 # Two semantic colours, kept out of the series palette: the mark the report argues for (the
-# recommended threshold) and the one it warns about (the line in use, a model change).
-# `assets.py` builds its dark-mode remap from the grey literals above, so move them together.
-ACCENT = "#2f5fd0"
-ALERT = "#b3261e"
+# recommended threshold) and the one it warns about (the line in use, a model change). Blue against
+# vermilion is the pair that survives every common colour-vision deficiency (validated: CVD
+# delta-E 24.6 on white), and neither is ever the only thing that says which is which -- a label
+# and a line style do too.
+ACCENT = "#1f5fbf"
+ALERT = "#d1491f"
 
 FONT_STACK = (
-    "-apple-system, BlinkMacSystemFont, 'Segoe UI', ui-sans-serif, Helvetica, Arial, sans-serif"
+    "Inter, 'SF Pro Text', -apple-system, BlinkMacSystemFont, 'Segoe UI Variable Text', "
+    "'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif"
 )
-MONO_STACK = "ui-monospace, SFMono-Regular, Menlo, monospace"
+MONO_STACK = (
+    "'JetBrains Mono', 'SF Mono', SFMono-Regular, ui-monospace, 'Cascadia Mono', "
+    "'Roboto Mono', Menlo, Consolas, monospace"
+)
 
 MARGIN = 58.0  # left gutter used by every chart's y axis
 
@@ -103,15 +115,40 @@ def pct(value: float, digits: int = 1) -> str:
 
 
 def money(value: float) -> str:
-    """Compact currency for labels: 1.2M, 45.3k, 890."""
-    magnitude = abs(value)
-    if magnitude >= 1_000_000_000:
-        return f"{value / 1_000_000_000:.1f}B"
-    if magnitude >= 1_000_000:
-        return f"{value / 1_000_000:.1f}M"
-    if magnitude >= 1_000:
-        return f"{value / 1_000:.1f}k"
-    return f"{value:,.0f}"
+    """Compact figure for labels and counts: 1.23M, 45.3k, 890 -- three significant figures."""
+    return format_compact(value, None)
+
+
+def tick_format(ticks: Sequence[float]) -> Callable[[float], str]:
+    """One number format for a whole axis.
+
+    Formatting ticks one at a time gives ``1.8k, 1.9k, 2k``: the last label drops a decimal the
+    others keep, and the axis reads as if the scale changed. The unit and decimals are chosen once,
+    from the largest tick and the tick step, and every label on the axis shares them. Below ten
+    thousand the value is written in full (``1,800``), which is how a per-case cost is read.
+    """
+    finite = [abs(value) for value in ticks if value == value]
+    peak = max(finite, default=0.0)
+    step = min((abs(b - a) for a, b in pairwise(ticks) if b != a), default=peak or 1.0)
+    divisor, suffix = 1.0, ""
+    for size, name in ((1e9, "B"), (1e6, "M"), (1e4, "k")):
+        if peak >= size:
+            divisor, suffix = (1e3 if name == "k" else size), name
+            break
+    scaled_step = step / divisor
+    decimals = 0
+    tolerance = 1e-9 * max(1.0, peak / divisor)
+    while decimals < 3 and abs(round(scaled_step, decimals) - scaled_step) > tolerance:
+        decimals += 1
+
+    def render(value: float) -> str:
+        if value != value:
+            return "n/a"
+        if value == 0:
+            return "0"
+        return f"{value / divisor:,.{decimals}f}{suffix}"
+
+    return render
 
 
 def nice_ticks(lo: float, hi: float, target: int = 5) -> list[float]:
@@ -170,10 +207,16 @@ def lin_scale(domain: tuple[float, float], range_: tuple[float, float]) -> Scale
 
 
 def svg_open(width: float, height: float, *, title: str, desc: str, cls: str = "") -> str:
-    """Open a responsive SVG with an accessible name and description."""
+    """Open an SVG with an accessible name and description.
+
+    The chart carries its own pixel size as well as its viewBox: it renders at the size it was
+    drawn for and only ever shrinks to fit a narrow screen. Stretching a 660-unit chart across a
+    wide column enlarges every label with it, and 11px axis text turns into 15px headline text.
+    """
     class_attr = f' class="{escape(cls)}"' if cls else ""
     return (
         f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {r2(width)} {r2(height)}"'
+        f' width="{r2(width)}" height="{r2(height)}"'
         f'{class_attr} role="img" aria-label="{escape(title)}" preserveAspectRatio="xMidYMid meet">'
         f"<title>{escape(title)}</title><desc>{escape(desc)}</desc>"
     )
@@ -382,7 +425,7 @@ def shaded_region(
         return body
     lx = label_x if label_x is not None else (x0 + x1) / 2.0
     ly = label_y if label_y is not None else (y0 + y1) / 2.0
-    return body + text(lx, ly, label, anchor="middle", size=10.5, fill=MUTED, halo=True)
+    return body + text(lx, ly, label, anchor="middle", size=11, fill=MUTED, halo=True)
 
 
 def text(
@@ -429,20 +472,21 @@ def axis_x(
     format_: Callable[[float], str] = lambda v: fmt(v),
     title: str = "",
 ) -> str:
+    """A baseline with short ticks and muted labels; the title sits centred under them."""
     values = list(tick_values) if tick_values is not None else nice_ticks(*scale.domain)
     parts = [line(scale.range[0], y, scale.range[1], y, stroke=INK, width=1.0)]
     for value in values:
         x = scale(value)
         parts.append(line(x, y, x, y + 4, stroke=INK, width=1.0))
-        parts.append(text(x, y + 16, format_(value), anchor="middle", size=11, fill=MUTED))
+        parts.append(text(x, y + 18, format_(value), anchor="middle", size=11.5, fill=MUTED))
     if title:
         parts.append(
             text(
                 (scale.range[0] + scale.range[1]) / 2.0,
-                y + 34,
+                y + 38,
                 title,
                 anchor="middle",
-                size=11.5,
+                size=12,
                 weight=500,
             )
         )
@@ -457,24 +501,25 @@ def axis_y(
     format_: Callable[[float], str] = lambda v: fmt(v),
     title: str = "",
 ) -> str:
+    """Labels only: the gridlines already carry the ticks, and a second spine is ink that says
+    nothing the first one did not."""
     values = list(tick_values) if tick_values is not None else nice_ticks(*scale.domain)
-    parts = [line(x, scale.range[0], x, scale.range[1], stroke=INK, width=1.0)]
+    parts: list[str] = []
     for value in values:
         y = scale(value)
-        parts.append(line(x - 4, y, x, y, stroke=INK, width=1.0))
-        parts.append(text(x - 8, y + 4, format_(value), anchor="end", size=11, fill=MUTED))
+        parts.append(text(x - 10, y + 4, format_(value), anchor="end", size=11.5, fill=MUTED))
     if title:
         centre = (scale.range[0] + scale.range[1]) / 2.0
         parts.append(
             text(
-                x - 38,
+                x - 50,
                 centre,
                 title,
                 anchor="middle",
-                size=11.5,
+                size=12,
                 weight=500,
                 rotate=-90,
-                rotate_at=(x - 38, centre),
+                rotate_at=(x - 50, centre),
             )
         )
     return "".join(parts)
@@ -493,7 +538,7 @@ def legend(
     *,
     x: float,
     y: float,
-    size: float = 11.0,
+    size: float = 12.0,
 ) -> str:
     """Legend as sample + label pairs; never colour alone.
 
@@ -512,7 +557,9 @@ def legend(
         if kind == "swatch":
             parts.append(rect(cursor, top, 11, 11, fill=colour))
         elif kind == "band":
-            parts.append(rect(cursor, top, 14, 11, fill=colour, cls="shade"))
+            parts.append(rect(cursor, top, 16, 11, fill=colour, cls="shade"))
+        elif kind == "accent-band":
+            parts.append(rect(cursor, top, 16, 11, fill=colour, cls="accent-band"))
         elif kind == "dot":
             parts.append(line(cursor, middle, cursor + 16, middle, stroke=colour, width=1.6))
             parts.append(dot(cursor + 8, middle, 3.0, fill=colour))
@@ -522,9 +569,18 @@ def legend(
             )
         else:
             parts.append(line(cursor, middle, cursor + 16, middle, stroke=colour, width=2.0))
-        parts.append(text(cursor + 23, y - 1, label, size=size, fill=MUTED))
-        cursor += 23 + len(label) * size * 0.56 + 16
+        parts.append(text(cursor + 24, y - 1, label, size=size, fill=MUTED))
+        cursor += 24 + text_width(label, size) + 22
     return "".join(parts)
+
+
+def text_width(value: str, size: float, *, mono: bool = False) -> float:
+    """A conservative estimate of a label's rendered width, for placing it clear of its neighbours.
+
+    No font metrics are available when the SVG is written, so this errs wide: a label that is
+    placed with room to spare is better than one that is placed on top of another.
+    """
+    return len(value) * size * (0.62 if mono else 0.56)
 
 
 def marker_line(
@@ -545,13 +601,13 @@ def marker_line(
     attribute stays as the fallback for a viewer that ignores the stylesheet.
     """
     ty = label_y if label_y is not None else y0 + 11
-    offset = 5.0 if anchor == "start" else -5.0
-    return line(x, y0, x, y1, stroke=colour, width=1.4, dash=dash, cls="alert-stroke") + text(
+    offset = 6.0 if anchor == "start" else -6.0
+    return line(x, y0, x, y1, stroke=colour, width=1.5, dash=dash, cls="alert-stroke") + text(
         x + offset,
         ty,
         label,
         anchor=anchor,
-        size=10.5,
+        size=11.5,
         fill=colour,
         weight=600,
         halo=True,
@@ -571,11 +627,16 @@ def details_table(
     Accessibility and honesty in one control: a screen reader can read the table, and anyone
     quoting a figure can copy it instead of eyeballing a pixel.
     """
-    head = "".join(f"<th>{escape(h)}</th>" for h in headers)
+    head = "".join(
+        f'<th class="num">{escape(h)}</th>' if i >= numeric_from else f"<th>{escape(h)}</th>"
+        for i, h in enumerate(headers)
+    )
     body = "".join(
         "<tr>"
         + "".join(
-            f'<td class="{"num" if i >= numeric_from else ""}">{escape(str(cell))}</td>'
+            f'<td class="num">{escape(str(cell))}</td>'
+            if i >= numeric_from
+            else f"<td>{escape(str(cell))}</td>"
             for i, cell in enumerate(row)
         )
         + "</tr>"
