@@ -28,7 +28,11 @@ from jeval.calibration import (
 from jeval.report.model import DriftSlice, DriftView, ModelChange
 from jeval.schema import DecisionRecord
 
-SNAPSHOT_VERSION = 2
+# Version 3: yes/no (`noul`) questions are measured on the probability that the answer is right,
+# max(p, 1 - p), instead of the stored distance from a coin flip. A version-2 snapshot holds noul
+# edges and ECE on the old scale, and comparing against it showed a false improvement of about 0.19
+# on identical data, so it is refused rather than read.
+SNAPSHOT_VERSION = 3
 
 
 def _gold(records: Sequence[DecisionRecord]) -> list[DecisionRecord]:
@@ -134,6 +138,13 @@ def view_from_snapshot(
     a new question appearing is itself worth knowing.
     """
     version = snapshot_payload.get("schema_version")
+    if version == 2:
+        raise ValueError(
+            "baseline schema_version 2 was saved before yes/no questions were measured on the "
+            "probability that the answer is right; its noul figures are on the old scale and would "
+            "show a movement that did not happen. Re-save it with --save-baseline on the records "
+            "it was taken from."
+        )
     if version != SNAPSHOT_VERSION:
         raise ValueError(
             f"unsupported baseline schema_version {version!r}: expected {SNAPSHOT_VERSION}"
