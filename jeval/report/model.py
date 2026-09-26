@@ -215,6 +215,8 @@ class DataQuality:
     total_bins: int = 0
     silver_only: bool = False
     no_gold_labels: bool = False
+    # ``(part, records)`` in drawing order: measured, silver, no label yet, score questions.
+    composition: tuple[tuple[str, int], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -265,6 +267,8 @@ class LabelPlanRow:
     ci_width: float
     needed: str = ""
     reason: str = ""
+    # ``(target interval width, additional labels)``, narrowest target last; empty when refused.
+    targets: tuple[tuple[float, int], ...] = ()
 
 
 @dataclass(frozen=True)

@@ -288,6 +288,82 @@ def key_figures(metrics: CalibrationMetrics) -> str:
     return f'<dl class="keyfigs">{items}</dl>'
 
 
+#: A bin whose observed accuracy is this far from what it claimed is named as a finding.
+CLAIM_GAP = 0.05
+
+
+def claim_rows_html(metrics: CalibrationMetrics, question: str = "") -> str:
+    """The ranges where what the model said and how often it was right part ways, one row each.
+
+    Each row reads left to right as a sentence — "says 65%, right 46%, overclaims by 19 pt" — with a
+    drawing between the two numbers: a tick at what it said, a dot at what happened, the line
+    between them the gap, and the band the 95% interval on what happened. Ranges within
+    :data:`CLAIM_GAP` are counted in the heading and left out, because the chart above already
+    shows them sitting on the diagonal.
+    """
+    scored = [cal_bin for cal_bin in metrics.bins if cal_bin.n > 0]
+    flagged = [cal_bin for cal_bin in scored if abs(cal_bin.gap) > CLAIM_GAP]
+    if not flagged:
+        return ""
+    over = sum(1 for cal_bin in flagged if cal_bin.gap < 0)
+    under = len(flagged) - over
+    who = f'<span class="ident">{S.escape(question)}</span>' if question else "The model"
+    if over and not under:
+        claim = f"{who} is right less often than it says in {over} of {len(scored)} ranges"
+    elif under and not over:
+        claim = f"{who} is right more often than it says in {under} of {len(scored)} ranges"
+    else:
+        claim = f"{who} overclaims in {over} and underclaims in {under} of {len(scored)} ranges"
+    floor = min(min(b.mean_confidence for b in flagged), min(b.ci_low for b in flagged))
+    lo = max(0.0, math.floor(floor * 10) / 10)
+    width, height = 480.0, 34.0
+    x = S.lin_scale((lo, 1.0), (10.0, width - 10.0))
+    rows: list[str] = []
+    for cal_bin in flagged:
+        gap_pt = abs(cal_bin.gap) * 100
+        kind = "over" if cal_bin.gap < 0 else "under"
+        words = f"{'overclaims' if kind == 'over' else 'underclaims'} by {gap_pt:.0f} pt"
+        band_lo, band_hi = x(max(lo, cal_bin.ci_low)), x(min(1.0, cal_bin.ci_high))
+        said, was = x(cal_bin.mean_confidence), x(cal_bin.accuracy)
+        drawing = (
+            f'<svg class="claim-svg" viewBox="0 0 {width:.0f} {height:.0f}" width="{width:.0f}" '
+            f'height="{height:.0f}" role="img" aria-label="said {cal_bin.mean_confidence:.0%}, '
+            f"right {cal_bin.accuracy:.0%}, 95% interval {cal_bin.ci_low:.0%} to "
+            f'{cal_bin.ci_high:.0%}"><title>{S.escape(cal_bin.label)}: {S.escape(words)}</title>'
+            f"<desc>Confidence range {S.escape(cal_bin.label)}: stated "
+            f"{cal_bin.mean_confidence:.0%}, observed {cal_bin.accuracy:.0%}, 95% interval "
+            f"{cal_bin.ci_low:.0%} to {cal_bin.ci_high:.0%}, n={cal_bin.n}.</desc>"
+            + S.rect(x(lo), 16, x(1.0) - x(lo), 2, fill=S.GRID, rx=1)
+            + S.rect(band_lo, 9, max(2.0, band_hi - band_lo), 16, fill=S.SHADE, cls="shade", rx=3)
+            + S.line(said, 17, was, 17, stroke=S.INK, width=2.5)
+            + S.rect(said - 1.5, 5, 3, 24, fill=S.SOFT, rx=1)
+            + S.dot(
+                was, 17, 7, fill=S.INK, extra=' style="stroke: var(--panel); stroke-width: 2px"'
+            )
+            + "</svg>"
+        )
+        rows.append(
+            f'<div class="claim-row {kind}"><div class="cr-said">says '
+            f'<b class="num">{cal_bin.mean_confidence:.0%}</b></div>{drawing}'
+            f'<div class="cr-was">right <b class="num">{cal_bin.accuracy:.0%}</b></div>'
+            f'<div class="cr-flag">{S.escape(words)}<span>{S.escape(cal_bin.label)} · '
+            f"n={cal_bin.n}</span></div></div>"
+        )
+    ticks = "".join(
+        f'<span style="left:{(value - lo) / (1.0 - lo) * 100:.1f}%">{value:.0%}</span>'
+        for value in (lo, (lo + 1.0) / 2, 1.0)
+    )
+    return (
+        f'<div class="finding"><p class="claim small">{claim}</p>'
+        '<div class="claims-key"><span><i class="k-said"></i>what it said</span>'
+        '<span><i class="k-was"></i>how often it was right</span>'
+        '<span><i class="k-band"></i>95% interval</span></div>'
+        f'<div class="claims">{"".join(rows)}'
+        f'<div class="claim-row axis"><div></div><div class="claim-ticks">{ticks}</div></div>'
+        "</div></div>"
+    )
+
+
 def render_reliability_section(
     metrics: CalibrationMetrics,
     *,
@@ -295,8 +371,9 @@ def render_reliability_section(
     recommended: float | None = None,
     title: str = "Reliability",
     subtitle: str = "",
+    question: str = "",
 ) -> str:
-    """Chart beside its key figures, then the accessible data table, as one block."""
+    """Chart beside its key figures, the ranges that miss named as rows, then the data table."""
     chart = render_reliability(
         metrics, threshold=threshold, recommended=recommended, title=title, subtitle=subtitle
     )
@@ -311,11 +388,11 @@ def render_reliability_section(
     table = S.details_table(
         RELIABILITY_HEADERS,
         reliability_table_rows(metrics),
-        summary="Data behind this curve",
+        summary="The numbers behind this curve, as a table",
     )
     return (
         f'<div class="plate"><figure><div class="chart-row">{chart}{key_figures(metrics)}</div>'
-        f"{caption}</figure></div>{table}"
+        f"{caption}</figure></div>{claim_rows_html(metrics, question)}{table}"
     )
 
 

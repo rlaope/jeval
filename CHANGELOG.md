@@ -7,6 +7,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed — findings before tables
+- Every report section opens with its finding as a sentence and draws it, and the table it came from
+  is folded underneath under "The numbers behind this, as a table". The cost section says what
+  moving the line buys ("Moving the line from 0.60 to 0.75 saves KRW 3,770,492 a month") over four
+  figure cards; reliability names the ranges where what the model said and how often it was right
+  part ways, as rows; segment splits are one verdict card per action; label planning is progress
+  cards; data quality is one composition bar; score bands and per-class calibration are rows and
+  chips. The type is larger throughout (17px body, 40px headline figures, 12.5-13px chart labels).
+  Every number the README quotes is still in the committed example, in the folded tables.
+
 ### Added — the library and the command line as one loop
 - `collect.resolve(source_key=..., question=..., answer=...)` records the answer a human settled on,
   where the service already knows it, into `labels.jsonl` beside the records. Like `track`, it

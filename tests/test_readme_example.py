@@ -167,7 +167,7 @@ def test_the_classwise_figures_the_readme_quotes_are_in_the_artifact() -> None:
     intent = reliability.split('data-jeval-question="intent"', 1)[1].split(
         "data-jeval-question=", 1
     )[0]
-    rows = [_text(" ".join(row)) for row in _table_rows(intent, '<div class="classwise">')]
+    rows = [_text(" ".join(row)) for row in _table_rows(intent, '<div class="classwise')]
     for name, ece in (("check_balance", "0.057"), ("other", "0.086"), ("refund_request", "0.063")):
         assert any(row.startswith(name) and ece in row for row in rows), (name, rows)
         assert f"{ece} (`{name}`" in readme, (name, ece)

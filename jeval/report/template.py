@@ -10,6 +10,7 @@ the caller passes in, which is what makes the golden-file tests possible.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -31,7 +32,10 @@ from jeval.report.charts import reliability as reliability_charts
 from jeval.report.charts import segments as segment_charts
 from jeval.report.model import (
     DEFAULT_LIMITATIONS,
+    LabelPlanRow,
     ReportModel,
+    ScoreView,
+    SegmentThresholdRow,
     ThresholdResult,
     dumps,
 )
@@ -379,6 +383,7 @@ def _reliability_section(
                 threshold=block.in_use,
                 recommended=block.threshold,
                 title=f"Reliability · {block.question_key}",
+                question=block.question_key,
             ),
         ]
         if block.classwise is not None:
@@ -462,14 +467,39 @@ def _classwise_block(block: ReliabilityBlock) -> str:
         f"average ECE {S.fmt(classwise.macro_ece, 3)} against top-1 ECE "
         f"{S.fmt(block.metrics.ece, 3)}"
     )
+    chips = []
+    for item in classwise.classes:
+        metrics = item.metrics
+        fires_on = block.cost_classes.get(item.name, ())
+        worst_one = worst is not None and item.name == worst.name
+        if metrics is None:
+            figure, sub = "–", f"not measured: {item.refused_reason}"
+        else:
+            figure = S.fmt(metrics.ece, 3)
+            sub = (
+                f"95% CI {S.fmt(metrics.ece_ci_low, 3)}–{S.fmt(metrics.ece_ci_high, 3)}"
+                if metrics.ece_ci_low == metrics.ece_ci_low
+                else "no interval"
+            )
+        chips.append(
+            f'<div class="chip{" hot" if worst_one else ""}">'
+            f'<span class="ident">{escape(item.name)}</span><b class="num">{figure}</b>'
+            f'<span class="c-sub">{escape(sub)} · n={item.n:,}'
+            + (f" · {escape(', '.join(fires_on))} fires on it" if fires_on else "")
+            + (" · worst" if worst_one else "")
+            + "</span></div>"
+        )
     return (
-        '<div class="classwise">'
-        f'<p class="diag">{escape(sentence)}</p>'
+        '<div class="classwise finding">'
+        f'<p class="claim small">{escape(sentence)}</p>'
+        f'<p class="claim-sub">{escape(caption)}</p>'
+        f'<div class="chips grid">{"".join(chips)}</div>'
+        '<details class="raw"><summary>The numbers behind this, as a table</summary>'
         '<div class="table-wrap"><table class="details">'
         f"<caption>{escape(caption)}</caption>"
         '<thead><tr><th>Class</th><th class="num">Labeled</th><th class="num">ECE</th>'
         '<th class="num">95% CI</th><th>Note</th></tr></thead>'
-        f"<tbody>{''.join(rows)}</tbody></table></div>{set_aside}</div>"
+        f"<tbody>{''.join(rows)}</tbody></table></div></details>{set_aside}</div>"
     )
 
 
@@ -576,14 +606,15 @@ def _cost_section(
             '<div class="splits"><h3>Does one threshold fit every segment?</h3>'
             '<p class="intro">A split is recommended only when a segment&rsquo;s own optimum moves '
             "by more than one sweep step <em>and</em> adopting it changes cost per case by more "
-            "than 2%. Everything else is the same threshold with extra machinery, and this table "
-            "says so.</p>"
+            "than 2%. Everything else is the same threshold with extra machinery.</p>"
+            + _split_cards(model.segment_thresholds, thresholds, currency)
+            + '<details class="raw"><summary>The numbers behind this, as a table</summary>'
             '<div class="table-wrap"><table class="details">'
             "<caption>Segment optimum against the global optimum</caption>"
             '<thead><tr><th>Segment</th><th class="num">Threshold</th>'
             f'<th class="num">Cost / case ({escape(currency)})</th>'
             f'<th class="num">vs global</th><th class="num">n</th><th>Verdict</th></tr></thead>'
-            f"<tbody>{rows}</tbody></table></div></div>"
+            f"<tbody>{rows}</tbody></table></div></details></div>"
         )
     return (
         head
@@ -591,6 +622,49 @@ def _cost_section(
         "the recommendation; the flat region is where the data cannot tell neighbouring "
         "thresholds apart.</p>" + body + splits + "</section>"
     )
+
+
+def _split_cards(
+    rows: Sequence[SegmentThresholdRow],
+    thresholds: Sequence[ThresholdResult],
+    currency: str,
+) -> str:
+    """One card per action: the verdict as a sentence, each segment's own line as a chip."""
+    names = sorted((result.action for result in thresholds), key=len, reverse=True)
+    grouped: dict[str, list[tuple[str, SegmentThresholdRow]]] = {}
+    for row in rows:
+        action = next((name for name in names if row.label.startswith(name + " ")), "")
+        segment = row.label[len(action) + 1 :] if action else row.label
+        grouped.setdefault(action, []).append((segment, row))
+    cards: list[str] = []
+    for result in thresholds:
+        members = grouped.get(result.action)
+        if not members:
+            continue
+        splits = [segment for segment, row in members if row.worth_splitting]
+        if splits:
+            verdict = (
+                '<div class="v-head split">Give '
+                + ", ".join(f"<b>{escape(segment)}</b>" for segment in splits)
+                + " its own line</div>"
+            )
+        else:
+            verdict = '<div class="v-head keep">One line fits every segment</div>'
+        chips = "".join(
+            f'<div class="chip{" hot" if row.worth_splitting else ""}">'
+            f'<span class="ident">{escape(segment)}</span>'
+            f'<b class="num">{_num(row.threshold, f"{row.threshold:.2f}")}</b>'
+            f'<span class="c-sub">{_num(row.delta, format_delta(row.delta, currency))} per case · '
+            f"n={row.n:,}</span></div>"
+            for segment, row in members
+        )
+        cards.append(
+            f'<div class="vcard"><div class="v-action"><span class="ident">'
+            f"{escape(result.action)}</span><span>global line "
+            f'<b class="num">{S.fmt(result.threshold)}</b></span></div>{verdict}'
+            f'<div class="chips">{chips}</div></div>'
+        )
+    return f'<div class="vcards">{"".join(cards)}</div>' if cards else ""
 
 
 def _segments_section(
@@ -629,6 +703,78 @@ def _segments_section(
     )
 
 
+#: A band whose mean actual value is this far from the mean prediction is named as off.
+SCORE_GAP = 0.05
+
+
+def _score_rows_html(view: ScoreView) -> str:
+    """Each predicted band as "predicts X, actually Y": a tick, a dot, and the gap between them."""
+    levels = [level for level in view.levels if level.n > 0]
+    if not levels:
+        return ""
+    gaps = [level.mean_actual - level.mean_predicted for level in levels]
+    off = [gap for gap in gaps if abs(gap) > SCORE_GAP]
+    mean_gap = sum(gaps) / len(gaps)
+    if len(off) == len(levels) and (all(g < 0 for g in off) or all(g > 0 for g in off)):
+        way = "low" if mean_gap < 0 else "high"
+        claim = (
+            (
+                f"Actual values run {abs(mean_gap):.2f} {way}er than predicted in every band: "
+                "a bias, not noise"
+            )
+            .replace("lowerer", "lower")
+            .replace("higherer", "higher")
+        )
+    elif off:
+        claim = (
+            f"Predictions miss by more than {SCORE_GAP:.2f} in {len(off)} of {len(levels)} bands"
+        )
+    else:
+        claim = f"Predictions land within {SCORE_GAP:.2f} of the actual value in every band"
+    values = [v for level in levels for v in (level.mean_predicted, level.mean_actual)]
+    lo = max(0.0, math.floor(min(values) * 10) / 10)
+    hi = min(1.0, math.ceil(max(values) * 10) / 10) if max(values) <= 1.0 else max(values)
+    width, height = 480.0, 34.0
+    x = S.lin_scale((lo, hi if hi > lo else lo + 1.0), (10.0, width - 10.0))
+    rows = []
+    for level, gap in zip(levels, gaps, strict=True):
+        kind = "over" if gap < -SCORE_GAP else ("under" if gap > SCORE_GAP else "ok")
+        words = (
+            f"{abs(gap):.2f} lower than predicted"
+            if kind == "over"
+            else (f"{gap:.2f} higher than predicted" if kind == "under" else "about right")
+        )
+        said, was = x(level.mean_predicted), x(level.mean_actual)
+        drawing = (
+            f'<svg class="claim-svg" viewBox="0 0 {width:.0f} {height:.0f}" width="{width:.0f}" '
+            f'height="{height:.0f}" role="img" aria-label="predicted {level.mean_predicted:.2f}, '
+            f'actual {level.mean_actual:.2f}"><title>{level.lo:.2f}–{level.hi:.2f}: '
+            f"{escape(words)}</title><desc>Predicted band {level.lo:.2f} to {level.hi:.2f}: mean "
+            f"prediction {level.mean_predicted:.3f}, mean actual {level.mean_actual:.3f}, "
+            f"n={level.n}.</desc>"
+            + S.rect(x(lo), 16, x(hi) - x(lo), 2, fill=S.GRID, rx=1)
+            + S.line(said, 17, was, 17, stroke=S.INK, width=2.5)
+            + S.rect(said - 1.5, 5, 3, 24, fill=S.SOFT, rx=1)
+            + S.dot(
+                was, 17, 7, fill=S.INK, extra=' style="stroke: var(--panel); stroke-width: 2px"'
+            )
+            + "</svg>"
+        )
+        rows.append(
+            f'<div class="claim-row {kind}"><div class="cr-said">predicts '
+            f'<b class="num">{level.mean_predicted:.2f}</b></div>{drawing}'
+            f'<div class="cr-was">actual <b class="num">{level.mean_actual:.2f}</b></div>'
+            f'<div class="cr-flag">{escape(words)}<span>band {level.lo:.2f}–{level.hi:.2f} · '
+            f"n={level.n}</span></div></div>"
+        )
+    return (
+        f'<div class="finding"><p class="claim small">{escape(claim)}</p>'
+        '<div class="claims-key"><span><i class="k-said"></i>mean prediction</span>'
+        '<span><i class="k-was"></i>mean actual value</span></div>'
+        f'<div class="claims">{"".join(rows)}</div></div>'
+    )
+
+
 def _score_section(model: ReportModel, sections: Mapping[str, tuple[int, str]]) -> str:
     """Score-type questions: error and rank agreement, deliberately not accuracy."""
     view = model.score
@@ -649,11 +795,13 @@ def _score_section(model: ReportModel, sections: Mapping[str, tuple[int, str]]) 
         for level in view.levels
     )
     table = (
+        '<details class="raw"><summary>The numbers behind this, as a table</summary>'
         '<table class="details"><caption>Predicted band, and the actual values inside it</caption>'
         '<thead><tr><th>Predicted</th><th class="num">n</th>'
         '<th class="num">Mean predicted</th><th class="num">Mean actual</th>'
-        f'<th class="num">Gap</th></tr></thead><tbody>{rows}</tbody></table>'
+        f'<th class="num">Gap</th></tr></thead><tbody>{rows}</tbody></table></details>'
     )
+    table = _score_rows_html(view) + table
     counted = (
         f" Counted and excluded from this section: {view.n_other_type} non-score, "
         f"{view.n_unlabeled} unlabeled, {view.n_unparseable} unparseable."
@@ -680,6 +828,35 @@ def _score_section(model: ReportModel, sections: Mapping[str, tuple[int, str]]) 
     )
 
 
+def _label_plan_cards(rows: Sequence[LabelPlanRow]) -> str:
+    """One card per question: the next step in labels, set large, and how far along it you are."""
+    cards: list[str] = []
+    for row in rows:
+        if not row.targets:
+            cards.append(
+                f'<div class="pcard muted"><div class="p-q ident">{escape(row.key)}</div>'
+                f'<div class="p-big small num">{row.n_now:,} <span>labels</span></div>'
+                f'<div class="p-note">{escape(row.reason)}</div></div>'
+            )
+            continue
+        target, extra = row.targets[0]
+        share = row.n_now / (row.n_now + extra) if row.n_now + extra else 0.0
+        later = " · ".join(f"±{t / 2:.3f} needs +{c:,}" for t, c in row.targets[1:])
+        now = "" if row.ci_width != row.ci_width else f" from ±{row.ci_width / 2:.3f}"
+        cards.append(
+            f'<div class="pcard"><div class="p-q ident">{escape(row.key)}</div>'
+            f'<div class="p-big num">+{extra:,} <span>labels</span></div>'
+            f'<div class="p-note">to narrow the ECE interval{now} to ±{target / 2:.3f}</div>'
+            f'<div class="prog" role="img" aria-label="{row.n_now:,} of {row.n_now + extra:,}">'
+            f'<div style="width:{share * 100:.1f}%"></div></div>'
+            f'<div class="p-scale num"><span>{row.n_now:,} now</span>'
+            f"<span>{row.n_now + extra:,} needed</span></div>"
+            + (f'<div class="p-later">{escape(later)}</div>' if later else "")
+            + "</div>"
+        )
+    return f'<div class="pcards">{"".join(cards)}</div>' if cards else ""
+
+
 def _label_plan_section(model: ReportModel, sections: Mapping[str, tuple[int, str]]) -> str:
     """What more labels would buy, and what a correction would (or would not) do."""
     parts = ['<section id="labels">', _h2("labels", sections)]
@@ -696,11 +873,14 @@ def _label_plan_section(model: ReportModel, sections: Mapping[str, tuple[int, st
             '<p class="intro">An interval is the honest limit of what this sample can say. More '
             "labels are the only way to narrow it, and the projection below is an estimate from "
             "your own data, not a measurement.</p>"
+            + _label_plan_cards(model.label_plan)
+            + '<details class="raw"><summary>The numbers behind this, as a table</summary>'
             '<div class="table-wrap"><table class="details">'
             "<caption>Additional labels needed for a tighter interval</caption>"
             '<thead><tr><th>Scope</th><th>Key</th><th class="num">n now</th>'
             '<th class="num">ECE</th><th class="num">CI width</th>'
             f"<th>Needed (target width: labels)</th></tr></thead><tbody>{rows}</tbody></table></div>"
+            "</details>"
         )
     if model.recalibration is not None:
         view = model.recalibration
@@ -726,6 +906,34 @@ def _slug(value: str) -> str:
     return "".join(character if character.isalnum() else "-" for character in value).strip("-")
 
 
+_COMPOSITION_CLASSES = ("seg-gold", "seg-silver", "seg-unl", "seg-score")
+
+
+def _composition_html(parts: Sequence[tuple[str, int]]) -> str:
+    """What share of the log can be measured at all, as one bar with its numbers written on it.
+
+    The four parts are told apart by fill, by pattern (dashed for no label, hatched for score) and
+    by the words printed on each, so the bar reads without colour.
+    """
+    total = sum(count for _, count in parts)
+    if not total:
+        return ""
+    measured = parts[0][1] if parts else 0
+    segments = "".join(
+        f'<div class="seg {cls}" style="flex:{count}" title="{escape(label)}: {count:,}">'
+        f'<b class="num">{count:,}</b><span>{escape(label)}</span></div>'
+        for (label, count), cls in zip(parts, _COMPOSITION_CLASSES, strict=False)
+        if count
+    )
+    return (
+        f'<div class="finding"><p class="claim small"><b>{measured / total:.0%}</b> of '
+        f"{total:,} records can be measured against a human answer</p>"
+        f'<div class="comp" role="img" aria-label="'
+        + escape(", ".join(f"{label}: {count:,}" for label, count in parts))
+        + f'">{segments}</div></div>'
+    )
+
+
 def _data_quality_section(model: ReportModel, sections: Mapping[str, tuple[int, str]]) -> str:
     quality = model.data_quality
     rows = "".join(
@@ -733,10 +941,13 @@ def _data_quality_section(model: ReportModel, sections: Mapping[str, tuple[int, 
         for label, value in quality.rows
     )
     table = (
+        '<details class="raw"><summary>The numbers behind this, as a table</summary>'
         f'<table class="kv"><caption>Sample and label state</caption><tbody>{rows}</tbody></table>'
+        "</details>"
         if rows
         else ""
     )
+    composition = _composition_html(quality.composition)
     if quality.sparse_bins:
         sparse = (
             f'<p class="warn"><strong>{quality.sparse_bins} of {quality.total_bins} confidence '
@@ -753,7 +964,7 @@ def _data_quality_section(model: ReportModel, sections: Mapping[str, tuple[int, 
     return (
         '<section id="data-quality">'
         + _h2("data-quality", sections)
-        + f"{table}{sparse}"
+        + f"{composition}{sparse}{table}"
         + f'<h3>Limitations</h3><ul class="limits">{items}</ul>'
         + "</section>"
     )
@@ -863,7 +1074,17 @@ def data_quality_from(dataset: DatasetReport, *, sparse_threshold: int = 30) -> 
         ),
         ("Bins under 30 labeled", f"{sparse} of {len(dataset.overall.bins)}"),
     )
+    binary = dataset.n_records - dataset.n_score_excluded
+    measured = dataset.overall.n
+    silver = min(dataset.n_labeled_silver, max(0, binary - measured))
+    composition = (
+        ("measured against a human answer", measured),
+        ("silver, kept apart", silver),
+        ("no usable label yet", max(0, binary - measured - silver)),
+        ("score questions", dataset.n_score_excluded),
+    )
     return DataQuality(
+        composition=composition,
         rows=rows,
         limitations=DEFAULT_LIMITATIONS,
         sparse_bins=sparse,
