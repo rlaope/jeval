@@ -854,6 +854,9 @@ REPORT_JS = """\
         var on = buttons[i].getAttribute("data-jeval-tab") === key;
         buttons[i].setAttribute("aria-selected", on ? "true" : "false");
         buttons[i].setAttribute("tabindex", on ? "0" : "-1");
+        // The server-rendered first tab carries `is-active` for a reader without JavaScript; left
+        // in place, it stays highlighted beside the tab that was actually chosen.
+        buttons[i].classList.toggle("is-active", on);
       }
       for (var j = 0; j < panels.length; j += 1) {
         show(panels[j], panels[j].getAttribute("data-jeval-question") === key);
