@@ -27,7 +27,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from jeval.schema import ALL_LABEL_SOURCES, DecisionRecord, normalize_record
+from jeval.schema import ALL_LABEL_SOURCES, DecisionRecord, LabelSource, normalize_record
 from jeval.store import LABELS_FILE_NAME, records_path
 
 ENV_FLAG = "JEVAL_COLLECT"
@@ -152,7 +152,11 @@ def record(
     path: str | Path | None = None,
 ) -> bool:
     """Append one decision record. Returns whether it was written; never raises."""
-    destination = target_path(path)
+    try:
+        destination = target_path(path)
+    except Exception:
+        _STATS["dropped"] += 1
+        return False
     if destination is None:
         return False
     payload: dict[str, Any] = {
@@ -200,7 +204,7 @@ def resolve(
     source_key: str,
     question: str,
     answer: str,
-    source: str = "human_review",
+    source: LabelSource = "human_review",
     ts: datetime | None = None,
     path: str | Path | None = None,
 ) -> bool:
@@ -218,22 +222,35 @@ def resolve(
     late answer or a second run changes nothing it should not.
 
     Like everything here it returns whether the line was written and never raises: an empty key,
-    question or answer, or an unknown source, is counted in ``stats()["invalid_value"]``.
+    question or answer, one longer than :data:`MAX_FIELD_CHARS`, a ``ts`` that is not a datetime,
+    or an unknown source, is counted in ``stats()["invalid_value"]``; anything else that goes wrong
+    is counted in ``dropped``.
     """
-    records_target = target_path(path)
-    if records_target is None:
-        return False
-    fields = {
-        "source_key": str(source_key).strip() if source_key is not None else "",
-        "question_key": str(question).strip() if question is not None else "",
-        "label": str(answer).strip() if answer is not None else "",
-    }
-    if not all(fields.values()) or source not in ALL_LABEL_SOURCES:
-        _STATS["invalid_value"] += 1
-        return False
-    destination = records_target.parent / LABELS_FILE_NAME
-    event = {**fields, "label_source": source, "ts": (ts or _now()).isoformat()}
+    # The whole body is guarded: a caller's object whose __str__ raises, a timestamp that is not a
+    # datetime, a path that is not a path — none of them may reach the code that closes a ticket.
     try:
+        records_target = target_path(path)
+        if records_target is None:
+            return False
+        if records_target.is_dir():
+            # A directory is not a records file; writing "beside" it would land one level up.
+            _STATS["sink_not_a_file"] += 1
+            return False
+        fields = {
+            "source_key": _field_text(source_key),
+            "question_key": _field_text(question),
+            "label": _field_text(answer),
+        }
+        if not all(fields.values()) or source not in ALL_LABEL_SOURCES:
+            _STATS["invalid_value"] += 1
+            return False
+        raw_ts: object = ts
+        if raw_ts is not None and not isinstance(raw_ts, datetime):
+            _STATS["invalid_value"] += 1
+            return False
+        when = raw_ts if isinstance(raw_ts, datetime) else _now()
+        event = {**fields, "label_source": source, "ts": when.isoformat()}
+        destination = records_target.parent / LABELS_FILE_NAME
         destination.parent.mkdir(parents=True, exist_ok=True)
         with destination.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(event, ensure_ascii=False) + "\n")
@@ -242,6 +259,19 @@ def resolve(
         return False
     _STATS["labels_written"] += 1
     return True
+
+
+#: The longest key, question or answer ``resolve`` writes. A label is a class name, not a document,
+#: and a line this short stays one append on a local filesystem.
+MAX_FIELD_CHARS = 512
+
+
+def _field_text(value: Any) -> str:
+    """A field as trimmed text, or ``""`` when it is missing or too long to be a label."""
+    if value is None:
+        return ""
+    text = str(value).strip()
+    return text if len(text) <= MAX_FIELD_CHARS else ""
 
 
 def record_many(payloads: Sequence[Mapping[str, Any]], *, path: str | Path | None = None) -> int:

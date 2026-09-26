@@ -13,7 +13,13 @@ from pathlib import Path
 from typing import Any
 
 from jeval.config import IngestMap
-from jeval.schema import ALL_LABEL_SOURCES, DecisionRecord, LabelSource, normalize_record
+from jeval.schema import (
+    ALL_LABEL_SOURCES,
+    GOLD_LABEL_SOURCES,
+    DecisionRecord,
+    LabelSource,
+    normalize_record,
+)
 from jeval.store import read_records
 
 
@@ -506,7 +512,12 @@ def _drop_impossible_label(record: DecisionRecord, report: IngestReport) -> Deci
 
 @dataclass
 class LabelEventReport:
-    """What happened to the answers ``collect.resolve`` recorded, when they were joined on read."""
+    """What happened to the answers ``collect.resolve`` recorded, when they were joined on read.
+
+    Counts are of answer lines, except ``n_applied`` and ``n_kept_existing``, which count decision
+    records: one answer can label more than one record when two model versions answered the same
+    request.
+    """
 
     n_events: int = 0
     n_applied: int = 0
@@ -514,11 +525,13 @@ class LabelEventReport:
     n_impossible: int = 0
     n_unmatched: int = 0
     n_invalid: int = 0
+    n_superseded: int = 0
 
     def summary(self) -> str:
         """One line for the terminal, naming every answer that did not become a label."""
         parts = [f"{self.n_applied} applied"]
         for count, words in (
+            (self.n_superseded, "superseded by a later or a human answer to the same case"),
             (self.n_kept_existing, "kept an existing label"),
             (self.n_impossible, "not an answer the question can give"),
             (self.n_unmatched, "matched no decision"),
@@ -529,49 +542,70 @@ class LabelEventReport:
         return f"labels: {self.n_events} answers from labels.jsonl, " + ", ".join(parts)
 
 
+def _event_text(value: Any) -> str:
+    return "" if value is None else str(value).strip()
+
+
 def apply_label_events(
     records: MutableSequence[DecisionRecord],
     events: Iterable[Mapping[str, Any]],
 ) -> LabelEventReport:
     """Join run-time answers onto records in memory, by ``(source_key, question_key)``.
 
-    The same guards as :func:`harvest_labels`: a record that already carries a label keeps it (a
-    later silver answer must never replace a human review), and an answer the record's own question
-    could not have produced is refused. When one case is answered twice, the later line wins —
-    an agent correcting their own resolution is the common reason. Nothing is written back: the
-    records file stays what the collector wrote, and the join is repeated on every read.
+    The same guards as :func:`harvest_labels`. A record that already carries a label keeps it, and
+    an answer the record's own question could not have produced is refused — checked after the
+    answer is normalised the way the schema normalises it, so ``"True"`` for a yes/no question is
+    ``"yes"``, exactly as a harvested label would be.
+
+    When one case is answered more than once, the answer that wins is the last one in file order,
+    except that a ``silver`` answer never replaces a human one (``human_review`` or
+    ``human_override``): agreement with another model must not overwrite what a person decided.
+    File order is append order, which is the order the answers were recorded on one host. Nothing
+    is written back: the records file stays what the collector wrote, and the join is repeated on
+    every read.
     """
     report = LabelEventReport()
-    latest: dict[tuple[str, str], tuple[str, str]] = {}
+    chosen: dict[tuple[str, str], tuple[str, str]] = {}
     for event in events:
         report.n_events += 1
-        key = str(event.get("source_key") or "").strip()
-        question = str(event.get("question_key") or "").strip()
-        label = str(event.get("label") or "").strip()
-        source = str(event.get("label_source") or "human_review")
+        key = _event_text(event.get("source_key"))
+        question = _event_text(event.get("question_key"))
+        label = _event_text(event.get("label"))
+        source = _event_text(event.get("label_source")) or "human_review"
         if not key or not question or not label or source not in ALL_LABEL_SOURCES:
             report.n_invalid += 1
             continue
-        latest[(key, question)] = (label, source)
+        pair = (key, question)
+        previous = chosen.get(pair)
+        if previous is not None:
+            report.n_superseded += 1
+            if previous[1] in GOLD_LABEL_SOURCES and source not in GOLD_LABEL_SOURCES:
+                continue  # the human answer stands; this silver one is the superseded line
+        chosen[pair] = (label, source)
 
     matched: set[tuple[str, str]] = set()
     for index, record in enumerate(records):
         pair = ((record.source_key or "").strip(), record.question_key)
-        if pair not in latest:
+        if pair not in chosen:
             continue
         matched.add(pair)
-        label, source = latest[pair]
+        label, source = chosen[pair]
         if record.label is not None:
             report.n_kept_existing += 1
             continue
-        if not _label_is_possible(record, label):
+        try:
+            updated = DecisionRecord.model_validate(
+                {**record.model_dump(), "label": label, "label_source": source}
+            )
+        except ValueError:
             report.n_impossible += 1
             continue
-        records[index] = DecisionRecord.model_validate(
-            {**record.model_dump(), "label": label, "label_source": source}
-        )
+        if updated.label is None or not _label_is_possible(record, updated.label):
+            report.n_impossible += 1
+            continue
+        records[index] = updated
         report.n_applied += 1
-    report.n_unmatched = len(latest) - len(matched)
+    report.n_unmatched = len(chosen) - len(matched)
     return report
 
 

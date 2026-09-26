@@ -6,6 +6,7 @@ import csv
 import json
 from collections.abc import Sequence
 from dataclasses import replace
+from datetime import timezone
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -315,7 +316,7 @@ report reads as 'confidence is trustworthy' whatever the data says. Two is the l
 show a direction, so two is the floor."""
 
 
-def _load_records(root: Path) -> list[DecisionRecord]:
+def _load_records(root: Path, *, join: bool = True) -> list[DecisionRecord]:
     """Read a project's records, or exit with one readable line.
 
     Six commands read records directly, so a missing file surfaced as whatever each of them happened
@@ -324,12 +325,14 @@ def _load_records(root: Path) -> list[DecisionRecord]:
     """
     try:
         records = load_records(root)
-        events = read_label_events(labels_path(root))
-    except (FileNotFoundError, ValueError) as exc:
+        events = read_label_events(labels_path(root)) if join else []
+    except (OSError, ValueError) as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from None
     # Answers recorded at run time by `collect.resolve` are joined here, on every read, so the
-    # library and the command line are one loop with no ingest step between them.
+    # library and the command line are one loop with no ingest step between them. A command that
+    # writes records back asks for them unjoined: persisting a joined answer would freeze it, and a
+    # later correction to the same case would be kept out as "an existing label".
     if events:
         report = apply_label_events(records, events)
         typer.echo(report.summary(), err=True)
@@ -1170,8 +1173,20 @@ def status(
         )
         raise typer.Exit(code=1)
     records = _load_records(root)
+    if not records:
+        typer.echo(f"{path} exists but holds no decisions yet: nothing has been collected.")
+        raise typer.Exit(code=1)
     events = read_label_events(labels_path(root))
-    last = max((record.ts for record in records), default=None)
+    # One clock for every record: an ingested log can mix offsets and naive stamps.
+    last = max(
+        (
+            record.ts.astimezone(timezone.utc)
+            if record.ts.tzinfo is not None
+            else record.ts.replace(tzinfo=timezone.utc)
+            for record in records
+        ),
+        default=None,
+    )
     typer.echo(
         f"decisions: {path} ({len(records):,} decisions"
         + (f", last {last:%Y-%m-%d %H:%M}Z" if last else "")
@@ -1194,8 +1209,15 @@ def status(
     measurable = sum(
         1 for record in records if record.is_gold and record.calibration_point() is not None
     )
+    binary = sum(1 for record in records if record.question_type != "score")
+    scored = sum(1 for record in records if record.question_type == "score" and record.is_gold)
     typer.echo("")
-    if measurable < DEFAULT_MIN_LABELS:
+    if scored:
+        typer.echo(
+            f"score questions: {scored:,} gold-labeled answers, measured as error and rank "
+            "agreement in the report, never as right or wrong."
+        )
+    if binary and measurable < DEFAULT_MIN_LABELS:
         typer.echo(
             f"next: {DEFAULT_MIN_LABELS - measurable} more gold labels before the verdict can say "
             f"anything ({measurable} of {DEFAULT_MIN_LABELS}). Record them with collect.resolve "
@@ -1517,7 +1539,9 @@ def label(
     """Queue the records whose labels would teach the tool the most."""
     from jeval import active
 
-    records = _load_records(root)
+    # Applying a sheet writes records back, so it reads them unjoined; building the queue reads the
+    # joined view, so a case a human already answered through collect.resolve is not queued again.
+    records = _load_records(root, join=apply_from is None)
     if apply_from is not None:
         with Path(apply_from).open(encoding="utf-8", newline="") as handle:
             applied = active.apply_labels(
