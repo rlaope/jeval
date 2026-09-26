@@ -1062,16 +1062,37 @@ def drift(
     ] = None,
     fail_on: Annotated[
         list[str] | None,
-        typer.Option("--fail-on", help="Check that fails the run, e.g. ece-increase=0.05."),
+        typer.Option(
+            "--fail-on",
+            help=(
+                "Check that fails the run: ece-increase, auto-rate-drop, ece-above or "
+                "threshold-shift, e.g. threshold-shift=0.05."
+            ),
+        ),
     ] = None,
     by_period: Annotated[
         str | None, typer.Option("--by-period", help="Split by W (week) or M (month).")
     ] = None,
+    paired: Annotated[
+        bool,
+        typer.Option(
+            "--paired",
+            help=(
+                "Also compare the two versions head to head on the requests both answered, "
+                "matched by source_key and question (shadow traffic)."
+            ),
+        ),
+    ] = False,
 ) -> None:
     """Compare model versions or periods, and fail the build when calibration degrades."""
     from jeval import baseline as baseline_engine
     from jeval import drift as drift_engine
 
+    if paired and (by_period or baseline is not None):
+        raise typer.BadParameter(
+            "--paired compares two model versions on the same requests; it cannot be combined "
+            "with --by-period, or with --baseline (a snapshot holds measurements, not records)"
+        )
     records = _load_records(root)
     models = sorted({record.model for record in records})
     if save_baseline is not None:
@@ -1097,9 +1118,22 @@ def drift(
         view = drift_engine.attach_thresholds(view, records, actions)
         if costs_note:
             typer.echo(costs_note)
-    checks = drift_engine.parse_fail_on(fail_on or [])
-    failures = drift_engine.run_checks(view, checks) if checks else ()
-    typer.echo(drift_engine.format_ci_block(view, failures), nl=False)
+    try:
+        checks = drift_engine.parse_fail_on(fail_on or [])
+        failures = drift_engine.run_checks(view, checks) if checks else ()
+    except ValueError as error:
+        # A check that cannot be evaluated is a refusal, not a pass: CI must not go green on a
+        # number nobody computed.
+        typer.echo(str(error))
+        raise typer.Exit(code=1) from error
+    head_to_head = (
+        drift_engine.compare_paired(
+            records, baseline=view.baseline_label, current=view.current_label
+        )
+        if paired
+        else None
+    )
+    typer.echo(drift_engine.format_ci_block(view, failures, paired=head_to_head), nl=False)
     if failures:
         raise typer.Exit(code=1)
 

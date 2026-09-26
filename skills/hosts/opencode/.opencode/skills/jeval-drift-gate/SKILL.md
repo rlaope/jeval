@@ -41,9 +41,12 @@ model changed: jev-1.13.0 -> jev-1.14.0 (Sep 16)
   department       0.028      0.141  +0.113   FAIL
 recommended threshold (department): 0.96 -> 0.98
   at the current 0.96: auto-rate 2% -> 5%
+failed ece-increase: department: ECE 0.028 -> 0.141 (+0.113), limit 0.050
 ```
 
-4. If a cost matrix is in the project, the movement of the recommended line comes with the check.
+4. If a cost matrix is in the project, the movement of the recommended line comes with the check,
+   and `--fail-on threshold-shift=0.05` fails the build when that line moves by more than 0.05 in
+   either direction: the line a reviewer approved is the one the application runs.
    Use `examples/ci/drift.yml` as the starting point for the workflow; jeval itself holds no token
    and never posts to a pull request.
 
@@ -71,7 +74,9 @@ beside it, before saying the gate works.
 4. **Waiting for the model string to change.** `jev-latest` and friends point at different models over
    time. A saved baseline catches the change that the version string hides.
 5. **Assuming costs exist.** Without a cost matrix the block says `recommended threshold: not
-   available (no cost matrix was applied)` instead of inventing a number. That is not a failure.
+   available (no cost matrix was applied)` instead of inventing a number. That is not a failure —
+   but `--fail-on threshold-shift` without a cost matrix is refused with exit 1, because a check on
+   a line nobody computed must not pass.
 
 ## Do not claim
 

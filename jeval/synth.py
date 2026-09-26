@@ -94,14 +94,80 @@ def _segment_of(index: int, spec: SynthSpec, rng: np.random.Generator) -> dict[s
 
 def generate(spec: SynthSpec) -> list[DecisionRecord]:
     """Generate a synthetic labeled decision log for one question."""
+    return _generate(spec)
+
+
+def generate_paired(
+    baseline: SynthSpec,
+    current: SynthSpec,
+    *,
+    current_skill: float = 1.0,
+    requests_seed: int = 0,
+    key_prefix: str = "req",
+) -> list[DecisionRecord]:
+    """Two model versions answering the same requests, as shadow traffic logs them.
+
+    Request ``i`` gets ``source_key`` ``f"{key_prefix}-{i:05d}"`` on both sides, one true answer,
+    and one true probability of being answered correctly, all drawn once with ``requests_seed``:
+    the shared difficulty is what a paired comparison removes, and the shared answer means both
+    versions are judged against the same truth. Each version then reports confidence through its
+    own ``mode`` and draws its own outcome, label availability and segment with its own ``seed``,
+    so two specs that differ only in seed are two equally good versions whose answers still differ.
+
+    ``current_skill`` in ``(0, 1]`` makes the current version genuinely less accurate: its true
+    probability is the shared one shrunk toward a coin flip, ``0.5 + (p - 0.5) * current_skill``,
+    and its ``mode`` applies on top of that — a ``calibrated`` current version with skill 0.6 is
+    worse and knows it. Both specs must describe the same question and the same number of requests;
+    ``score`` and ``constant_high`` have no per-request probability to share and are refused.
+    """
+    if baseline.n != current.n:
+        raise ValueError("paired versions must answer the same number of requests")
+    if (baseline.question_key, baseline.question_type, baseline.classes) != (
+        current.question_key,
+        current.question_type,
+        current.classes,
+    ):
+        raise ValueError("paired versions must answer the same question")
+    if baseline.model == current.model:
+        raise ValueError("paired versions need two different model values")
+    for spec in (baseline, current):
+        if spec.question_type == "score" or spec.mode == "constant_high":
+            raise ValueError("paired generation needs a per-request probability to share")
+    if not 0.0 < current_skill <= 1.0:
+        raise ValueError("current_skill must be in (0, 1]")
+    requests = np.random.default_rng(requests_seed)
+    shared = _true_probabilities(requests, baseline.n)
+    answers = ("yes", "no") if baseline.question_type == "noul" else baseline.classes
+    answers = answers or DEFAULT_CLASSES
+    truths = [answers[int(i)] for i in requests.integers(0, len(answers), size=baseline.n)]
+    shrunk = np.clip(0.5 + (shared - 0.5) * current_skill, 0.5000001, 1.0)
+    records: list[DecisionRecord] = []
+    for spec, true_p in ((baseline, shared), (current, shrunk)):
+        for index, record in enumerate(_generate(spec, true_p, truths)):
+            record.source_key = f"{key_prefix}-{index:05d}"
+            records.append(record)
+    return records
+
+
+def _generate(
+    spec: SynthSpec,
+    true_p: NDArray[np.float64] | None = None,
+    truths: Sequence[str] | None = None,
+) -> list[DecisionRecord]:
+    """The generator; ``true_p`` and ``truths`` are supplied only by :func:`generate_paired`.
+
+    With both absent the random stream is exactly the one ``generate`` has always drawn, so every
+    existing spec keeps producing the same records.
+    """
     if spec.mode not in SYNTH_MODES:
         raise ValueError(f"unknown mode {spec.mode!r}; expected one of {SYNTH_MODES}")
     rng = np.random.default_rng(spec.seed)
 
-    if spec.mode == "constant_high":
-        true_p = np.full(spec.n, spec.accuracy_target, dtype=float)
-    else:
-        true_p = _true_probabilities(rng, spec.n)
+    if true_p is None:
+        if spec.mode == "constant_high":
+            true_p = np.full(spec.n, spec.accuracy_target, dtype=float)
+        else:
+            true_p = _true_probabilities(rng, spec.n)
     reported = _transform(true_p, spec)
 
     correct = rng.random(spec.n) < true_p
@@ -119,7 +185,11 @@ def generate(spec: SynthSpec) -> list[DecisionRecord]:
         ts = spec.start - timedelta(seconds=60 * index)
 
         if spec.question_type == "noul":
-            positive = bool(rng.random() < 0.5)
+            if truths is None:
+                positive = bool(rng.random() < 0.5)
+            else:
+                # The answer given is the shared truth when right and the other one when wrong.
+                positive = (truths[index] == "yes") == bool(correct[index])
             decision = "yes" if positive else "no"
             opposite = "no" if positive else "yes"
             prediction = decision
@@ -171,7 +241,7 @@ def generate(spec: SynthSpec) -> list[DecisionRecord]:
         # generator whose classifier only ever answers the first class cannot exercise a per-class
         # threshold, a per-class cost action, or any slice by predicted class — every artifact built
         # from it looks like a tool that routes exactly one class.
-        truth = classes[int(rng.integers(0, len(classes)))]
+        truth = classes[int(rng.integers(0, len(classes)))] if truths is None else truths[index]
         if bool(correct[index]):
             prediction = truth
         else:
