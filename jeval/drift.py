@@ -26,7 +26,8 @@ and everything below follows from them:
 The workflow is ``split_models``/``split_by_period`` for the population views, ``compare`` for the
 comparison, ``attach_thresholds`` to put a cost-derived threshold on each slice, ``parse_fail_on``
 for the CI threshold spec, ``run_checks`` for the verdict, and ``format_ci_block`` for the text a
-CI job prints.
+CI job prints. ``compare_paired`` is the head-to-head variant for shadow traffic, where both
+versions answered the same requests: its docstring states the pairing rules.
 """
 
 from __future__ import annotations
@@ -49,6 +50,10 @@ if TYPE_CHECKING:  # pragma: no cover - imported for the type checker only
 
 #: A slice needs at least this many measurable gold records to take part in a comparison.
 DEFAULT_MIN_SLICE = 30
+#: A question needs at least this many gold-labeled pairs before a paired comparison reports a
+#: number. It matches ``DEFAULT_MIN_SLICE`` on purpose: a pair is one record on each side, so a
+#: question that clears this bar also clears the unpaired comparison's bar on both sides.
+MIN_PAIRS = 30
 DEFAULT_ALPHA = 0.05
 DEFAULT_N_BOOT = 200
 DEFAULT_SEED = 0
@@ -90,6 +95,40 @@ class _Unit:
     label: str
     before: DriftSlice
     after: DriftSlice
+
+
+@dataclass(frozen=True)
+class PairedQuestion:
+    """One question of a paired comparison: its pairs, and either a comparison or a refusal."""
+
+    question: str
+    n_pairs: int
+    comparison: calibration.PairedComparison | None = None
+    refusal: str = ""
+    verdict: str = ""
+
+
+@dataclass(frozen=True)
+class PairedView:
+    """A head-to-head comparison of two model versions on the requests both of them answered.
+
+    The ``n_*`` fields count what one of the two compared versions logged but could not take part,
+    so the output can say exactly what was left out and why. ``n_not_gold_on_both`` and
+    ``n_label_conflict`` count pairs; the others count records.
+    """
+
+    baseline_label: str
+    current_label: str
+    questions: tuple[PairedQuestion, ...] = ()
+    n_unkeyed: int = 0
+    n_duplicate: int = 0
+    n_one_sided: int = 0
+    n_not_gold_on_both: int = 0
+    n_label_conflict: int = 0
+    n_score: int = 0
+    min_pairs: int = MIN_PAIRS
+    alpha: float = DEFAULT_ALPHA
+    note: str = ""
 
 
 @dataclass(frozen=True)
@@ -251,6 +290,203 @@ def compare(
         equal_width=equal_width,
         changes=changes,
     )
+
+
+def compare_paired(
+    records: Sequence[DecisionRecord],
+    *,
+    baseline: str | None = None,
+    current: str | None = None,
+    min_pairs: int = MIN_PAIRS,
+    alpha: float = DEFAULT_ALPHA,
+    n_boot: int = calibration.DEFAULT_BOOTSTRAP_SAMPLES,
+    seed: int = DEFAULT_SEED,
+    n_bins: int = DEFAULT_N_BINS,
+    equal_width: bool = False,
+) -> PairedView:
+    """Compare two model versions on the same requests, pair by pair.
+
+    The two versions are resolved exactly as :func:`compare` resolves them. A **pair** is one record
+    from each version with the same ``(source_key, question_key)``: shadow traffic logs both
+    versions on one request, and pairing them takes the difficulty of each request out of the
+    difference. The rules, each counted in the result so nothing disappears silently:
+
+    - ``score`` records are measured on another scale and never enter a pair (``n_score``).
+    - A record without ``source_key`` cannot be matched to anything (``n_unkeyed``).
+    - A key logged more than once by the same version is ambiguous — there is no telling which
+      answer was the one served — so every record at that key on that side is refused
+      (``n_duplicate``). Picking the first or the last would be a silent choice.
+    - A key only one version logged has no partner (``n_one_sided``).
+    - Both sides of a pair need a gold label (``n_not_gold_on_both`` otherwise), and the two labels
+      must agree: a request labeled with two different answers has no single truth for both
+      versions to be judged against (``n_label_conflict``).
+
+    Each question with at least ``min_pairs`` pairs gets a :class:`calibration.PairedComparison`
+    measured over one edge set pooled from both sides of its pairs, the same rule :func:`compare`
+    follows; below that the question is refused with no numbers at all.
+    """
+    if min_pairs < 1:
+        raise ValueError(f"min_pairs must be >= 1, got {min_pairs}")
+    grouped = _group_by_model(records)
+    if len(grouped) < 2:
+        listed = ", ".join(sorted(grouped)) or "none"
+        return PairedView(
+            baseline_label="",
+            current_label="",
+            min_pairs=min_pairs,
+            alpha=alpha,
+            note=(
+                "a paired comparison needs two model versions: found "
+                f"{len(grouped)} model value(s) ({listed})."
+            ),
+        )
+    baseline_model, current_model = _select_models(grouped, baseline=baseline, current=current)
+    if baseline_model == current_model:
+        return PairedView(
+            baseline_label=baseline_model,
+            current_label=current_model,
+            min_pairs=min_pairs,
+            alpha=alpha,
+            note=(
+                "nothing to compare: the baseline and the current version are both "
+                f"{current_model}."
+            ),
+        )
+
+    n_score = n_unkeyed = n_duplicate = 0
+    sides: list[dict[tuple[str, str], DecisionRecord]] = []
+    questions: set[str] = set()
+    for model in (baseline_model, current_model):
+        keyed: dict[tuple[str, str], list[DecisionRecord]] = {}
+        for record in grouped[model]:
+            if record.question_type == "score":
+                n_score += 1
+            elif record.source_key is None:
+                n_unkeyed += 1
+            else:
+                keyed.setdefault((record.source_key, record.question_key), []).append(record)
+                questions.add(record.question_key)
+        single: dict[tuple[str, str], DecisionRecord] = {}
+        for key, group in keyed.items():
+            if len(group) > 1:
+                n_duplicate += len(group)
+            else:
+                single[key] = group[0]
+        sides.append(single)
+    before_side, after_side = sides
+    n_one_sided = len(before_side.keys() ^ after_side.keys())
+
+    n_not_gold = n_conflict = 0
+    pairs: dict[str, list[tuple[DecisionRecord, DecisionRecord]]] = {key: [] for key in questions}
+    for key in sorted(before_side.keys() & after_side.keys()):
+        before, after = before_side[key], after_side[key]
+        if not (before.is_gold and after.is_gold):
+            n_not_gold += 1
+        elif before.label != after.label:
+            n_conflict += 1
+        else:
+            pairs[key[1]].append((before, after))
+
+    measured: list[PairedQuestion] = []
+    for question in sorted(pairs):
+        matched = pairs[question]
+        if len(matched) < min_pairs:
+            measured.append(
+                PairedQuestion(
+                    question=question,
+                    n_pairs=len(matched),
+                    refusal=(
+                        f"{len(matched)} gold-labeled pair(s), fewer than the {min_pairs} a paired "
+                        "comparison needs; no numbers are reported"
+                    ),
+                )
+            )
+            continue
+        before_conf, before_hit = _points([before for before, _ in matched])
+        after_conf, after_hit = _points([after for _, after in matched])
+        edges = _shared_edges(
+            [record for pair in matched for record in pair],
+            n_bins=n_bins,
+            equal_width=equal_width,
+            alpha=alpha,
+        )
+        result = calibration.paired_bootstrap(
+            np.asarray(before_conf, dtype=float),
+            np.asarray(before_hit, dtype=bool),
+            np.asarray(after_conf, dtype=float),
+            np.asarray(after_hit, dtype=bool),
+            edges,
+            n_boot=n_boot,
+            alpha=alpha,
+            seed=seed,
+        )
+        measured.append(
+            PairedQuestion(
+                question=question,
+                n_pairs=len(matched),
+                comparison=result,
+                verdict=_paired_verdict(result, alpha),
+            )
+        )
+    return PairedView(
+        baseline_label=baseline_model,
+        current_label=current_model,
+        questions=tuple(measured),
+        n_unkeyed=n_unkeyed,
+        n_duplicate=n_duplicate,
+        n_one_sided=n_one_sided,
+        n_not_gold_on_both=n_not_gold,
+        n_label_conflict=n_conflict,
+        n_score=n_score,
+        min_pairs=min_pairs,
+        alpha=alpha,
+    )
+
+
+def format_paired_lines(view: PairedView) -> list[str]:
+    """The paired block as plain lines: per question the pairs, three differences and a verdict.
+
+    Every difference is ``current - baseline`` with its bootstrap interval, so a positive ECE or
+    Brier difference is a worse current version and a positive accuracy difference a better one.
+    A refused question prints why and no number. The last line counts every record of the two
+    versions that could not be paired, by reason.
+    """
+    if not view.baseline_label or view.baseline_label == view.current_label:
+        return [f"paired: {view.note}"] if view.note else []
+    level = f"{1.0 - view.alpha:.0%}"
+    lines = [
+        f"paired: {view.baseline_label} -> {view.current_label} "
+        "(the same requests, matched by source_key and question)"
+    ]
+    if not view.questions:
+        lines.append("  no question has a record from both versions at the same source_key")
+    for question in view.questions:
+        result = question.comparison
+        if result is None:
+            lines.append(f"  {question.question}: refused: {question.refusal}")
+            continue
+        lines.append(f"  {question.question}: {question.n_pairs:,} pairs")
+        rows = (("accuracy", result.accuracy), ("ECE", result.ece), ("Brier", result.brier))
+        for name, metric in rows:
+            line = (
+                f"    {name:<8}  {metric.baseline:.3f} -> {metric.current:.3f}  "
+                f"{_delta(metric.difference)}  {level} CI {_interval(metric)}"
+            )
+            if name == "accuracy":
+                line += (
+                    f"  McNemar {_p_value(result.mcnemar_p)} (right on baseline only: "
+                    f"{result.discordant_baseline_only}, on current only: "
+                    f"{result.discordant_current_only})"
+                )
+            lines.append(line)
+        lines.append(f"    verdict: {question.verdict}")
+    lines.append(
+        f"  not paired: {view.n_unkeyed} without source_key, {view.n_duplicate} at a key logged "
+        f"twice by one version, {view.n_one_sided} with no partner, {view.n_not_gold_on_both} "
+        f"pair(s) without a gold label on both sides, {view.n_label_conflict} with conflicting "
+        f"labels, {view.n_score} score"
+    )
+    return lines
 
 
 def parse_fail_on(specs: Sequence[str]) -> tuple[DriftCheck, ...]:
@@ -492,14 +728,19 @@ def _looks_like_period(label: str) -> bool:
     return re.fullmatch(r"\d{4}-(W\d{2}|\d{2})", label or "") is not None
 
 
-def format_ci_block(view: DriftView, failures: Sequence[DriftFailure]) -> str:
+def format_ci_block(
+    view: DriftView,
+    failures: Sequence[DriftFailure],
+    paired: PairedView | None = None,
+) -> str:
     """The block a CI job prints, as plain column-aligned text.
 
     No colour and no decoration, because this string is read in a CI log, pasted into a bug report
     and diffed between runs. It is, in order: a header naming the change, an indented table with
     the before/after ECE and the delta per compared unit and its PASS/FAIL verdict, the threshold
-    and automation-rate movement when the slices carry one, the view's note when there is one, and
-    the exit code the block implies.
+    and automation-rate movement when the slices carry one, the paired head-to-head block when one
+    is given, the view's note when there is one, and the exit code the block implies. The paired
+    block informs; it never changes the exit code, which only the ``--fail-on`` checks decide.
     """
     if not view.baseline_label and not view.current_label:
         return _with_exit(view.note or "no drift comparison available", failures)
@@ -521,6 +762,8 @@ def format_ci_block(view: DriftView, failures: Sequence[DriftFailure]) -> str:
     if units:
         lines.extend(_table_lines(view, units, failures))
     lines.extend(_threshold_lines(view, units))
+    if paired is not None:
+        lines.extend(format_paired_lines(paired))
     if view.note:
         lines.append(f"note: {view.note}")
     return _with_exit("\n".join(lines), failures)
@@ -1068,6 +1311,42 @@ def _ece(value: float) -> str:
 
 def _delta(value: float) -> str:
     return f"{value:+.3f}" if math.isfinite(value) else "n/a"
+
+
+def _paired_verdict(result: calibration.PairedComparison, alpha: float) -> str:
+    """One line in plain words that claims only what the sample resolves.
+
+    Accuracy is judged by the exact McNemar test on the discordant pairs, calibration by whether
+    the ECE difference interval excludes zero. A difference inside the noise is called unresolved,
+    never "no difference", which a sample cannot show.
+    """
+    p_text = _p_value(result.mcnemar_p)
+    if result.mcnemar_p < alpha:
+        word = "less" if result.accuracy.difference < 0 else "more"
+        accuracy = f"current is {word} accurate beyond noise (McNemar {p_text})"
+    else:
+        accuracy = f"no accuracy difference the sample can resolve (McNemar {p_text})"
+    ece = result.ece
+    if math.isfinite(ece.ci_low) and (ece.ci_low > 0.0 or ece.ci_high < 0.0):
+        word = "worse" if ece.difference > 0 else "better"
+        calibrated = (
+            f"current is {word} calibrated beyond noise "
+            f"(ECE {_delta(ece.difference)}, interval excludes 0)"
+        )
+    else:
+        calibrated = "no calibration difference the sample can resolve"
+    return f"{accuracy}; {calibrated}"
+
+
+def _p_value(value: float) -> str:
+    return "p<0.001" if value < 0.001 else f"p={value:.3f}"
+
+
+def _interval(metric: calibration.PairedDifference) -> str:
+    """``low to high``, or ``n/a`` when every resample agreed and there is no interval to state."""
+    if not (math.isfinite(metric.ci_low) and math.isfinite(metric.ci_high)):
+        return "n/a"
+    return f"{metric.ci_low:+.3f} to {metric.ci_high:+.3f}"
 
 
 def _with_exit(block: str, failures: Sequence[DriftFailure]) -> str:
