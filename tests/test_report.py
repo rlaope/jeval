@@ -339,3 +339,64 @@ def test_a_long_segment_label_does_not_run_into_its_bar() -> None:
     label_width = chart_svg.text_width("customer_tier = enterprise_plus", 12.5, mono=True)
     tracks = [float(x) for x in re.findall(r'<rect x="([0-9.]+)" y="[0-9.]+" width', svg)]
     assert tracks and min(tracks) > label_width
+
+
+def test_the_reliability_chart_names_the_recommended_line_and_the_line_in_use_apart() -> None:
+    """The chart drew the recommendation as "line in use", contradicting the verdict beside it."""
+    from jeval.evaluate import evaluate
+    from jeval.report import template
+    from jeval.report.charts import reliability as reliability_charts
+    from jeval.synth import SynthSpec, generate
+
+    dataset = evaluate(generate(SynthSpec(n=300, mode="inflated", seed=3)), n_boot=20)
+    key = dataset.questions[0].question_key
+    blocks = template.build_blocks(
+        dataset, thresholds={key: 0.85}, in_use={key: 0.60}, actions={key: "auto_route"}
+    )
+    block = blocks[0]
+    assert block.threshold == 0.85 and block.in_use == 0.60
+    assert "recommended 0.85 (auto_route)" in block.subtitle
+    assert "in use 0.60" in block.subtitle
+    html = reliability_charts.render_reliability_section(
+        block.metrics, threshold=block.in_use, recommended=block.threshold
+    )
+    assert "in use 0.60" in html and "recommended 0.85" in html
+    assert "line in use 0.85" not in html
+
+
+def test_the_gold_count_is_the_sample_the_metrics_were_measured_on() -> None:
+    """The row read 767 while the report measured 696: score answers were counted as gold."""
+    from jeval.report import template
+    from jeval.synth import demo_dataset
+
+    dataset = _dataset(list(demo_dataset(seed=11, scale=0.5).records))
+    rows = dict(template.data_quality_from(dataset).rows)  # type: ignore[attr-defined]
+    binary = dataset.n_records - dataset.n_score_excluded
+    assert rows["Labeled (gold)"] == f"{dataset.overall.n:,} of {binary:,} choice and yes/no"
+
+
+def test_a_sweep_with_no_resamples_reports_no_interval_instead_of_crashing() -> None:
+    import math
+
+    from jeval.costs import CostAction, sweep
+
+    action = CostAction(
+        name="a",
+        question="department",
+        when="billing",
+        cost_false_accept=10.0,
+        cost_escalate=1.0,
+        cost_false_reject=0.0,
+    )
+    records = generate(
+        SynthSpec(
+            n=300,
+            mode="calibrated",
+            seed=2,
+            question_key="department",
+            classes=("billing", "technical"),
+        )
+    )
+    result = sweep(action, records, n_boot=0)
+    assert math.isnan(result.ci_low) and math.isnan(result.ci_high)
+    assert result.curve

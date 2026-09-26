@@ -777,11 +777,15 @@ def build_and_write_report(
     cost_classes: dict[str, dict[str, list[str]]] = {}
     for action in actions:
         cost_classes.setdefault(action.question, {}).setdefault(action.when, []).append(action.name)
+    deployed = impact.current_threshold if impact is not None else None
     blocks = template.build_blocks(
         dataset,
         thresholds=threshold_by_question,
         actions=action_by_question,
         cost_classes=cost_classes,
+        in_use={question: deployed for question in threshold_by_question}
+        if deployed is not None
+        else None,
     )
     html = template.render_document(model, blocks, segment_metrics=segment_metrics)
     template.write_report(html, out)

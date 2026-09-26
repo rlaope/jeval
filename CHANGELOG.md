@@ -156,6 +156,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   reader from install to an open report in three lines.
 
 ### Fixed
+- The reliability chart drew the *recommended* threshold in the alert colour and called it "line in
+  use", so the demo showed "line in use 0.85" beside a verdict saying 0.60 is in use. The chart now
+  draws both lines and names each — `in use` dashed in the alert colour, `recommended` solid in the
+  accent — and the block's subtitle states both.
+- The data-quality row "Labeled (gold)" counted score answers, so it read 767 beside a report
+  measured on 696; it now counts the choice and yes/no answers the metrics were measured on.
+- `costs.sweep(n_boot=0)` crashed on the quantile of an empty array; it now reports no interval,
+  as `bootstrap_threshold_ci` already did.
 - **Yes/no (`noul`) calibration was measured on the wrong scale.** The record stores confidence as
   the distance from a coin flip, `|p - 0.5| * 2`, and every calibration measure read that value as
   the probability of being right. A perfectly calibrated synthetic yes/no question reported ECE

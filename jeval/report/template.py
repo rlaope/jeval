@@ -45,6 +45,7 @@ class ReliabilityBlock:
     question_key: str
     metrics: CalibrationMetrics
     diagnosis: str
+    # The line the cost minimum points at for this question's action, and the line in use.
     threshold: float | None = None
     subtitle: str = ""
     silver_note: str = ""
@@ -55,6 +56,7 @@ class ReliabilityBlock:
     classwise: ClasswiseMetrics | None = None
     # Class -> the cost actions that fire when it is predicted (a `CostAction.when`).
     cost_classes: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
+    in_use: float | None = None
 
 
 def markdown_summary(model: ReportModel) -> str:
@@ -374,7 +376,8 @@ def _reliability_section(
             f'<p class="diag">{escape(block.diagnosis)}</p>',
             reliability_charts.render_reliability_section(
                 block.metrics,
-                threshold=block.threshold,
+                threshold=block.in_use,
+                recommended=block.threshold,
                 title=f"Reliability · {block.question_key}",
             ),
         ]
@@ -773,8 +776,13 @@ def build_blocks(
     thresholds: Mapping[str, float] | None = None,
     actions: Mapping[str, str] | None = None,
     cost_classes: Mapping[str, Mapping[str, Sequence[str]]] | None = None,
+    in_use: Mapping[str, float] | None = None,
 ) -> list[ReliabilityBlock]:
-    """One block per question, carrying the threshold that applies to it.
+    """One block per question, carrying the recommended line and the line in use.
+
+    ``thresholds`` holds the recommended line per question and ``in_use`` the line deployed. They
+    are kept apart all the way to the chart: drawing the recommendation as "line in use" put a
+    number beside the verdict that contradicted it.
 
     ``actions`` names the action each question's line belongs to. Every question has its own line
     and several questions can share an action, so the number on the chart is not always the number
@@ -782,16 +790,20 @@ def build_blocks(
     one of them is wrong.
     """
     thresholds = dict(thresholds or {})
+    in_use = dict(in_use or {})
     actions = dict(actions or {})
     cost_classes = dict(cost_classes or {})
     blocks: list[ReliabilityBlock] = []
     for question in dataset.questions:
         block_threshold = thresholds.get(question.question_key)
+        block_in_use = in_use.get(question.question_key)
         line_note = ""
         if block_threshold is not None:
-            line_note = f" · line in use {S.fmt(block_threshold)}"
+            line_note = f" · recommended {S.fmt(block_threshold)}"
             if actions.get(question.question_key):
                 line_note += f" ({actions[question.question_key]})"
+        if block_in_use is not None:
+            line_note += f" · in use {S.fmt(block_in_use)}"
         silver_note = ""
         if question.silver_metrics is not None and question.silver_metrics.n > 0:
             silver_note = (
@@ -804,6 +816,7 @@ def build_blocks(
                 metrics=question.metrics,
                 diagnosis=question.diagnosis,
                 threshold=block_threshold,
+                in_use=block_in_use,
                 subtitle=(
                     f"{question.question_type} · {question.n_records} records · "
                     f"{question.n_unlabeled} unlabeled{line_note}"
@@ -827,15 +840,17 @@ def data_quality_from(dataset: DatasetReport, *, sparse_threshold: int = 30) -> 
     """Assemble the data-quality rows from an evaluated dataset."""
     from jeval.report.model import DataQuality
 
-    sources: dict[str, int] = {}
-    for question in dataset.questions:
-        if question.silver_metrics is not None:
-            sources["silver"] = sources.get("silver", 0) + question.silver_metrics.n
-    gold = dataset.n_labeled_gold - sources.get("silver", 0)
     sparse = sum(1 for b in dataset.overall.bins if b.n < sparse_threshold)
     rows = (
         ("Records", f"{dataset.n_records:,}"),
-        ("Labeled (gold)", f"{gold:,} of {dataset.n_records:,}"),
+        # The sample the metrics were measured on: gold labels of choice and yes/no questions. A
+        # score answer's gold label is measured as error, never as right or wrong, and counting it
+        # here put 767 beside a report that measured 696.
+        (
+            "Labeled (gold)",
+            f"{dataset.overall.n:,} of {dataset.n_records - dataset.n_score_excluded:,} "
+            "choice and yes/no",
+        ),
         ("Labeled (silver)", f"{dataset.n_labeled_silver:,}"),
         ("Unlabeled", f"{dataset.n_unlabeled:,}"),
         ("Excluded score records", f"{dataset.n_score_excluded:,}"),
