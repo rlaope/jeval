@@ -127,3 +127,10 @@ def test_snapshot_excludes_silver_and_score_records() -> None:
     payload = snapshot(list(silver) + list(score))
     assert payload["labeled_gold"] == 0
     assert payload["questions"] == {}
+
+
+def test_a_snapshot_from_before_the_yes_no_scale_fix_is_refused_with_the_reason() -> None:
+    payload = snapshot(generate(SynthSpec(n=200, mode="calibrated", seed=1)))
+    payload["schema_version"] = 2
+    with pytest.raises(ValueError, match="Re-save it with --save-baseline"):
+        view_from_snapshot(payload, generate(SynthSpec(n=200, mode="calibrated", seed=2)))

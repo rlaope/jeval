@@ -15,6 +15,10 @@ fine-tune a model, and it never silently rewrites a user's data: nothing in this
     fit = load_yaml("recalibration.yaml")
     corrected = apply(fit, model_confidence)
 
+``model_confidence`` is the probability that the answer given is right: the top-1 probability for a
+``choice`` question, and ``max(p, 1 - p)`` for a yes/no ``noul`` question whose model returned
+``p`` for "yes" (``DecisionRecord.stated_probability``). The map is fitted on that scale.
+
 Two maps are offered. Temperature scaling divides the top-1 logit by a single number ``T`` and
 pushes it back through a sigmoid, so the ranking of answers never changes. Isotonic regression
 fits a monotone confidence -> accuracy map by pool-adjacent-violators (implemented here in a few

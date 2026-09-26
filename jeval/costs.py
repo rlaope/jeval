@@ -289,7 +289,9 @@ def _gold_records(action: CostAction, records: Sequence[DecisionRecord]) -> list
 
 def _sample(action: CostAction, gold: Sequence[DecisionRecord]) -> _Sample:
     return _Sample(
-        confidence=np.asarray([record.confidence for record in gold], dtype=np.float64),
+        # The line is drawn on the probability the answer is right, the same scale the reliability
+        # chart reads, so a yes/no threshold of 0.8 means what a multiple-choice 0.8 means.
+        confidence=np.asarray([record.stated_probability for record in gold], dtype=np.float64),
         correct=np.asarray([bool(record.is_correct) for record in gold], dtype=np.bool_),
         label_is_when=np.asarray([record.label == action.when for record in gold], dtype=np.bool_),
         predicts_when=np.asarray(

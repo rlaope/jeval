@@ -560,3 +560,22 @@ def test_a_synthetic_log_queues_only_unlabeled_records_in_priority_order() -> No
     assert priorities[0] == PRIORITY_BAND
     assert {item.record_id for item in queue} <= {record.id for record in candidates}
     assert build_queue(records, thresholds={"department": 0.90}, limit=10) == queue
+
+
+def test_a_yes_no_record_is_ranked_against_its_threshold_on_the_same_scale() -> None:
+    """P(yes) = 0.8 is right with probability 0.8, so it sits in the band of a 0.8 line."""
+    from jeval.active import PRIORITY_BAND, build_queue
+    from jeval.schema import normalize_record
+
+    record = normalize_record(
+        {
+            "model": "m",
+            "question_key": "is_urgent",
+            "question_type": "noul",
+            "probability_positive": 0.8,
+        }
+    )
+    queue = build_queue([record], thresholds={"is_urgent": 0.8})
+    assert len(queue) == 1
+    assert queue[0].priority == PRIORITY_BAND
+    assert queue[0].confidence == pytest.approx(0.8)

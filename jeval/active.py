@@ -220,7 +220,7 @@ def _bin_counts(labeled: Sequence[DecisionRecord], n_bins: int) -> list[int]:
     """How many labeled records sit in each confidence bin."""
     counts = [0] * n_bins
     for record in labeled:
-        counts[_bin_index(record.confidence, n_bins)] += 1
+        counts[_bin_index(record.stated_probability, n_bins)] += 1
     return counts
 
 
@@ -287,9 +287,9 @@ def _remainder_reason(
     if threshold is None:
         support = f"no threshold candidate is known for {record.question_key}"
     else:
-        distance = abs(record.confidence - threshold)
+        distance = abs(record.stated_probability - threshold)
         support = (
-            f"confidence {record.confidence:.2f} sits {distance:.2f} outside the "
+            f"confidence {record.stated_probability:.2f} sits {distance:.2f} outside the "
             f"{record.question_key} candidate band ({threshold:.2f})"
         )
     return (
@@ -305,7 +305,9 @@ def _rank(
     seed: int,
 ) -> _Ranked:
     """Place one unlabeled record in a priority class and build its reason."""
-    confidence = record.confidence
+    # The scale thresholds and calibration bins are drawn on, so a yes/no record lands in the
+    # band its threshold was computed in.
+    confidence = record.stated_probability
     index = _bin_index(confidence, DEFAULT_N_BINS)
     lo, hi = _bin_bounds(index, DEFAULT_N_BINS)
     bin_count = counts[index]

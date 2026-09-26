@@ -932,3 +932,34 @@ def test_thresholds_file_reads_back_the_number_it_wrote(tmp_path: Path) -> None:
     assert entry["auto_rate"] == pytest.approx(result.auto_rate)
     assert entry["n_records"] == result.n_records
     assert entry["insufficient_data"] is False
+
+
+def test_a_yes_no_threshold_is_drawn_on_the_probability_the_answer_is_right() -> None:
+    """P(yes) = 0.8 is stored as 0.6 from the fence; the line at 0.7 must still automate it."""
+    from jeval.costs import CostAction, evaluate_point
+    from jeval.schema import normalize_record
+
+    records = [
+        normalize_record(
+            {
+                "model": "m",
+                "question_key": "is_urgent",
+                "question_type": "noul",
+                "probability_positive": 0.8,
+                "label": index % 5 != 0,
+                "label_source": "human_review",
+            }
+        )
+        for index in range(50)
+    ]
+    assert records[0].confidence == pytest.approx(0.6)
+    action = CostAction(
+        name="auto_escalate",
+        question="is_urgent",
+        when="yes",
+        cost_false_accept=10.0,
+        cost_escalate=1.0,
+        cost_false_reject=0.0,
+    )
+    assert evaluate_point(action, records, 0.7).auto_rate == pytest.approx(1.0)
+    assert evaluate_point(action, records, 0.85).auto_rate == pytest.approx(0.0)

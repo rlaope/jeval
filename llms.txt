@@ -64,8 +64,11 @@ their own data and show them the artifact — not to run a command tour.
 ## Hard facts, so you do not have to guess
 
 - Records: `.jeval/records.jsonl`, one question per record, one JSON object per line.
-- Question types: `choice`, `score`, `noul`. Accuracy is only defined for `choice`; `score`
-  questions get MAE/RMSE/rank correlation and are never folded into binary accuracy.
+- Question types: `choice`, `score`, `noul`. Accuracy is defined for `choice` and `noul`; a
+  yes/no answer is measured and thresholded on `max(p, 1 - p)`, the probability that it is right,
+  while the record stores `|p - 0.5| * 2`. Ingest yes/no rows through a `probabilities` field
+  holding P(yes); a bare `confidence` for `noul` is read on the distance scale. `score` questions get MAE/RMSE/rank correlation and are
+  never folded into binary accuracy.
 - Cost matrix and threshold config live in files the user owns: `costs.yaml`, `thresholds.yaml`.
   jeval does not invent cost numbers. A threshold without costs is `not available`.
 - Exit codes: `0` success, `1` refused or nothing to measure (missing records, missing map, an

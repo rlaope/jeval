@@ -12,6 +12,7 @@ from pathlib import Path
 
 from typer.testing import CliRunner
 
+from jeval.baseline import SNAPSHOT_VERSION
 from jeval.cli import app
 from jeval.store import write_records
 from jeval.synth import SynthSpec, generate
@@ -129,7 +130,7 @@ def test_drift_baseline_round_trip(tmp_path: Path) -> None:
     assert saved.exit_code == 0, saved.stdout
     assert baseline.exists()
     payload = json.loads(baseline.read_text(encoding="utf-8"))
-    assert payload["schema_version"] == 2
+    assert payload["schema_version"] == SNAPSHOT_VERSION
     assert payload["questions"]["intent"]["n"] > 0
     assert "records" not in payload["questions"]["intent"]
     # The edges travel with the measurement so the later comparison bins both sides the same way.
