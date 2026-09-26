@@ -99,6 +99,34 @@ Python 3.10 or newer. The runtime dependencies are `numpy`, `pydantic`, `pyyaml`
 
 ---
 
+## Two ways to use it, one directory between them
+
+| | In your service (the library) | On the command line |
+| --- | --- | --- |
+| **What you do** | `collect.track(client)` where the client is built; `collect.resolve(...)` where a human settles a case | `jeval status`, `jeval report`, `jeval threshold`, `jeval drift` |
+| **What happens** | every answer and every human answer is appended to `$JEVAL_ROOT/.jeval/` | the same files are read, joined and measured |
+| **What it never does** | raise, block, call a model, or send anything off the machine | write configuration it was not asked to, or need a network |
+
+```python
+from jeval import collect
+
+client = collect.track(TicketClassifier(), source_key=lambda **kw: kw["ticket_id"])
+...
+collect.resolve(source_key=ticket.id, question="department", answer=ticket.final_department)
+```
+
+```sh
+JEVAL_ROOT=/var/lib/jeval    # in the service
+jeval status --root /var/lib/jeval
+jeval report --root /var/lib/jeval
+```
+
+Either half works alone: the library needs no command line to record, and the command line reads a
+log you already have with `jeval ingest`. [`docs/library.md`](docs/library.md) is the library's
+reference — every argument, every environment variable, the counters to check, and the limits.
+
+---
+
 ## See it
 
 Everything below is cropped from [`examples/report-example.html`](examples/report-example.html), a
@@ -239,7 +267,13 @@ client = collect.track(
     source_key=lambda **kw: kw["trace_id"],  # what a human answer is joined back on
     segment=lambda **kw: {"lang": kw.get("lang")},  # request fields to compare later
 )
+
+# where the case closes
+collect.resolve(source_key=trace_id, question="department", answer=final_department)
 ```
+
+Every command joins the answers `resolve` recorded onto the decisions they answer, on read, with no
+ingest step; `jeval status` shows what has accumulated and what is still missing.
 
 Then check that `collect.stats()["calls"]` is not zero after the first request. A wrapper that found
 no method to patch is counted in `no_method_found`, because a silent no-op looks exactly like a
@@ -249,9 +283,9 @@ collection off.
 
 The wrapper only watches a call your code already makes. It never calls a model, never picks one,
 never retries, never blocks and never raises — a failed write is counted and dropped. It imports no
-vendor SDK, and any product-specific field name lives in a preset rather than in the core. The full
-walkthrough, with the output of each step, is in
-[`docs/instrumenting-a-service.md`](docs/instrumenting-a-service.md).
+vendor SDK, and any product-specific field name lives in a preset rather than in the core. The library
+reference is [`docs/library.md`](docs/library.md), and the full walkthrough, with the output of each
+step, is in [`docs/instrumenting-a-service.md`](docs/instrumenting-a-service.md).
 
 ### Where labels come from
 
@@ -522,6 +556,7 @@ direction, and no command here is a stub that only looks implemented.
 | `jeval plan` | how many more labels each question needs for a tighter range | implemented |
 | `jeval calibrate` | a temperature or isotonic correction map, measured on held-out data, exported as YAML | implemented |
 | `jeval demo` | a synthetic log with a known miscalibration, through the same report path | implemented |
+| `jeval status` | what the library (or `ingest`) has collected, per model and question, and how many more gold labels the verdict needs | implemented |
 
 `jeval report` writes one self-contained HTML file plus a short terminal summary. The report never
 writes configuration, never fetches anything at run time and never posts to a pull request.
@@ -575,6 +610,7 @@ Three fields carry most of the value:
 | --- | --- |
 | [`llms.txt`](llms.txt) | the short entry point for an agent |
 | [`docs/agent-setup.md`](docs/agent-setup.md) | the setup playbook, including the no-labels path |
+| [`docs/library.md`](docs/library.md) | the library in your service: `collect.track`, `collect.resolve`, the environment variables, the counters, the limits |
 | [`docs/instrumenting-a-service.md`](docs/instrumenting-a-service.md) | set it up on a running service, step by step, with the output of every step |
 | [`docs/skills.md`](docs/skills.md) | the agent skill pack, and where each host reads it |
 | [`examples/report-example.html`](examples/report-example.html) | a real generated report |

@@ -41,6 +41,7 @@ DOC_PATHS = (
     REPO / "llms.txt",
     REPO / "docs" / "agent-setup.md",
     REPO / "docs" / "instrumenting-a-service.md",
+    REPO / "docs" / "library.md",
     REPO / "docs" / "skills.md",
 )
 

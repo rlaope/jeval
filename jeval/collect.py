@@ -27,8 +27,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from jeval.schema import DecisionRecord, normalize_record
-from jeval.store import records_path
+from jeval.schema import ALL_LABEL_SOURCES, DecisionRecord, LabelSource, normalize_record
+from jeval.store import LABELS_FILE_NAME, records_path
 
 ENV_FLAG = "JEVAL_COLLECT"
 ENV_ROOT = "JEVAL_ROOT"
@@ -51,6 +51,7 @@ _STATS: dict[str, int] = {
     "sink_not_a_file": 0,
     "invalid_value": 0,
     "no_method_found": 0,  # a track() that attached to nothing
+    "labels_written": 0,
 }
 
 
@@ -151,7 +152,11 @@ def record(
     path: str | Path | None = None,
 ) -> bool:
     """Append one decision record. Returns whether it was written; never raises."""
-    destination = target_path(path)
+    try:
+        destination = target_path(path)
+    except Exception:
+        _STATS["dropped"] += 1
+        return False
     if destination is None:
         return False
     payload: dict[str, Any] = {
@@ -192,6 +197,81 @@ def record(
         _STATS["dropped"] += 1
         return False
     return _append(built, destination)
+
+
+def resolve(
+    *,
+    source_key: str,
+    question: str,
+    answer: str,
+    source: LabelSource = "human_review",
+    ts: datetime | None = None,
+    path: str | Path | None = None,
+) -> bool:
+    """Record the answer a human settled on, so every jeval command can measure against it.
+
+    Call it where the truth arrives: an agent picks the final department for an escalated ticket, a
+    refund is approved or reversed, an auto-handled case is reopened. ``source_key`` is the key the
+    decision was recorded with (``track(source_key=...)``), ``question`` the question it answers,
+    and ``source`` one of ``human_review`` (a person checked it), ``human_override`` (a person
+    changed it) or ``silver`` (agreement with another model, kept apart from accuracy).
+
+    The answer lands in ``labels.jsonl`` beside the records file — ``$JEVAL_ROOT/.jeval/`` by
+    default, or next to the path ``JEVAL_COLLECT`` or ``path`` names — and ``jeval report``,
+    ``threshold``, ``drift`` and the other commands join it on read. Nothing is rewritten, so a
+    late answer or a second run changes nothing it should not.
+
+    Like everything here it returns whether the line was written and never raises: an empty key,
+    question or answer, one longer than :data:`MAX_FIELD_CHARS`, a ``ts`` that is not a datetime,
+    or an unknown source, is counted in ``stats()["invalid_value"]``; anything else that goes wrong
+    is counted in ``dropped``.
+    """
+    # The whole body is guarded: a caller's object whose __str__ raises, a timestamp that is not a
+    # datetime, a path that is not a path — none of them may reach the code that closes a ticket.
+    try:
+        records_target = target_path(path)
+        if records_target is None:
+            return False
+        if records_target.is_dir():
+            # A directory is not a records file; writing "beside" it would land one level up.
+            _STATS["sink_not_a_file"] += 1
+            return False
+        fields = {
+            "source_key": _field_text(source_key),
+            "question_key": _field_text(question),
+            "label": _field_text(answer),
+        }
+        if not all(fields.values()) or source not in ALL_LABEL_SOURCES:
+            _STATS["invalid_value"] += 1
+            return False
+        raw_ts: object = ts
+        if raw_ts is not None and not isinstance(raw_ts, datetime):
+            _STATS["invalid_value"] += 1
+            return False
+        when = raw_ts if isinstance(raw_ts, datetime) else _now()
+        event = {**fields, "label_source": source, "ts": when.isoformat()}
+        destination = records_target.parent / LABELS_FILE_NAME
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        with destination.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(event, ensure_ascii=False) + "\n")
+    except Exception:
+        _STATS["dropped"] += 1
+        return False
+    _STATS["labels_written"] += 1
+    return True
+
+
+#: The longest key, question or answer ``resolve`` writes. A label is a class name, not a document,
+#: and a line this short stays one append on a local filesystem.
+MAX_FIELD_CHARS = 512
+
+
+def _field_text(value: Any) -> str:
+    """A field as trimmed text, or ``""`` when it is missing or too long to be a label."""
+    if value is None:
+        return ""
+    text = str(value).strip()
+    return text if len(text) <= MAX_FIELD_CHARS else ""
 
 
 def record_many(payloads: Sequence[Mapping[str, Any]], *, path: str | Path | None = None) -> int:

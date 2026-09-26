@@ -12,7 +12,8 @@ no customer text, no cost figures from any real business belong here.
 | `ingest-map.example.yaml` | The mapping that turns `sample-decisions.jsonl` into decision records. |
 | `make-drift-log.py` | Writes the 1,800-decision log the README's `jeval drift` run is captured from. |
 | `make-paired-log.py` | Writes the shadow-traffic log (900 requests, each answered by two versions) the README's `jeval drift --paired` run is captured from. |
-| `make-support-log.py` | Writes the two-version support-routing log that `docs/instrumenting-a-service.md` walks through. |
+| `service-quickstart.py` | A stand-in service with the two library lines, `collect.track` and `collect.resolve`: 600 decisions and 480 human answers. `docs/library.md` and `docs/instrumenting-a-service.md` quote its run. |
+| `make-support-log.py` | Writes a two-version support-routing log in raw ingest format, for trying `jeval ingest` and `jeval drift` on a service-shaped log. |
 | `ci/drift.yml` | A copy-paste GitHub Actions workflow that runs `jeval drift` and posts its summary. |
 
 ## The three surfaces

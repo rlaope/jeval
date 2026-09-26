@@ -7,6 +7,25 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — the library and the command line as one loop
+- `collect.resolve(source_key=..., question=..., answer=...)` records the answer a human settled on,
+  where the service already knows it, into `labels.jsonl` beside the records. Like `track`, it
+  never raises: an empty key, question or answer, or an unknown source, is counted in
+  `stats()["invalid_value"]`; `labels_written` counts what it wrote; `JEVAL_COLLECT=0` switches it
+  off.
+- Every command that reads records (`report`, `threshold`, `drift`, `plan`, `label`, `calibrate`,
+  `status`) joins those answers on read, by `(source_key, question)`, and prints what happened to
+  each on stderr. A decision that already has a label keeps it, an answer the question could not
+  have produced is refused, a later answer to the same case wins, and nothing is rewritten on disk.
+  The `ingest --labels` step is no longer needed for answers recorded in the service.
+- `jeval status` shows what has been collected per model and question, how many decisions carry a
+  gold or silver label, and how many more gold labels the verdict needs before it can say anything.
+- `docs/library.md`: the library reference — every argument of `track`, `record` and `resolve`, the
+  environment variables, the counters to check, what the library promises, and its limits.
+  `docs/instrumenting-a-service.md` is rewritten around `track`, `resolve` and `status`, with every
+  output captured from `examples/service-quickstart.py`; its earlier `jeval threshold` output
+  predated the currency format and could not be reproduced.
+
 ### Added — drift gate
 - `jeval drift --fail-on threshold-shift=0.05` fails the build when the cost-optimal threshold moves
   by more than the limit in either direction. The line a reviewer approved is the one the

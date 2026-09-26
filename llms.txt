@@ -41,6 +41,12 @@ their own data and show them the artifact — not to run a command tour.
    It writes `report.html` (one self-contained file), `costs.yaml` and `.jeval/records.jsonl`.
 2. Find the decision log: one row per model response, with the prediction, its confidence, and —
    for anything beyond a demo — the human's eventual answer. JSONL or CSV.
+   No log yet and the service is Python? Instrument it instead of building a pipeline:
+   `collect.track(client, source_key=...)` where the client is built and
+   `collect.resolve(source_key=..., question=..., answer=...)` where a human settles a case, with
+   `JEVAL_ROOT=DIR` in the service. Every command joins the answers on read; `jeval status --root
+   DIR` shows what has arrived and how many more gold labels the verdict needs. Reference:
+   docs/library.md. Then skip to step 6.
 3. `jeval init --root DIR`, then describe that shape in `DIR/.jeval/ingest-map.yaml`.
    Keys: `field_map`, `questions_field`, `defaults`, `label_from`. A known vendor shape may already
    have a preset: `jeval ingest --list-presets`.
