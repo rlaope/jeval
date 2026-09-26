@@ -112,3 +112,35 @@ def test_the_synth_option_leaves_existing_generators_alone() -> None:
     assert SynthSpec().inflated_class == ""
     with pytest.raises(ValueError):
         generate(SynthSpec(n=10, mode="class_inflated", inflated_class="nope"))
+
+
+def test_a_class_absent_from_an_accepted_map_counts_as_zero() -> None:
+    from jeval.calibration import classwise_calibration
+
+    maps = [{"a": 0.9, "b": 0.1}] * 40 + [{"a": 1.0}] * 40
+    labels = ["a"] * 70 + ["b"] * 10
+    metrics = classwise_calibration(maps, labels, n_boot=0, min_class=1)
+    b = next(item for item in metrics.classes if item.name == "b")
+    assert metrics.n_used == 80
+    assert b.metrics is not None and b.metrics.n == 80
+
+
+def test_the_worst_class_clears_the_others_only_when_its_interval_does() -> None:
+    from jeval.calibration import classwise_calibration, describe_classwise
+    from jeval.synth import SynthSpec, generate
+
+    records = generate(
+        SynthSpec(
+            n=6000,
+            mode="class_inflated",
+            inflation=1.3,
+            seed=9,
+            classes=("billing", "technical", "other"),
+            inflated_class="billing",
+        )
+    )
+    labeled = [r for r in records if r.is_gold]
+    metrics = classwise_calibration(
+        [r.probabilities for r in labeled], [r.label or "" for r in labeled], n_boot=200
+    )
+    assert "clears every other class" in describe_classwise(metrics)

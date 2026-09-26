@@ -644,6 +644,10 @@ def _percentile_ci(
     return (min(lower, observed), max(upper, observed))
 
 
+#: The fewest wrong (or right) answers an AUROC interval is computed from; the report's bin floor.
+MIN_DISCRIMINATION_CLASS = MIN_BIN_SIZE
+
+
 def compute_discrimination(
     confidences: Sequence[float] | NDArray[np.float64],
     correct: Sequence[bool] | NDArray[np.bool_],
@@ -673,7 +677,11 @@ def compute_discrimination(
     observed_aurc = _aurc(conf, hit)
     auroc_ci: tuple[float, float] = (nan, nan)
     aurc_ci: tuple[float, float] = (nan, nan)
-    if n_boot > 0:
+    n_wrong = int((~hit).sum())
+    # With a handful of wrong (or right) answers the resampled AUROC is lumpy, and a percentile
+    # interval on it excluded 0.5 up to 42% of the time on data where confidence ranked nothing.
+    # Below the report's smallest bin on either side there is no interval, and the reading says so.
+    if n_boot > 0 and min(n_wrong, n - n_wrong) >= MIN_DISCRIMINATION_CLASS:
         rng = np.random.default_rng(seed)
         auroc_draws = np.empty(n_boot, dtype=float)
         aurc_draws = np.empty(n_boot, dtype=float)
@@ -685,7 +693,7 @@ def compute_discrimination(
         aurc_ci = _percentile_ci(aurc_draws, observed_aurc, alpha)
     return DiscriminationMetrics(
         n=n,
-        n_wrong=int((~hit).sum()),
+        n_wrong=n_wrong,
         auroc=observed_auroc,
         auroc_ci_low=auroc_ci[0],
         auroc_ci_high=auroc_ci[1],
@@ -715,6 +723,14 @@ def describe_discrimination(metrics: DiscriminationMetrics) -> str:
         return (
             f"{value}: every decision carries the same confidence, so it ranks nothing; no "
             "threshold can buy accuracy here."
+        )
+    minority = min(metrics.n_wrong, metrics.n - metrics.n_wrong)
+    if minority < MIN_DISCRIMINATION_CLASS:
+        side = "wrong" if metrics.n_wrong <= metrics.n - metrics.n_wrong else "right"
+        return (
+            f"{value} (n={metrics.n}, only {minority} {side} answers): too few to tell whether "
+            f"confidence ranks right above wrong; {MIN_DISCRIMINATION_CLASS} are needed before "
+            "this number means anything."
         )
     has_interval = metrics.auroc_ci_low == metrics.auroc_ci_low
     interval = (

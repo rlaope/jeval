@@ -543,7 +543,7 @@ def legend(
     """Legend as sample + label pairs; never colour alone.
 
     Each entry is ``(label, colour)`` or ``(label, colour, kind)``, where ``kind`` is one of
-    ``line`` (default), ``dash``, ``dot``, ``band`` or ``swatch``. The sample is drawn in the
+    ``line`` (default), ``dash``, ``dotted``, ``dot``, ``band`` or ``swatch``. The sample is drawn in the
     same shape as the mark it explains: a legend that represents a curve with a square is a
     legend a reader has to decode.
     """
@@ -563,6 +563,10 @@ def legend(
         elif kind == "dot":
             parts.append(line(cursor, middle, cursor + 16, middle, stroke=colour, width=1.6))
             parts.append(dot(cursor + 8, middle, 3.0, fill=colour))
+        elif kind == "dotted":
+            parts.append(
+                line(cursor, middle, cursor + 16, middle, stroke=colour, width=1.6, dash="1.5 3")
+            )
         elif kind == "dash":
             parts.append(
                 line(cursor, middle, cursor + 16, middle, stroke=colour, width=1.4, dash="4 3")

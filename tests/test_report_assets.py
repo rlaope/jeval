@@ -274,3 +274,7 @@ def test_one_axis_keeps_its_decimals_at_billion_scale() -> None:
 def test_the_phone_layout_does_not_leak_into_print() -> None:
     assert "@media screen and (max-width: 720px)" in REPORT_CSS
     assert "@media (max-width: 720px)" not in REPORT_CSS
+
+
+def test_choosing_a_tab_clears_the_previous_tab_highlight() -> None:
+    assert 'classList.toggle("is-active", on)' in REPORT_JS

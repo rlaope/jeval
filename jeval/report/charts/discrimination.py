@@ -116,7 +116,8 @@ def render_risk_coverage(
             perfect.append((x(covered), y(max(0.0, 1.0 - accuracy / covered))))
     else:
         perfect.append((x(1.0), y(1.0)))
-    parts.append(S.polyline(perfect, stroke=S.SOFT, width=1.2))
+    # Dotted, so it is told from this model's solid line by its dash as well as its grey.
+    parts.append(S.polyline(perfect, stroke=S.SOFT, width=1.4, dash="1.5 3"))
     if 0.12 < accuracy < 0.97:
         parts.append(
             S.text(
@@ -210,7 +211,7 @@ def render_risk_coverage(
             [
                 ("this model", S.INK, "line"),
                 ("no ranking", S.DIAGONAL, "dash"),
-                ("perfect ranking", S.SOFT, "line"),
+                ("perfect ranking", S.SOFT, "dotted"),
             ],
             x=plot_left,
             y=height - 8,
@@ -295,7 +296,9 @@ def coverage_rows(metrics: DiscriminationMetrics) -> list[list[str]]:
         rows.append(
             [
                 S.pct(share, 0),
-                S.fmt(level),
+                # Three digits: a level of 0.999 (the certainty cap) printed as 1.00 reads as
+                # "only perfectly certain answers", which no answer is.
+                S.fmt(level, 3),
                 f"{round(covered * metrics.n):,}",
                 S.pct(covered, 1),
                 S.pct(risk, 1),

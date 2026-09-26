@@ -156,6 +156,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   reader from install to an open report in three lines.
 
 ### Fixed
+- An AUROC interval was drawn from a sample with a handful of wrong answers, where a percentile
+  bootstrap excluded 0.5 up to 42% of the time on data whose confidence ranked nothing, and the
+  reading called that separation. Below 20 wrong (or right) answers there is no interval, and the
+  reading says there are too few to tell. The discrimination chart's perfect-ranking line is dotted,
+  so it is told from the model's line by more than its grey, and coverage levels print three digits.
 - The reliability chart drew the *recommended* threshold in the alert colour and called it "line in
   use", so the demo showed "line in use 0.85" beside a verdict saying 0.60 is in use. The chart now
   draws both lines and names each — `in use` dashed in the alert colour, `recommended` solid in the

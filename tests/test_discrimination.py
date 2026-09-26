@@ -139,3 +139,58 @@ def test_yes_no_answers_are_ranked_on_the_probability_of_being_right() -> None:
     assert min(confidences) >= 0.5
     metrics = compute_discrimination(confidences, correct, n_boot=200, seed=5)
     assert metrics.auroc_ci_low > 0.6, metrics.auroc
+
+
+# --- verification findings ---------------------------------------------------------------------
+# Under a null (confidence unrelated to correctness), a sample with two or three wrong answers put
+# 0.5 outside its 95% AUROC interval up to 42% of the time, and the reading called it separation.
+
+
+def test_a_null_with_few_wrong_answers_claims_no_interval_and_no_separation() -> None:
+    import numpy as np
+
+    from jeval.calibration import compute_discrimination, describe_discrimination
+
+    rng = np.random.default_rng(1)
+    confidences = rng.uniform(0.5, 1.0, 400)
+    correct = np.ones(400, dtype=bool)
+    correct[rng.choice(400, 3, replace=False)] = False
+    metrics = compute_discrimination(confidences, correct, n_boot=200)
+    assert metrics.auroc_ci_low != metrics.auroc_ci_low  # no interval
+    reading = describe_discrimination(metrics)
+    assert "3 wrong" in reading
+    for claim in ("separation", "outranks", "buys"):
+        assert claim not in reading
+
+
+def test_the_interval_is_widened_to_contain_its_own_estimate() -> None:
+    import numpy as np
+
+    from jeval.calibration import _percentile_ci
+
+    draws = np.linspace(0.70, 0.80, 200)
+    assert _percentile_ci(draws, 0.95, 0.05)[1] == 0.95
+    assert _percentile_ci(draws, 0.60, 0.05)[0] == 0.60
+
+
+def test_discrimination_reads_gold_labels_only() -> None:
+    from jeval.evaluate import evaluate
+    from jeval.synth import SynthSpec, generate
+
+    records = generate(SynthSpec(n=600, mode="calibrated", seed=4, silver_fraction=0.5))
+    dataset = evaluate(records, n_boot=20)
+    gold = sum(1 for record in records if record.is_gold)
+    assert dataset.questions[0].discrimination is not None
+    assert dataset.questions[0].discrimination.n == gold
+
+
+def test_a_yes_no_question_is_ranked_on_the_probability_of_being_right() -> None:
+    from jeval.evaluate import evaluate
+    from jeval.synth import SynthSpec, generate
+
+    records = generate(
+        SynthSpec(n=600, mode="calibrated", seed=5, question_type="noul", question_key="q")
+    )
+    discrimination = evaluate(records, n_boot=20).questions[0].discrimination
+    assert discrimination is not None
+    assert min(discrimination.levels) >= 0.5, "a yes/no answer is right at least half the time"
