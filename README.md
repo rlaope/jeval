@@ -81,9 +81,9 @@ no root and no PyPI. It keeps a private environment in `~/.local/share/jeval`, l
 
 ```sh
 uvx --from git+https://github.com/rlaope/jeval jeval --version            # current main
-uvx --from git+https://github.com/rlaope/jeval@v0.1.8 jeval --version     # pinned tag
+uvx --from git+https://github.com/rlaope/jeval@v0.2.0 jeval --version     # pinned tag
 pip install \
-  https://github.com/rlaope/jeval/releases/download/v0.1.8/jeval_cli-0.1.8-py3-none-any.whl
+  https://github.com/rlaope/jeval/releases/download/v0.2.0/jeval_cli-0.2.0-py3-none-any.whl
 ```
 
 Every release tag is built by the release workflow, which attaches the wheel and the source archive

@@ -1,7 +1,7 @@
 # jeval
 
 How to measure a classifier's confidence and set the human/AI hand-off line with jeval
-(0.1.8). Generated from the canonical skills in the jeval repository; each section
+(0.2.0). Generated from the canonical skills in the jeval repository; each section
 names the artifact it produces. Run `jeval <command> --help` for the flags of any step,
 and `jeval report` once a step has produced records.
 

@@ -24,11 +24,11 @@ jeval --help
 uvx --from git+https://github.com/rlaope/jeval jeval --help
 
 # pinned, no install
-uvx --from git+https://github.com/rlaope/jeval@v0.1.8 jeval --help
+uvx --from git+https://github.com/rlaope/jeval@v0.2.0 jeval --help
 
 # pinned wheel, installed
 pip install \
-  https://github.com/rlaope/jeval/releases/download/v0.1.8/jeval_cli-0.1.8-py3-none-any.whl
+  https://github.com/rlaope/jeval/releases/download/v0.2.0/jeval_cli-0.2.0-py3-none-any.whl
 ```
 
 ## If you are an agent

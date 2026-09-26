@@ -7,6 +7,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-26
+
+This file was kept as one running section until 0.2.0, so the entries below also cover what shipped
+in the v0.1.x tags. The headline changes since v0.1.8: a redesigned report that states each finding
+before its table, money in each currency's own decimals, yes/no questions measured on the right
+scale (a compatibility change for `noul` thresholds and baselines), the library and the command
+line as one loop (`collect.resolve`, `jeval status`), `drift --paired` and the `threshold-shift`
+gate, and discrimination and classwise calibration.
+
 ### Changed — findings before tables
 - Every report section opens with its finding as a sentence and draws it, and the table it came from
   is folded underneath under "The numbers behind this, as a table". The cost section says what
