@@ -71,7 +71,7 @@ def _lane_labels(
     up one row instead of printing on top of it.
     """
     ordered = sorted(marks, key=lambda mark: mark[0])
-    size = 12.0
+    size = 13.0
     row_gap = 15.0
     placed: list[tuple[float, float, float]] = []  # (start, end, row y)
     parts: list[str] = []
@@ -657,7 +657,113 @@ def impact_table_html(
         + '<p class="note">Exploration only: the report never writes thresholds.yaml. '
         "Confirm a value with <code>jeval threshold</code>.</p></div>"
     )
-    return f'<table class="impact"><thead>{head}</thead><tbody>{body}</tbody></table>{note}{slider}'
+    table = f'<table class="impact"><thead>{head}</thead><tbody>{body}</tbody></table>'
+    return _IMPACT_PARTS_SEPARATOR.join((table, note, slider))
+
+
+# impact_table_html's three parts, joined so the historical one-string contract still holds and
+# split again by render_cost_section, which places them apart. The marker is an HTML comment, so a
+# caller that concatenates the whole string still renders exactly what it did.
+_IMPACT_PARTS_SEPARATOR = "<!--jeval:impact-part-->"
+
+
+def _signed_share(after: float, before: float) -> float:
+    return math.nan if not before else after / before - 1.0
+
+
+def impact_figures_html(
+    impact: ImpactTable, result: ThresholdResult, *, current_threshold: float | None
+) -> str:
+    """The finding as a sentence, then the four figures it rests on, each set large.
+
+    Read by someone deciding, not auditing: the sentence says what moving the line buys, in money
+    when there is a monthly volume, and each card shows the figure after the move with the figure
+    before it struck through. The table with every cell stays one click away.
+    """
+    if current_threshold is None or not result.curve or not math.isfinite(result.threshold):
+        return ""
+    before = result.point_at(current_threshold)
+    after = result.point_at(result.threshold)
+    if before is None or after is None:
+        return ""
+    code = impact.currency or None
+    volume = impact.monthly_volume
+    move = (
+        f'Moving the line from <b class="cur">{S.fmt(before.threshold)}</b> to '
+        f'<b class="rec">{S.fmt(after.threshold)}</b>'
+    )
+    saving = before.expected_cost - after.expected_cost
+    if abs(after.threshold - before.threshold) < 1e-9:
+        claim = (
+            f'The line in use, <b class="cur">{S.fmt(before.threshold)}</b>, is already at the '
+            "cost minimum"
+        )
+    elif volume:
+        verb = "saves" if saving > 0 else "costs"
+        claim = f"{move} {verb} <b>{escape(format_amount(abs(saving) * volume, code))}</b> a month"
+    else:
+        verb = "cuts" if saving > 0 else "raises"
+        claim = f"{move} {verb} cost per case by <b>{escape(format_amount(abs(saving), code))}</b>"
+    context = (
+        f"at {volume:,.0f} cases a month · " if volume else ""
+    ) + f"95% interval on the recommended line {S.fmt(result.ci_low)}–{S.fmt(result.ci_high)}"
+
+    def card(label: str, was: str, now: str, change: str, judgement: str, unit: str = "") -> str:
+        arrow = "▼" if change.startswith("-") else ("▲" if change.startswith("+") else "")
+        verdict = {"better": " · better", "worse": " · worse"}.get(judgement, "")
+        return (
+            f'<div class="figcard"><div class="fc-label">{escape(label)}</div>'
+            f'<div class="fc-now num">'
+            + (f'<span class="fc-unit">{escape(unit)}</span>' if unit else "")
+            + f'{escape(now)}</div><div class="fc-was">from <s class="num">{escape(was)}</s></div>'
+            f'<div class="fc-change {judgement}">{arrow} {escape(change)}{verdict}</div></div>'
+        )
+
+    def money(value: float) -> tuple[str, str]:
+        text = format_amount(value, code) if code else S.money(value)
+        if code and text.startswith(f"{code} "):
+            return code, text[len(code) + 1 :]
+        return "", text
+
+    cost_share = _signed_share(after.expected_cost, before.expected_cost)
+    cost_judgement = "better" if saving > 0 else ("worse" if saving < 0 else "")
+    unit, now_case = money(after.expected_cost)
+    _, was_case = money(before.expected_cost)
+    cards = [card("Cost per case", was_case, now_case, f"{cost_share:+.1%}", cost_judgement, unit)]
+    if volume:
+        cards.append(
+            card(
+                "Monthly cost",
+                format_compact(before.expected_cost * volume, None),
+                format_compact(after.expected_cost * volume, None),
+                f"{cost_share:+.1%}",
+                cost_judgement,
+                unit,
+            )
+        )
+    accuracy_move = (after.accuracy_auto - before.accuracy_auto) * 100
+    cards.append(
+        card(
+            "Right when automated",
+            format_percent(before.accuracy_auto),
+            format_percent(after.accuracy_auto),
+            f"{accuracy_move:+.1f} pt",
+            "better" if accuracy_move > 0 else ("worse" if accuracy_move < 0 else ""),
+        )
+    )
+    cards.append(
+        card(
+            "Share automated",
+            format_percent(before.auto_rate),
+            format_percent(after.auto_rate),
+            f"{(after.auto_rate - before.auto_rate) * 100:+.1f} pt",
+            "",
+        )
+    )
+    return (
+        f'<div class="finding"><p class="claim">{claim}</p><p class="claim-sub">{context}</p>'
+        f'<div class="figcards">{"".join(cards)}</div></div>'
+    )
 
 
 def render_cost_section(
@@ -683,20 +789,24 @@ def render_cost_section(
     table = S.details_table(
         headers, cost_table_rows(result, currency), summary="Every threshold in the sweep"
     )
-    impact_html = (
-        impact_table_html(impact, action=result.action, result=result, slider_id=slider_id)
-        if impact is not None
-        else ""
-    )
     ci_note = (
         f'<p class="note">Recommended threshold {S.fmt(result.threshold)} '
         f"(95% CI {S.fmt(result.ci_low)}–{S.fmt(result.ci_high)}). "
         "A wide interval means more labels, not more analysis, would sharpen this."
         "</p>"
     )
-    return (
-        f'<div class="plate"><figure>{chart}{caption}</figure></div>{table}{ci_note}{impact_html}'
+    plate = f'<div class="plate"><figure>{chart}{caption}</figure></div>'
+    if impact is None:
+        return f"{plate}{ci_note}{table}"
+    impact_table, paradox, slider = impact_table_html(
+        impact, action=result.action, result=result, slider_id=slider_id
+    ).split(_IMPACT_PARTS_SEPARATOR)
+    figures = impact_figures_html(impact, result, current_threshold=current_threshold)
+    raw = (
+        '<details class="raw"><summary>The numbers behind this, as a table</summary>'
+        f"{impact_table}{paradox}</details>"
     )
+    return f"{figures}{plate}{ci_note}{slider}{raw}{table}"
 
 
 def _empty(width: float, title: str, message: str) -> str:

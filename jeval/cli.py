@@ -653,6 +653,10 @@ def _label_plan_rows(
                 ci_width=item.ci_width,
                 needed=needed,
                 reason="" if needed else item.reason,
+                targets=tuple(
+                    (float(target), int(count))
+                    for target, count in sorted(item.labels_for_target or (), key=lambda t: -t[0])
+                ),
             )
         )
     return tuple(rows)

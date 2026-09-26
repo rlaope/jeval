@@ -478,15 +478,15 @@ def axis_x(
     for value in values:
         x = scale(value)
         parts.append(line(x, y, x, y + 4, stroke=INK, width=1.0))
-        parts.append(text(x, y + 18, format_(value), anchor="middle", size=11.5, fill=MUTED))
+        parts.append(text(x, y + 19, format_(value), anchor="middle", size=12.5, fill=MUTED))
     if title:
         parts.append(
             text(
                 (scale.range[0] + scale.range[1]) / 2.0,
-                y + 38,
+                y + 40,
                 title,
                 anchor="middle",
-                size=12,
+                size=13,
                 weight=500,
             )
         )
@@ -507,7 +507,7 @@ def axis_y(
     parts: list[str] = []
     for value in values:
         y = scale(value)
-        parts.append(text(x - 10, y + 4, format_(value), anchor="end", size=11.5, fill=MUTED))
+        parts.append(text(x - 10, y + 4, format_(value), anchor="end", size=12.5, fill=MUTED))
     if title:
         centre = (scale.range[0] + scale.range[1]) / 2.0
         parts.append(
@@ -516,7 +516,7 @@ def axis_y(
                 centre,
                 title,
                 anchor="middle",
-                size=12,
+                size=13,
                 weight=500,
                 rotate=-90,
                 rotate_at=(x - 50, centre),
@@ -538,7 +538,7 @@ def legend(
     *,
     x: float,
     y: float,
-    size: float = 12.0,
+    size: float = 13.0,
 ) -> str:
     """Legend as sample + label pairs; never colour alone.
 

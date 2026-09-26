@@ -130,15 +130,16 @@ _CSS = """\
     Cambria, Georgia, serif;
   --mono: "JetBrains Mono", "SF Mono", SFMono-Regular, ui-monospace, "Cascadia Mono",
     "Roboto Mono", Menlo, Consolas, monospace;
-  /* Type scale: 12 / 13 / 14 / 15 (body) / 17 / 22 / 26 / 34. */
-  --fs-xs: 12px;
-  --fs-sm: 13px;
-  --fs-md: 14px;
-  --fs-body: 15px;
-  --fs-lg: 17px;
-  --fs-h2: 22px;
-  --fs-head: 26px;
-  --fs-h1: 34px;
+  /* Type scale: 13 / 14 / 15.5 / 17 (body) / 19 / 28 / 30 / 40, and 40 for a headline figure. */
+  --fs-xs: 13px;
+  --fs-sm: 14px;
+  --fs-md: 15.5px;
+  --fs-body: 17px;
+  --fs-lg: 19px;
+  --fs-h2: 28px;
+  --fs-head: 30px;
+  --fs-h1: 40px;
+  --fs-figure: 40px;
 }
 /* A shaded band in a chart is a tint, not a colour of its own: as a variable it follows the
    theme instead of staying near-white in a dark report. */
@@ -157,7 +158,7 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 /* One column. 960px holds a 660px chart beside its key figures, and keeps prose inside 72ch. */
-main { max-width: 1008px; margin: 0 auto; padding: 48px 24px 112px; }
+main { max-width: 1080px; margin: 0 auto; padding: 56px 28px 120px; }
 h1, h2, .verdict .headline { font-family: var(--serif); font-weight: 600; color: var(--ink); }
 h1 { font-size: var(--fs-h1); line-height: 1.12; letter-spacing: -0.015em; margin: 0 0 12px; }
 h2 {
@@ -455,6 +456,95 @@ input[type="range"]::-moz-range-thumb {
 [data-jeval-segment][aria-expanded="true"] { font-weight: 600; }
 [data-jeval-segment-chart] { margin-top: 12px; }
 
+/* Findings: each section says its result as a sentence, then draws it at a size read across a
+   room. The table it came from is folded underneath in a details.raw. */
+.finding { margin: 22px 0 26px; }
+.claim {
+  font-family: var(--serif); font-size: 32px; line-height: 1.2; letter-spacing: -0.015em;
+  margin: 0 0 8px; max-width: 34ch; color: var(--ink);
+}
+.claim.small { font-size: 26px; max-width: 42ch; }
+.claim b { font-weight: 600; }
+.claim .cur { color: var(--alert-ink); }
+.claim .rec { color: var(--accent-ink); }
+.claim-sub { color: var(--muted); font-size: var(--fs-sm); margin: 0 0 20px; }
+.figcards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; }
+.figcard {
+  background: var(--panel); border: 1px solid var(--rule); border-radius: 10px; padding: 20px 22px;
+}
+.fc-label { font-size: var(--fs-sm); color: var(--muted); font-weight: 500; }
+.fc-now {
+  font-size: var(--fs-figure); font-weight: 650; letter-spacing: -0.03em; line-height: 1.1;
+  margin-top: 10px; white-space: nowrap;
+}
+.fc-unit { font-size: 18px; font-weight: 500; color: var(--muted); margin-right: 5px; letter-spacing: 0; }
+.fc-was { font-size: var(--fs-sm); color: var(--muted); margin-top: 4px; }
+.fc-change {
+  display: inline-block; margin-top: 14px; font-size: var(--fs-sm); font-weight: 600;
+  padding: 3px 11px; border-radius: 999px; background: var(--panel-alt); color: var(--ink-2);
+}
+.fc-change.better { background: color-mix(in srgb, var(--good) 14%, var(--panel)); color: var(--good); }
+.fc-change.worse { background: color-mix(in srgb, var(--bad) 12%, var(--panel)); color: var(--bad); }
+
+.claims-key { display: flex; flex-wrap: wrap; gap: 8px 22px; font-size: var(--fs-sm); color: var(--muted); margin: 14px 0 8px; }
+.claims-key i { display: inline-block; vertical-align: middle; margin-right: 7px; }
+.k-said { width: 3px; height: 16px; background: var(--muted); }
+.k-was { width: 12px; height: 12px; border-radius: 50%; background: var(--ink); }
+.k-band { width: 20px; height: 12px; background: var(--shade); border: 1px solid var(--rule-strong); border-radius: 3px; }
+.claims { background: var(--panel); border: 1px solid var(--rule); border-radius: 10px; padding: 8px 22px 12px; }
+.claim-row {
+  display: grid; grid-template-columns: 120px 480px 130px minmax(0, 1fr); align-items: center;
+  gap: 14px; padding: 6px 0; border-bottom: 1px solid var(--rule);
+}
+.claim-row:last-child { border-bottom: 0; }
+.claim-row svg { display: block; max-width: 100%; height: auto; }
+.cr-said, .cr-was { font-size: var(--fs-md); color: var(--ink-2); white-space: nowrap; }
+.cr-said b, .cr-was b { font-size: 21px; color: var(--ink); }
+.cr-flag { font-size: var(--fs-md); font-weight: 600; display: flex; flex-direction: column; }
+.cr-flag span { font-size: var(--fs-xs); font-weight: 400; color: var(--muted); }
+.claim-row.over .cr-flag { color: var(--alert-ink); }
+.claim-row.under .cr-flag { color: var(--accent-ink); }
+.claim-row.axis { border: 0; padding-top: 0; }
+.claim-ticks { position: relative; height: 18px; margin: 0 10px; font-size: var(--fs-xs); color: var(--muted); grid-column: 2; }
+.claim-ticks span { position: absolute; transform: translateX(-50%); }
+
+.vcards { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; margin: 18px 0 8px; }
+.vcard { background: var(--panel); border: 1px solid var(--rule); border-radius: 10px; padding: 20px 22px; }
+.v-action { display: flex; flex-wrap: wrap; gap: 4px 12px; justify-content: space-between; align-items: baseline; font-size: var(--fs-sm); color: var(--muted); }
+.v-action .ident { font-size: var(--fs-md); color: var(--ink); font-weight: 700; }
+.v-head { font-family: var(--serif); font-size: 24px; line-height: 1.2; margin: 14px 0 16px; }
+.v-head.split { color: var(--accent-ink); }
+.chips { display: flex; flex-direction: column; gap: 8px; }
+.chip { display: grid; grid-template-columns: 1fr auto; row-gap: 2px; padding: 10px 14px; border-radius: 8px; background: var(--panel-alt); }
+.chip b { font-size: 21px; text-align: right; }
+.chip .c-sub { grid-column: 1 / -1; font-size: var(--fs-xs); color: var(--muted); }
+.chip.hot { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); }
+.chips.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
+.claim-row.ok .cr-flag { color: var(--muted); font-weight: 500; }
+
+.pcards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; margin: 18px 0 8px; }
+.pcard { background: var(--panel); border: 1px solid var(--rule); border-radius: 10px; padding: 20px 22px; }
+.pcard.muted { background: var(--panel-alt); }
+.p-q { font-size: var(--fs-md); font-weight: 700; }
+.p-big { font-size: var(--fs-figure); font-weight: 650; letter-spacing: -0.03em; margin-top: 6px; line-height: 1.1; }
+.p-big.small { font-size: 26px; }
+.p-big span { font-size: 18px; font-weight: 500; color: var(--muted); letter-spacing: 0; }
+.p-note { font-size: var(--fs-md); color: var(--ink-2); margin-top: 4px; }
+.prog { height: 12px; border-radius: 999px; background: var(--panel-alt); margin: 16px 0 6px; overflow: hidden; border: 1px solid var(--rule); }
+.prog div { height: 100%; background: var(--ink-2); border-radius: 999px; }
+.p-scale { display: flex; justify-content: space-between; font-size: var(--fs-xs); color: var(--muted); }
+.p-later { font-size: var(--fs-xs); color: var(--muted); margin-top: 10px; }
+
+.comp { display: flex; gap: 3px; min-height: 92px; border-radius: 10px; overflow: hidden; margin-top: 14px; }
+.comp .seg { display: flex; flex-direction: column; justify-content: flex-end; padding: 10px 12px; min-width: 110px; }
+.comp .seg b { font-size: 26px; line-height: 1.1; }
+.comp .seg span { font-size: var(--fs-xs); }
+.seg-gold { background: var(--ink-2); color: var(--panel); }
+.seg-silver { background: color-mix(in srgb, var(--ink-2) 50%, var(--panel)); color: var(--panel); }
+.seg-unl { background: var(--panel-alt); color: var(--ink-2); outline: 1px dashed var(--rule-strong); outline-offset: -1px; }
+.seg-score { background: repeating-linear-gradient(135deg, var(--panel-alt) 0 6px, var(--rule) 6px 9px); color: var(--ink-2); }
+details.raw { margin-top: 14px; }
+
 /* Charts sit on the panel colour, so the halo, the page and the plot agree. */
 .plate {
   background: var(--panel); border: 1px solid var(--rule); border-radius: var(--radius);
@@ -479,6 +569,15 @@ footer p { margin: 0; max-width: 72ch; }
   .stats, .figures { grid-template-columns: 1fr 1fr; }
   .keyfigs { border-left: 0; padding-left: 0; margin-top: 0; grid-template-columns: 1fr 1fr; }
   .plate { padding: 14px 12px 10px; overflow-x: auto; }
+  .claim { font-size: 25px; }
+  .claim.small { font-size: 21px; }
+  .fc-now, .p-big { font-size: 32px; }
+  .claim-row { grid-template-columns: 1fr 1fr; }
+  .claim-row svg { grid-column: 1 / -1; grid-row: 2; }
+  .claim-row .cr-flag { grid-column: 1 / -1; }
+  .claim-row.axis { display: none; }
+  .comp { flex-direction: column; min-height: 0; }
+  .comp .seg { flex: none !important; padding: 8px 12px; }
   .ruler .ruler-svg { display: none; }
   .ruler .narrow { display: block; width: 100%; }
   /* A wide chart keeps a readable size and scrolls sideways inside its own plate, rather than
