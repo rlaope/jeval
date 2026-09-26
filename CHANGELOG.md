@@ -7,6 +7,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed — compatibility
+- **`noul` thresholds are now on the probability-of-being-right scale.** A yes/no threshold is
+  compared with `max(p, 1 - p)`, like every `choice` threshold, instead of with the stored
+  `|p - 0.5| * 2`. A `noul` line of 0.83 in an existing `thresholds.yaml` corresponds to about 0.92
+  now (`0.5 + 0.83 / 2`); rerun `jeval threshold` rather than editing the number by hand. Recalibration
+  maps for `noul` are fitted on the same scale, so the value an application passes to `apply()` is
+  `max(p, 1 - p)`. Stored records are unchanged and need no migration.
+
 ### Added
 - `jeval threshold --currency`: the terminal prints per-case costs and the segment table in the same
   currency format as the report (`KRW 1,738 per case`), where it used to print a bare `1,738` or
@@ -90,6 +98,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   reader from install to an open report in three lines.
 
 ### Fixed
+- **Yes/no (`noul`) calibration was measured on the wrong scale.** The record stores confidence as
+  the distance from a coin flip, `|p - 0.5| * 2`, and every calibration measure read that value as
+  the probability of being right. A perfectly calibrated yes/no question reported ECE 0.23 and
+  "underconfidence"; the demo's calibrated `is_urgent` question read ECE 0.213, and the pooled ECE
+  0.101 carried the error into the verdict ("Band 0.03-0.44", a range no answer's probability of
+  being right can fall in). Measurement, thresholds, the labeling queue and recalibration now read
+  `DecisionRecord.stated_probability`, which is `0.5 + confidence / 2` for `noul`. The demo's pooled
+  ECE is 0.054, and the verdict names the overconfidence the demo injects on purpose (`intent`,
+  0.86-0.91). Three synthetic tests pin the fix: calibrated yes/no near zero, inflated yes/no
+  flagged overconfident, and a yes/no answer measured on the same scale as a choice answer.
+- The README's pandas comparison quoted ECE figures no current run reproduces; it now quotes the
+  demo's `intent` question, 0.091 against 0.107 under equal-width bins.
 - Shares are rounded the way the slider rounds them: a rate of exactly 12.5% read "12%" in the
   impact table and "13%" in the live readout under it. The slider also receives the cost curve at
   full precision instead of six decimals, which could land a value on the other side of a tie.
