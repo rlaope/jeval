@@ -51,6 +51,10 @@ their own data and show them the artifact — not to run a command tour.
 6. `jeval report --root DIR --current <the threshold in production> --costs costs.yaml`
 7. `jeval threshold --root DIR` writes `thresholds.yaml` — the artifact the application reads.
 8. To keep it: `jeval drift --root DIR --fail-on ece-increase=0.05` exits 1 when the model degrades.
+   When both versions answered the same requests (shadow traffic, same `source_key`),
+   `jeval drift --root DIR --paired` adds a head-to-head block: accuracy, ECE and Brier differences
+   with intervals, an exact McNemar test, and a count of every record it could not pair. It
+   refuses below 30 pairs per question and never changes the exit code.
 
 ## Artifacts
 

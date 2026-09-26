@@ -242,6 +242,22 @@ def test_every_documented_flag_exists_on_its_command() -> None:
     assert offenders == [], f"the docs show flags their command does not accept: {offenders}"
 
 
+def test_the_paired_drift_flag_is_documented_and_declared() -> None:
+    """`--paired` is shown in the docs as a command and exists on `jeval drift`.
+
+    The generic flag check only catches a documented flag that does not exist. This pins the other
+    direction for the head-to-head comparison: dropping the flag, or the docs that show it, fails
+    here in the same change.
+    """
+    documented = {
+        name
+        for name, command, flags in _invocations()
+        if command == "drift" and "--paired" in flags
+    }
+    assert {"README.md", "llms.txt"} <= documented, documented
+    assert "--paired" in _help_flags("drift")
+
+
 def test_the_documented_demo_command_is_real() -> None:
     """The example the README tells readers to run is reproduced literally."""
     line = next(

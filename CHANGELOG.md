@@ -28,6 +28,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   with a message asking to re-save it with `--save-baseline`.
 
 ### Added
+- `jeval drift --paired`: a head-to-head comparison of two model versions on the requests both
+  answered, matched by `(source_key, question)`. Per question it prints the number of pairs,
+  accuracy, ECE and Brier on both sides with the current-minus-baseline difference and its 95%
+  bootstrap interval over pairs, an exact McNemar p-value on the discordant pairs, and a one-line
+  verdict that calls anything inside the noise unresolved. Records without a `source_key`, keys
+  logged twice by one version, requests with no partner, pairs without a gold label on both sides,
+  pairs whose labels disagree, and `score` records are excluded and counted. A question with fewer
+  than 30 pairs is refused with no numbers. The block informs and never changes the exit code.
+  The statistics are `calibration.mcnemar_exact` and `calibration.paired_bootstrap`;
+  `synth.generate_paired` builds shadow-traffic logs with shared requests for the tests and for
+  `examples/make-paired-log.py`.
 - `jeval threshold --currency`: the terminal prints per-case costs and the segment table in the same
   currency format as the report (`KRW 1,738 per case`), where it used to print a bare `1,738` or
   `1,737.70`.
