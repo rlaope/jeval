@@ -88,7 +88,7 @@ Records then go to `/var/lib/jeval/.jeval/records.jsonl` and answers to
 | Variable | Effect |
 | --- | --- |
 | `JEVAL_COLLECT=0` | collection off, immediately, including when a call site passed a path |
-| `JEVAL_COLLECT=/var/log/jeval/decisions.jsonl` | a different records file, when the project tree is not writable; answers go beside it |
+| `JEVAL_COLLECT=/var/log/jeval/decisions.jsonl` | a different records file, when the project tree is not writable; answers go beside it, but the command line joins answers only from `<root>/.jeval/labels.jsonl`, so ingest that file's records elsewhere |
 | `JEVAL_MODEL=jev-1.14.0` | the model string to record when the response does not carry one |
 
 Nothing is written outside that path, and nothing leaves the machine.

@@ -35,9 +35,9 @@ pip install "jeval_cli @ git+https://github.com/rlaope/jeval"
 
 `collect.resolve` and `jeval status` are on `main` and not yet in a tagged release (the latest is
 v0.1.8), so install from the repository until the next tag; pin a commit with `@<sha>` for a
-reproducible deploy. The distribution is `jeval_cli` and the import is `jeval`. `pip install jeval` installs an
-unrelated project — see the README. The same install puts the `jeval` command on the PATH, so the
-service host can also run the command line.
+reproducible deploy. The distribution is `jeval_cli` and the import is `jeval`.
+Never `pip install jeval`: that name on PyPI belongs to an unrelated project. The same install puts
+the `jeval` command on the PATH, so the service host can also run the command line.
 
 ## 1. Record what the model answered: `collect.track`
 
@@ -116,8 +116,11 @@ decision when it reads the records, by `(source_key, question)`:
   review;
 - an answer the question could not have produced (a department that is not in the record's own
   probability map, a yes/no answer that is neither) is refused;
-- when one case is answered twice, the later answer wins;
-- nothing is rewritten on disk, so reading twice gives the same result.
+- when one case is answered twice, the later line in the file wins — except that a `silver` answer
+  never replaces a human one. Later means appended later; with several workers that is the order
+  the lines reached the file;
+- nothing is rewritten on disk, so reading twice gives the same result. Even `jeval label --apply`,
+  which writes records, writes them without the joined answers.
 
 The commands print what happened to every answer on stderr, for example
 `labels: 480 answers from labels.jsonl, 480 applied`.
@@ -128,7 +131,7 @@ The commands print what happened to every answer on stderr, for example
 | --- | --- |
 | `JEVAL_ROOT=/var/lib/jeval` | records and answers go to `/var/lib/jeval/.jeval/`; `jeval report --root /var/lib/jeval` reads them |
 | `JEVAL_COLLECT=0` | both functions write nothing, immediately — even when a call passed `path` |
-| `JEVAL_COLLECT=/var/log/jeval/records.jsonl` | a different records file; answers go beside it as `labels.jsonl` |
+| `JEVAL_COLLECT=/var/log/jeval/records.jsonl` | a different records file, with answers beside it as `labels.jsonl`. The command line joins answers only from `<root>/.jeval/labels.jsonl`, so use this when the records are shipped elsewhere and ingested; for the two-line loop, use `JEVAL_ROOT` |
 | `JEVAL_MODEL=jev-1.14.0` | the model string to record when a response does not carry one |
 
 ## 4. Check it is working: `collect.stats()` and `jeval status`
@@ -150,7 +153,7 @@ print(collect.stats())
 | `calls` is 0 | `track` attached to nothing: `no_method_found` will be 1; name the method in `method_names` |
 | `unsupported` | the response shape was not recognised: check `container` and `keys` |
 | `dropped` | a line failed to write: check the path and permissions |
-| `invalid_value` | a value could not be used: a negative latency, an empty answer passed to `resolve`, an unknown `source` |
+| `invalid_value` | a value could not be used: a negative latency, an empty or over-long (512 characters) answer passed to `resolve`, a `ts` that is not a datetime, an unknown `source` |
 | `labels_written` | how many human answers `resolve` recorded |
 
 On the command line, what has accumulated across every process:
