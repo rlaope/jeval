@@ -11,6 +11,7 @@ no customer text, no cost figures from any real business belong here.
 | `sample-decisions.jsonl` | 60 requests, two questions each, in raw ingest format. One question is deliberately overconfident. |
 | `ingest-map.example.yaml` | The mapping that turns `sample-decisions.jsonl` into decision records. |
 | `make-drift-log.py` | Writes the 1,800-decision log the README's `jeval drift` run is captured from. |
+| `make-paired-log.py` | Writes the shadow-traffic log (900 requests, each answered by two versions) the README's `jeval drift --paired` run is captured from. |
 | `make-support-log.py` | Writes the two-version support-routing log that `docs/instrumenting-a-service.md` walks through. |
 | `ci/drift.yml` | A copy-paste GitHub Actions workflow that runs `jeval drift` and posts its summary. |
 
