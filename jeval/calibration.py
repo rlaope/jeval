@@ -8,7 +8,7 @@ change to this module has to keep those tests green.
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from statistics import NormalDist
 
@@ -470,4 +470,445 @@ def diagnose(metrics: CalibrationMetrics, tolerance: float = 0.02) -> str:
         f"{direction.capitalize()} in {worst.label}: claimed {worst.mean_confidence:.2f}, "
         f"observed {worst.accuracy:.2f} (95% CI {interval}, n={worst.n}); "
         f"ECE {metrics.ece:.3f}."
+    )
+
+
+# --------------------------------------------------------------------------------------
+# Discrimination: does confidence rank the model's own errors?
+# --------------------------------------------------------------------------------------
+# Calibration and discrimination are different questions. A model that says 0.8 on every answer
+# and is right 80% of the time is perfectly calibrated and ranks nothing: no threshold can buy
+# accuracy from it, because escalating its "least confident" answers escalates a random sample.
+
+
+@dataclass(frozen=True)
+class DiscriminationMetrics:
+    """How well confidence separates right answers from wrong ones, with the risk-coverage curve.
+
+    ``levels``, ``coverage`` and ``risk`` are parallel, most confident first: automating every
+    answer stated at or above ``levels[i]`` covers ``coverage[i]`` of the decisions, and
+    ``risk[i]`` of those are wrong. Tied confidences form one step, since a threshold cannot run
+    one 0.8 and escalate another.
+    """
+
+    n: int
+    n_wrong: int
+    auroc: float
+    auroc_ci_low: float
+    auroc_ci_high: float
+    aurc: float
+    aurc_ci_low: float
+    aurc_ci_high: float
+    full_coverage_risk: float
+    levels: tuple[float, ...] = ()
+    coverage: tuple[float, ...] = ()
+    risk: tuple[float, ...] = ()
+
+    @property
+    def constant(self) -> bool:
+        """Every decision carries the same confidence, so there is no ranking to measure."""
+        return self.n > 0 and len(self.levels) == 1
+
+    @property
+    def perfect_aurc(self) -> float:
+        """The area a perfect ranking would leave: every right answer before every wrong one."""
+        if self.n == 0:
+            return float("nan")
+        n_right = self.n - self.n_wrong
+        return float(sum(max(0, k - n_right) / k for k in range(1, self.n + 1)) / self.n)
+
+    def at_threshold(self, threshold: float) -> tuple[float, float]:
+        """``(coverage, risk)`` when every answer stated at or above ``threshold`` is automated."""
+        chosen = -1
+        for index, level in enumerate(self.levels):
+            if level >= threshold:
+                chosen = index
+        if chosen < 0:
+            return (0.0, float("nan"))
+        return (self.coverage[chosen], self.risk[chosen])
+
+    def at_coverage(self, share: float) -> tuple[float, float, float]:
+        """``(level, coverage, risk)`` at the first step that automates at least ``share``."""
+        for level, covered, risk in zip(self.levels, self.coverage, self.risk, strict=True):
+            if covered >= share - 1e-12:
+                return (level, covered, risk)
+        return (float("nan"), float("nan"), float("nan"))
+
+
+def _as_pairs(
+    confidences: Sequence[float] | NDArray[np.float64],
+    correct: Sequence[bool] | NDArray[np.bool_],
+) -> tuple[NDArray[np.float64], NDArray[np.bool_]]:
+    conf = np.asarray(list(confidences), dtype=float)
+    hit = np.asarray(list(correct), dtype=bool)
+    if conf.size != hit.size:
+        raise ValueError("confidences and correct must have the same length")
+    return conf, hit
+
+
+def _auroc(conf: NDArray[np.float64], hit: NDArray[np.bool_]) -> float:
+    """Mann-Whitney AUROC with tied confidences given their average rank (a tie counts 1/2)."""
+    n_right = int(hit.sum())
+    n_wrong = int(hit.size - n_right)
+    if n_right == 0 or n_wrong == 0:
+        return float("nan")
+    _, inverse, counts = np.unique(conf, return_inverse=True, return_counts=True)
+    ends = np.cumsum(counts).astype(float)
+    average_rank = ends - (counts.astype(float) - 1.0) / 2.0
+    ranks = average_rank[inverse]
+    u_stat = float(ranks[hit].sum()) - n_right * (n_right + 1) / 2.0
+    return u_stat / (n_right * n_wrong)
+
+
+def _risk_coverage(
+    conf: NDArray[np.float64], hit: NDArray[np.bool_]
+) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
+    """``(levels, coverage, risk, step_share)``, most confident first, one step per value."""
+    if conf.size == 0:
+        empty = np.zeros(0, dtype=float)
+        return empty, empty, empty, empty
+    levels, inverse, counts = np.unique(conf, return_inverse=True, return_counts=True)
+    errors = np.bincount(inverse, weights=(~hit).astype(float), minlength=levels.size)
+    levels, counts, errors = levels[::-1], counts[::-1].astype(float), errors[::-1]
+    covered = np.cumsum(counts)
+    risk = np.cumsum(errors) / covered
+    n = float(conf.size)
+    return (
+        np.asarray(levels, dtype=float),
+        np.asarray(covered / n, dtype=float),
+        np.asarray(risk, dtype=float),
+        np.asarray(counts / n, dtype=float),
+    )
+
+
+def _aurc(conf: NDArray[np.float64], hit: NDArray[np.bool_]) -> float:
+    _, _, risk, share = _risk_coverage(conf, hit)
+    if risk.size == 0:
+        return float("nan")
+    return float(np.sum(share * risk))
+
+
+def auroc(
+    confidences: Sequence[float] | NDArray[np.float64],
+    correct: Sequence[bool] | NDArray[np.bool_],
+) -> float:
+    """Probability that a right answer carries more confidence than a wrong one.
+
+    0.5 is a coin flip -- confidence ranks nothing -- and 1.0 is a perfect ranking. Undefined
+    (``nan``) when every answer is right or every answer is wrong: there is nothing to separate.
+    """
+    conf, hit = _as_pairs(confidences, correct)
+    return _auroc(conf, hit)
+
+
+def risk_coverage(
+    confidences: Sequence[float] | NDArray[np.float64],
+    correct: Sequence[bool] | NDArray[np.bool_],
+) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    """``(coverage, risk)``: the error rate among the automated answers at every threshold.
+
+    Coverage is the share of decisions automated when every answer at or above a confidence runs;
+    risk is the share of those that are wrong. Tied confidences move together.
+    """
+    conf, hit = _as_pairs(confidences, correct)
+    _, coverage, risk, _ = _risk_coverage(conf, hit)
+    return coverage, risk
+
+
+def aurc(
+    confidences: Sequence[float] | NDArray[np.float64],
+    correct: Sequence[bool] | NDArray[np.bool_],
+) -> float:
+    """Area under the risk-coverage curve: the mean error rate over every coverage level.
+
+    Without ties this is ``(1/n) * sum(risk_k)``; a tied step counts once per decision in it. If
+    confidence ranked nothing, the expected area would equal the error rate at full coverage.
+    """
+    conf, hit = _as_pairs(confidences, correct)
+    return _aurc(conf, hit)
+
+
+def _percentile_ci(
+    estimates: NDArray[np.float64], observed: float, alpha: float
+) -> tuple[float, float]:
+    """Percentile interval widened to contain its own point estimate (see ``bootstrap_ece_ci``)."""
+    finite = estimates[np.isfinite(estimates)]
+    # A resample that drew only right (or only wrong) answers has no AUROC; if that is most of
+    # them, the sample is too lopsided for an interval to mean anything.
+    if finite.size < max(2, estimates.size // 2) or float(np.ptp(finite)) <= 0.0:
+        return (float("nan"), float("nan"))
+    lower = float(np.quantile(finite, alpha / 2.0))
+    upper = float(np.quantile(finite, 1.0 - alpha / 2.0))
+    if observed != observed:
+        return (lower, upper)
+    return (min(lower, observed), max(upper, observed))
+
+
+#: The fewest wrong (or right) answers an AUROC interval is computed from; the report's bin floor.
+MIN_DISCRIMINATION_CLASS = MIN_BIN_SIZE
+
+
+def compute_discrimination(
+    confidences: Sequence[float] | NDArray[np.float64],
+    correct: Sequence[bool] | NDArray[np.bool_],
+    *,
+    alpha: float = DEFAULT_ALPHA,
+    n_boot: int = DEFAULT_BOOTSTRAP_SAMPLES,
+    seed: int = 0,
+) -> DiscriminationMetrics:
+    """AUROC and AURC with percentile bootstrap intervals, plus the risk-coverage curve."""
+    conf, hit = _as_pairs(confidences, correct)
+    n = int(conf.size)
+    nan = float("nan")
+    if n == 0:
+        return DiscriminationMetrics(
+            n=0,
+            n_wrong=0,
+            auroc=nan,
+            auroc_ci_low=nan,
+            auroc_ci_high=nan,
+            aurc=nan,
+            aurc_ci_low=nan,
+            aurc_ci_high=nan,
+            full_coverage_risk=nan,
+        )
+    levels, coverage, risk, _ = _risk_coverage(conf, hit)
+    observed_auroc = _auroc(conf, hit)
+    observed_aurc = _aurc(conf, hit)
+    auroc_ci: tuple[float, float] = (nan, nan)
+    aurc_ci: tuple[float, float] = (nan, nan)
+    n_wrong = int((~hit).sum())
+    # With a handful of wrong (or right) answers the resampled AUROC is lumpy, and a percentile
+    # interval on it excluded 0.5 up to 42% of the time on data where confidence ranked nothing.
+    # Below the report's smallest bin on either side there is no interval, and the reading says so.
+    if n_boot > 0 and min(n_wrong, n - n_wrong) >= MIN_DISCRIMINATION_CLASS:
+        rng = np.random.default_rng(seed)
+        auroc_draws = np.empty(n_boot, dtype=float)
+        aurc_draws = np.empty(n_boot, dtype=float)
+        for draw in range(n_boot):
+            idx = rng.integers(0, n, size=n)
+            auroc_draws[draw] = _auroc(conf[idx], hit[idx])
+            aurc_draws[draw] = _aurc(conf[idx], hit[idx])
+        auroc_ci = _percentile_ci(auroc_draws, observed_auroc, alpha)
+        aurc_ci = _percentile_ci(aurc_draws, observed_aurc, alpha)
+    return DiscriminationMetrics(
+        n=n,
+        n_wrong=n_wrong,
+        auroc=observed_auroc,
+        auroc_ci_low=auroc_ci[0],
+        auroc_ci_high=auroc_ci[1],
+        aurc=observed_aurc,
+        aurc_ci_low=aurc_ci[0],
+        aurc_ci_high=aurc_ci[1],
+        full_coverage_risk=float(risk[-1]),
+        levels=tuple(float(value) for value in levels),
+        coverage=tuple(float(value) for value in coverage),
+        risk=tuple(float(value) for value in risk),
+    )
+
+
+def describe_discrimination(metrics: DiscriminationMetrics) -> str:
+    """One plain-language sentence on what the ranking can and cannot buy."""
+    if metrics.n == 0:
+        return "No labeled decisions: nothing to rank yet."
+    if metrics.auroc != metrics.auroc:
+        state = "right" if metrics.n_wrong == 0 else "wrong"
+        return (
+            f"Every one of the {metrics.n} labeled answers was {state}, so AUROC is undefined: "
+            "there is nothing for confidence to separate. Label more decisions before reading "
+            "anything into the ranking."
+        )
+    value = f"AUROC {metrics.auroc:.2f}"
+    if metrics.constant:
+        return (
+            f"{value}: every decision carries the same confidence, so it ranks nothing; no "
+            "threshold can buy accuracy here."
+        )
+    minority = min(metrics.n_wrong, metrics.n - metrics.n_wrong)
+    if minority < MIN_DISCRIMINATION_CLASS:
+        side = "wrong" if metrics.n_wrong <= metrics.n - metrics.n_wrong else "right"
+        return (
+            f"{value} (n={metrics.n}, only {minority} {side} answers): too few to tell whether "
+            f"confidence ranks right above wrong; {MIN_DISCRIMINATION_CLASS} are needed before "
+            "this number means anything."
+        )
+    has_interval = metrics.auroc_ci_low == metrics.auroc_ci_low
+    interval = (
+        f" (95% CI {metrics.auroc_ci_low:.2f}-{metrics.auroc_ci_high:.2f}, n={metrics.n})"
+        if has_interval
+        else f" (n={metrics.n}, no interval: too few right or wrong answers to resample)"
+    )
+    if has_interval and metrics.auroc_ci_low <= 0.5 <= metrics.auroc_ci_high:
+        return (
+            f"{value}{interval}: not distinguishable from a coin flip at this n. Confidence does "
+            "not separate right from wrong answers here, so no threshold can buy accuracy."
+        )
+    if metrics.auroc < 0.5:
+        return (
+            f"{value}{interval}: inverted. The model is more confident on its wrong answers than "
+            "its right ones, so raising the threshold escalates the wrong cases last."
+        )
+    share = f"a right answer outranks a wrong one {metrics.auroc:.0%} of the time"
+    if metrics.auroc < 0.6:
+        reading = "confidence barely separates right from wrong answers; a threshold buys little"
+    elif metrics.auroc < 0.7:
+        reading = "weak separation; a higher threshold buys some accuracy at a real cost in volume"
+    elif metrics.auroc < 0.8:
+        reading = "moderate separation; a higher threshold buys accuracy at a cost in volume"
+    else:
+        reading = "strong separation; escalating the least confident answers removes most errors"
+    return f"{value}{interval}: {share}. {reading[0].upper()}{reading[1:]}."
+
+
+# --------------------------------------------------------------------------------------
+# Classwise calibration for ``choice`` questions
+# --------------------------------------------------------------------------------------
+# Top-1 calibration averages over whichever class was predicted, so a class that is overconfident
+# only when it is the answer can hide behind classes that err the other way. Classwise ECE measures
+# every class on its own probability, P(class = k) against (label == k), which needs the whole map.
+
+MIN_CLASS_SIZE = 30  # the report's floor for a segment, a drift slice and a threshold sweep
+MAP_SUM_TOLERANCE = 0.02
+
+
+@dataclass(frozen=True)
+class ClassCalibration:
+    """One class, measured on ``(P(class), label == class)`` over every usable record.
+
+    ``n`` is the number of usable records labeled with this class. ``metrics`` is ``None`` when
+    the class was refused, and ``refused_reason`` says why.
+    """
+
+    name: str
+    n: int
+    metrics: CalibrationMetrics | None
+    refused_reason: str = ""
+
+
+@dataclass(frozen=True)
+class ClasswiseMetrics:
+    """Per-class calibration, the macro average, and what was set aside."""
+
+    classes: tuple[ClassCalibration, ...]
+    n_used: int
+    n_refused_map: int
+    macro_ece: float
+    min_class: int = MIN_CLASS_SIZE
+
+    @property
+    def measured(self) -> tuple[ClassCalibration, ...]:
+        return tuple(item for item in self.classes if item.metrics is not None)
+
+    @property
+    def worst(self) -> ClassCalibration | None:
+        """The measured class with the largest ECE."""
+        best: ClassCalibration | None = None
+        for item in self.measured:
+            if item.metrics is None:
+                continue
+            if best is None or best.metrics is None or item.metrics.ece > best.metrics.ece:
+                best = item
+        return best
+
+
+def classwise_calibration(
+    probabilities: Sequence[Mapping[str, float] | None],
+    labels: Sequence[str],
+    *,
+    n_bins: int = DEFAULT_N_BINS,
+    equal_width: bool = False,
+    alpha: float = DEFAULT_ALPHA,
+    n_boot: int = DEFAULT_BOOTSTRAP_SAMPLES,
+    seed: int = 0,
+    min_class: int = MIN_CLASS_SIZE,
+    sum_tolerance: float = MAP_SUM_TOLERANCE,
+) -> ClasswiseMetrics:
+    """Classwise ECE over the records whose probability map is complete.
+
+    A map that is missing, or does not sum to 1 within ``sum_tolerance``, is refused and counted:
+    a top-k map says nothing about the classes it dropped, and reading them as zero would invent
+    evidence. A class named in an accepted map but absent from another one gets probability 0
+    there, which is what a map that sums to 1 asserts. A class with fewer than ``min_class``
+    labeled records is refused, because its positives are too few to bin.
+    """
+    if len(probabilities) != len(labels):
+        raise ValueError("probabilities and labels must have the same length")
+    accepted: list[tuple[Mapping[str, float], str]] = []
+    refused = 0
+    for mapping, label in zip(probabilities, labels, strict=True):
+        if not mapping or abs(float(sum(mapping.values())) - 1.0) > sum_tolerance:
+            refused += 1
+            continue
+        accepted.append((mapping, label))
+    names = sorted({name for mapping, _ in accepted for name in mapping})
+    items: list[ClassCalibration] = []
+    for name in names:
+        stated = [float(mapping.get(name, 0.0)) for mapping, _ in accepted]
+        positive = [label == name for _, label in accepted]
+        support = sum(positive)
+        if support < min_class:
+            items.append(
+                ClassCalibration(
+                    name=name,
+                    n=support,
+                    metrics=None,
+                    refused_reason=(
+                        f"{support} labeled; fewer than {min_class} is too few to measure a class"
+                    ),
+                )
+            )
+            continue
+        items.append(
+            ClassCalibration(
+                name=name,
+                n=support,
+                metrics=compute_calibration(
+                    stated,
+                    positive,
+                    n_bins=n_bins,
+                    equal_width=equal_width,
+                    alpha=alpha,
+                    n_boot=n_boot,
+                    seed=seed,
+                ),
+            )
+        )
+    eces = [item.metrics.ece for item in items if item.metrics is not None]
+    return ClasswiseMetrics(
+        classes=tuple(items),
+        n_used=len(accepted),
+        n_refused_map=refused,
+        macro_ece=float(np.mean(eces)) if eces else float("nan"),
+        min_class=min_class,
+    )
+
+
+def describe_classwise(metrics: ClasswiseMetrics) -> str:
+    """Name the worst class in one sentence, never claiming a ranking the intervals do not hold."""
+    worst = metrics.worst
+    if worst is None or worst.metrics is None:
+        if metrics.n_used == 0:
+            return (
+                "No record carries a complete probability map, so no class can be measured on "
+                "its own."
+            )
+        return (
+            f"No class has {metrics.min_class} labeled decisions yet, so none can be measured on "
+            "its own."
+        )
+    top = worst.metrics
+    head = (
+        f"Worst class: {worst.name}, ECE {top.ece:.3f} "
+        f"(95% CI {top.ece_ci_low:.3f}-{top.ece_ci_high:.3f}, {worst.n} labeled)"
+    )
+    rivals = [
+        item.metrics for item in metrics.measured if item is not worst and item.metrics is not None
+    ]
+    if not rivals:
+        return head + "; it is the only class with enough labels to measure."
+    runner_up = max(rival.ece_ci_high for rival in rivals)
+    if top.ece_ci_low == top.ece_ci_low and top.ece_ci_low > runner_up:
+        return head + "; its interval clears every other class's."
+    return (
+        head + "; its interval overlaps another class's, so the ranking is not settled at this n."
     )

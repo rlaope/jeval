@@ -10,7 +10,12 @@ from jeval.calibration import (
     DEFAULT_BOOTSTRAP_SAMPLES,
     DEFAULT_N_BINS,
     CalibrationMetrics,
+    ClasswiseMetrics,
+    DiscriminationMetrics,
+    classwise_calibration,
     compute_calibration,
+    compute_discrimination,
+    describe_discrimination,
     diagnose,
 )
 from jeval.schema import DecisionRecord
@@ -29,6 +34,9 @@ class QuestionReport:
     diagnosis: str
     silver_metrics: CalibrationMetrics | None = None
     n_silver: int = 0
+    discrimination: DiscriminationMetrics | None = None
+    discrimination_reading: str = ""
+    classwise: ClasswiseMetrics | None = None
 
 
 @dataclass(frozen=True)
@@ -120,6 +128,28 @@ def _measure(records: Sequence[DecisionRecord], options: MeasureOptions) -> Cali
     )
 
 
+def _discriminate(
+    records: Sequence[DecisionRecord], options: MeasureOptions
+) -> DiscriminationMetrics:
+    confidences, correct = _points(records)
+    return compute_discrimination(
+        confidences, correct, alpha=options.alpha, n_boot=options.n_boot, seed=options.seed
+    )
+
+
+def _classwise(records: Sequence[DecisionRecord], options: MeasureOptions) -> ClasswiseMetrics:
+    labeled = [record for record in records if record.label is not None]
+    return classwise_calibration(
+        [record.probabilities for record in labeled],
+        [record.label or "" for record in labeled],
+        n_bins=options.n_bins,
+        equal_width=options.equal_width,
+        alpha=options.alpha,
+        n_boot=options.n_boot,
+        seed=options.seed,
+    )
+
+
 def evaluate(
     records: Sequence[DecisionRecord],
     *,
@@ -153,10 +183,13 @@ def evaluate(
         group_gold, group_silver, group_unlabeled = _split_labels(group)
         metrics = _measure(group_gold, options)
         silver_metrics = _measure(group_silver, options) if group_silver else None
+        question_type = group[0].question_type
+        # Score answers are measured as error, never as right-or-wrong, so they have no ranking.
+        discrimination = _discriminate(group_gold, options) if question_type != "score" else None
         questions.append(
             QuestionReport(
                 question_key=key,
-                question_type=group[0].question_type,
+                question_type=question_type,
                 metrics=metrics,
                 n_records=len(group),
                 n_unlabeled=len(group_unlabeled),
@@ -164,6 +197,11 @@ def evaluate(
                 diagnosis=diagnose(metrics),
                 silver_metrics=silver_metrics,
                 n_silver=len(group_silver),
+                discrimination=discrimination,
+                discrimination_reading=(
+                    describe_discrimination(discrimination) if discrimination else ""
+                ),
+                classwise=_classwise(group_gold, options) if question_type == "choice" else None,
             )
         )
 

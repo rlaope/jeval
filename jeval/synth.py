@@ -12,6 +12,12 @@ Modes:
 - ``overconfident``: reported confidence is pushed up by a fixed exponent.
 - ``underconfident``: reported confidence is shrunk toward 0.5.
 - ``constant_high``: one fixed high confidence with a known lower accuracy.
+- ``class_inflated`` (``choice`` only): the whole probability map is reported, and confidence is
+  inflated by ``inflation`` only when ``inflated_class`` is the predicted class. The other classes
+  are underconfident by exactly enough that the average cancels at every confidence level, so the
+  top-1 reliability curve looks honest while that one class is not. With ``inflation=1.0`` the map
+  is calibrated for every class, which the other modes do not promise: they split the leftover
+  probability mass at random, so only their top-1 number is calibrated.
 """
 
 from __future__ import annotations
@@ -25,12 +31,24 @@ from numpy.typing import NDArray
 
 from jeval.schema import DecisionRecord
 
-SYNTH_MODES = ("calibrated", "inflated", "overconfident", "underconfident", "constant_high")
+SYNTH_MODES = (
+    "calibrated",
+    "inflated",
+    "overconfident",
+    "underconfident",
+    "constant_high",
+    "class_inflated",
+)
 
 # The highest confidence a generated record may claim: certainty is not a probability.
 CERTAINTY_CAP = 0.999
 
 DEFAULT_CLASSES: tuple[str, ...] = ("billing", "technical", "other")
+
+# ``class_inflated`` states top-1 probabilities in (0.5, 0.5 + this span). The ceiling leaves room
+# for the other classes to be underconfident by enough to cancel the inflated one: a class stated at
+# 0.99 cannot be right more often than it says.
+CLASS_INFLATED_SPAN = 0.38
 
 
 @dataclass(frozen=True)
@@ -54,6 +72,7 @@ class SynthSpec:
     languages: tuple[str, ...] = ()
     tiers: tuple[str, ...] = ()
     state_tokens_range: tuple[int, int] = (200, 4000)
+    inflated_class: str = ""  # ``class_inflated`` only; empty means the first class
     start: datetime = field(default_factory=lambda: datetime(2026, 9, 1, tzinfo=timezone.utc))
 
 
@@ -161,6 +180,8 @@ def _generate(
     """
     if spec.mode not in SYNTH_MODES:
         raise ValueError(f"unknown mode {spec.mode!r}; expected one of {SYNTH_MODES}")
+    if spec.mode == "class_inflated":
+        return _class_inflated(spec)
     rng = np.random.default_rng(spec.seed)
 
     if true_p is None:
@@ -269,6 +290,68 @@ def _generate(
                 label_source=label_source,  # type: ignore[arg-type]
                 segment=segment,
                 state_tokens=state_tokens,
+            )
+        )
+    return records
+
+
+def _class_inflated(spec: SynthSpec) -> list[DecisionRecord]:
+    """A ``choice`` log whose map is honest except when one class is the answer.
+
+    Given a stated top-1 probability ``r``, the answer is right with probability ``r / inflation``
+    when the predicted class is ``inflated_class`` and ``r + (r - r / inflation) / (k - 1)``
+    otherwise, with the ``k`` classes predicted equally often. The two average to ``r`` at every
+    ``r``, which is what keeps top-1 ECE near zero. A wrong answer's true class is drawn in
+    proportion to the probabilities the map gives the other classes, so at ``inflation=1.0``
+    ``P(label = c)`` equals the stated ``P(c)`` for every class ``c``.
+    """
+    if spec.question_type != "choice":
+        raise ValueError("class_inflated generates choice questions only")
+    classes = spec.classes or DEFAULT_CLASSES
+    if len(classes) < 2:
+        raise ValueError("class_inflated needs at least two classes")
+    target = spec.inflated_class or classes[0]
+    if target not in classes:
+        raise ValueError(f"inflated_class {target!r} is not one of {classes}")
+    if spec.inflation <= 0:
+        raise ValueError("inflation must be positive")
+    rng = np.random.default_rng(spec.seed)
+    records: list[DecisionRecord] = []
+    for index in range(spec.n):
+        stated = 0.5 + CLASS_INFLATED_SPAN * float(rng.beta(1.6, 1.2))
+        prediction = classes[int(rng.integers(0, len(classes)))]
+        others = [name for name in classes if name != prediction]
+        weights = rng.random(len(others)) + 1e-9
+        weights = weights / weights.sum()
+        probabilities = {prediction: stated}
+        for name, weight in zip(others, weights, strict=True):
+            probabilities[name] = float((1.0 - stated) * weight)
+        honest = stated / spec.inflation
+        if prediction == target:
+            accuracy = honest
+        else:
+            accuracy = stated + (stated - honest) / (len(classes) - 1)
+        correct = bool(rng.random() < min(1.0, max(0.0, accuracy)))
+        truth = prediction if correct else others[int(rng.choice(len(others), p=weights))]
+        label_known = bool(rng.random() < spec.label_fraction)
+        label_source = None
+        if label_known:
+            label_source = "silver" if rng.random() < spec.silver_fraction else "human_override"
+        records.append(
+            DecisionRecord(
+                ts=spec.start - timedelta(seconds=60 * index),
+                model=spec.model,
+                question_key=spec.question_key,
+                question_type="choice",
+                prediction=prediction,
+                confidence=stated,
+                probabilities=probabilities,
+                label=truth if label_known else None,
+                label_source=label_source,  # type: ignore[arg-type]
+                segment=_segment_of(index, spec, rng),
+                state_tokens=int(
+                    rng.integers(spec.state_tokens_range[0], spec.state_tokens_range[1])
+                ),
             )
         )
     return records

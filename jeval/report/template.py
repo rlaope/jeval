@@ -1,7 +1,7 @@
 """Assemble the single-file HTML report.
 
-Reading order is the specification: verdict, reliability, cost, impact, segments, drift, data
-quality. A reader who stops after the first screen should already know the conclusion and what
+Reading order is the specification: verdict, reliability, discrimination, cost, impact,
+segments, drift, data quality. A reader who stops after the first screen should already know the conclusion and what
 it rests on; a reader who reaches the bottom should know exactly how thin the evidence is.
 
 The document is a pure function of its inputs. No network, no files, no clock beyond the stamp
@@ -11,15 +11,21 @@ the caller passes in, which is what makes the golden-file tests possible.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from jeval.calibration import CalibrationMetrics
+from jeval.calibration import (
+    CalibrationMetrics,
+    ClasswiseMetrics,
+    DiscriminationMetrics,
+    describe_classwise,
+)
 from jeval.currency import format_amount, format_delta
 from jeval.evaluate import DatasetReport
 from jeval.report import svg as S
 from jeval.report.charts import cost as cost_charts
+from jeval.report.charts import discrimination as discrimination_charts
 from jeval.report.charts import drift as drift_charts
 from jeval.report.charts import reliability as reliability_charts
 from jeval.report.charts import segments as segment_charts
@@ -39,9 +45,18 @@ class ReliabilityBlock:
     question_key: str
     metrics: CalibrationMetrics
     diagnosis: str
+    # The line the cost minimum points at for this question's action, and the line in use.
     threshold: float | None = None
     subtitle: str = ""
     silver_note: str = ""
+    question_type: str = "choice"
+    action: str = ""
+    discrimination: DiscriminationMetrics | None = None
+    discrimination_reading: str = ""
+    classwise: ClasswiseMetrics | None = None
+    # Class -> the cost actions that fire when it is predicted (a `CostAction.when`).
+    cost_classes: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
+    in_use: float | None = None
 
 
 def markdown_summary(model: ReportModel) -> str:
@@ -111,7 +126,7 @@ def render_document(
         }
     )
 
-    sections = _section_numbers(model, thresholds)
+    sections = _section_numbers(model, thresholds, blocks)
     parts: list[str] = [
         "<!doctype html>",
         '<html lang="en">',
@@ -128,7 +143,8 @@ def render_document(
     parts.append(_header(model))
     parts.append(
         '<p class="print-only">Printed summary: the verdict, the reliability of the question open on '
-        "screen, and the first action's cost and impact. Segments, score questions, labels, drift "
+        "screen, and the first action's cost and impact. Discrimination, segments, score "
+        "questions, labels, drift "
         "and the data tables are in the HTML file this was printed from.</p>"
     )
     parts.append(_toc(sections))
@@ -147,6 +163,8 @@ def render_document(
 
     parts.append(_verdict_section(model, summary, thresholds, current_thresholds))
     parts.append(_reliability_section(blocks, sections))
+    if "discrimination" in sections:
+        parts.append(_discrimination_section(blocks, sections))
     parts.append(_cost_section(model, current_thresholds, thresholds, sections))
     parts.append(_segments_section(model, segment_metrics, sections))
     if model.score is not None:
@@ -184,6 +202,7 @@ def render_document(
 # answer, and the headline inside it is the largest type on the page after the title.
 _SECTION_TITLES: tuple[tuple[str, str], ...] = (
     ("reliability", "Reliability"),
+    ("discrimination", "Discrimination"),
     ("cost", "Cost and threshold"),
     ("segments", "Segments"),
     ("score", "Score questions"),
@@ -194,11 +213,14 @@ _SECTION_TITLES: tuple[tuple[str, str], ...] = (
 
 
 def _section_numbers(
-    model: ReportModel, thresholds: Sequence[ThresholdResult]
+    model: ReportModel,
+    thresholds: Sequence[ThresholdResult],
+    blocks: Sequence[ReliabilityBlock] = (),
 ) -> dict[str, tuple[int, str]]:
     """Number the sections this report actually has, so the index never skips a digit."""
     present = {
         "reliability": True,
+        "discrimination": any(block.discrimination is not None for block in blocks),
         "cost": True,
         "segments": True,
         "score": model.score is not None,
@@ -343,19 +365,7 @@ def _reliability_section(
     head = '<section id="reliability">' + _h2("reliability", sections)
     if not blocks:
         return head + '<p class="note">No questions found.</p></section>'
-    single = len(blocks) == 1
-    tabs = ""
-    if not single:
-        tabs = (
-            '<div class="tabs" role="tablist">'
-            + "".join(
-                f'<button type="button" role="tab" class="tab{" is-active" if index == 0 else ""}" '
-                f'data-jeval-tab="{escape(block.question_key)}" '
-                f'aria-selected="{"true" if index == 0 else "false"}">{escape(block.question_key)}</button>'
-                for index, block in enumerate(blocks)
-            )
-            + "</div>"
-        )
+    tabs = _tabs(blocks)
     figures = []
     for index, block in enumerate(blocks):
         body = [
@@ -366,10 +376,13 @@ def _reliability_section(
             f'<p class="diag">{escape(block.diagnosis)}</p>',
             reliability_charts.render_reliability_section(
                 block.metrics,
-                threshold=block.threshold,
+                threshold=block.in_use,
+                recommended=block.threshold,
                 title=f"Reliability · {block.question_key}",
             ),
         ]
+        if block.classwise is not None:
+            body.append(_classwise_block(block))
         if block.silver_note:
             body.append(f'<p class="note">{escape(block.silver_note)}</p>')
         figures.append(
@@ -383,6 +396,127 @@ def _reliability_section(
         + tabs
         + "".join(figures)
         + "</section>"
+    )
+
+
+def _tabs(blocks: Sequence[ReliabilityBlock]) -> str:
+    """One tab per question; every strip drives every ``data-jeval-question`` panel."""
+    if len(blocks) <= 1:
+        return ""
+    return (
+        '<div class="tabs" role="tablist">'
+        + "".join(
+            f'<button type="button" role="tab" class="tab{" is-active" if index == 0 else ""}" '
+            f'data-jeval-tab="{escape(block.question_key)}" '
+            f'aria-selected="{"true" if index == 0 else "false"}">{escape(block.question_key)}</button>'
+            for index, block in enumerate(blocks)
+        )
+        + "</div>"
+    )
+
+
+def _classwise_block(block: ReliabilityBlock) -> str:
+    """Per-class calibration under a choice question's reliability chart.
+
+    Top-1 calibration averages over whichever class was predicted, so a class that is
+    overconfident only when it is the answer -- the class a cost action fires on -- can hide
+    behind the others. The table gives each class its own ECE; the sentence names the worst one.
+    """
+    classwise = block.classwise
+    if classwise is None:  # pragma: no cover - guarded by the caller
+        return ""
+    sentence = describe_classwise(classwise)
+    worst = classwise.worst
+    if worst is not None and block.cost_classes.get(worst.name):
+        fired = ", ".join(block.cost_classes[worst.name])
+        sentence += f" It is the class {fired} fires on."
+    rows = []
+    for item in classwise.classes:
+        notes = [f"{name} fires on it" for name in block.cost_classes.get(item.name, ())]
+        metrics = item.metrics
+        if metrics is None:
+            notes.append(f"not measured: {item.refused_reason}")
+            ece, interval = "–", "–"
+        else:
+            ece = S.fmt(metrics.ece, 3)
+            interval = (
+                "–"
+                if metrics.ece_ci_low != metrics.ece_ci_low
+                else f"{S.fmt(metrics.ece_ci_low, 3)}–{S.fmt(metrics.ece_ci_high, 3)}"
+            )
+        rows.append(
+            f'<tr><td class="ident">{escape(item.name)}</td>'
+            f'<td class="num">{item.n:,}</td><td class="num">{ece}</td>'
+            f'<td class="num">{interval}</td>'
+            f'<td class="prose">{escape("; ".join(notes))}</td></tr>'
+        )
+    set_aside = ""
+    if classwise.n_refused_map:
+        set_aside = (
+            f'<p class="note">{classwise.n_refused_map:,} labeled decision(s) set aside: their '
+            "probability map was missing or did not sum to 1 within 0.02, and a truncated map "
+            "says nothing about the classes it dropped.</p>"
+        )
+    caption = (
+        f"Calibration per class · {classwise.n_used:,} decisions with a complete map · macro "
+        f"average ECE {S.fmt(classwise.macro_ece, 3)} against top-1 ECE "
+        f"{S.fmt(block.metrics.ece, 3)}"
+    )
+    return (
+        '<div class="classwise">'
+        f'<p class="diag">{escape(sentence)}</p>'
+        '<div class="table-wrap"><table class="details">'
+        f"<caption>{escape(caption)}</caption>"
+        '<thead><tr><th>Class</th><th class="num">Labeled</th><th class="num">ECE</th>'
+        '<th class="num">95% CI</th><th>Note</th></tr></thead>'
+        f"<tbody>{''.join(rows)}</tbody></table></div>{set_aside}</div>"
+    )
+
+
+def _discrimination_section(
+    blocks: Sequence[ReliabilityBlock], sections: Mapping[str, tuple[int, str]]
+) -> str:
+    """Does confidence rank the model's own errors? One risk-coverage chart per question."""
+    figures = []
+    for index, block in enumerate(blocks):
+        ranked = block.discrimination
+        subtitle = block.question_type + (
+            f" · {ranked.n:,} labeled decisions" if ranked is not None else ""
+        )
+        head = (
+            '<div class="block-head">'
+            f"<h3>{escape(block.question_key)}</h3>"
+            f'<p class="block-sub">{escape(subtitle)}</p>'
+            "</div>"
+        )
+        if block.discrimination is None:
+            body = (
+                '<p class="note">A score question is measured as error, not as right or wrong, '
+                "so there is no ranking of right against wrong answers to draw. Its error and rank "
+                "agreement are in the score section.</p>"
+            )
+        else:
+            body = f'<p class="diag">{escape(block.discrimination_reading)}</p>' + (
+                discrimination_charts.render_discrimination_section(
+                    block.discrimination,
+                    threshold=block.threshold,
+                    action=block.action,
+                    title=f"Risk and coverage · {block.question_key}",
+                )
+            )
+        figures.append(
+            f'<div class="question-block{" is-active" if index == 0 else ""}" '
+            f'data-jeval-question="{escape(block.question_key)}">{head}{body}</div>'
+        )
+    return (
+        '<section id="discrimination">'
+        + _h2("discrimination", sections)
+        + '<p class="intro">Calibration asks whether confidence is honest on average; '
+        "discrimination asks whether it <em>ranks</em>. A threshold buys accuracy only if a "
+        "confident answer is likelier to be right than an unconfident one. Automate the most "
+        "confident answers first and read the error rate among them: a curve that falls to the "
+        "left means escalating the least confident answers removes errors, and a flat one means "
+        "it removes volume and nothing else.</p>" + _tabs(blocks) + "".join(figures) + "</section>"
     )
 
 
@@ -641,8 +775,14 @@ def build_blocks(
     *,
     thresholds: Mapping[str, float] | None = None,
     actions: Mapping[str, str] | None = None,
+    cost_classes: Mapping[str, Mapping[str, Sequence[str]]] | None = None,
+    in_use: Mapping[str, float] | None = None,
 ) -> list[ReliabilityBlock]:
-    """One block per question, carrying the threshold that applies to it.
+    """One block per question, carrying the recommended line and the line in use.
+
+    ``thresholds`` holds the recommended line per question and ``in_use`` the line deployed. They
+    are kept apart all the way to the chart: drawing the recommendation as "line in use" put a
+    number beside the verdict that contradicted it.
 
     ``actions`` names the action each question's line belongs to. Every question has its own line
     and several questions can share an action, so the number on the chart is not always the number
@@ -650,15 +790,20 @@ def build_blocks(
     one of them is wrong.
     """
     thresholds = dict(thresholds or {})
+    in_use = dict(in_use or {})
     actions = dict(actions or {})
+    cost_classes = dict(cost_classes or {})
     blocks: list[ReliabilityBlock] = []
     for question in dataset.questions:
         block_threshold = thresholds.get(question.question_key)
+        block_in_use = in_use.get(question.question_key)
         line_note = ""
         if block_threshold is not None:
-            line_note = f" · line in use {S.fmt(block_threshold)}"
+            line_note = f" · recommended {S.fmt(block_threshold)}"
             if actions.get(question.question_key):
                 line_note += f" ({actions[question.question_key]})"
+        if block_in_use is not None:
+            line_note += f" · in use {S.fmt(block_in_use)}"
         silver_note = ""
         if question.silver_metrics is not None and question.silver_metrics.n > 0:
             silver_note = (
@@ -671,11 +816,21 @@ def build_blocks(
                 metrics=question.metrics,
                 diagnosis=question.diagnosis,
                 threshold=block_threshold,
+                in_use=block_in_use,
                 subtitle=(
                     f"{question.question_type} · {question.n_records} records · "
                     f"{question.n_unlabeled} unlabeled{line_note}"
                 ),
                 silver_note=silver_note,
+                question_type=question.question_type,
+                action=actions.get(question.question_key, ""),
+                discrimination=question.discrimination,
+                discrimination_reading=question.discrimination_reading,
+                classwise=question.classwise,
+                cost_classes={
+                    name: tuple(fired)
+                    for name, fired in cost_classes.get(question.question_key, {}).items()
+                },
             )
         )
     return blocks
@@ -685,15 +840,17 @@ def data_quality_from(dataset: DatasetReport, *, sparse_threshold: int = 30) -> 
     """Assemble the data-quality rows from an evaluated dataset."""
     from jeval.report.model import DataQuality
 
-    sources: dict[str, int] = {}
-    for question in dataset.questions:
-        if question.silver_metrics is not None:
-            sources["silver"] = sources.get("silver", 0) + question.silver_metrics.n
-    gold = dataset.n_labeled_gold - sources.get("silver", 0)
     sparse = sum(1 for b in dataset.overall.bins if b.n < sparse_threshold)
     rows = (
         ("Records", f"{dataset.n_records:,}"),
-        ("Labeled (gold)", f"{gold:,} of {dataset.n_records:,}"),
+        # The sample the metrics were measured on: gold labels of choice and yes/no questions. A
+        # score answer's gold label is measured as error, never as right or wrong, and counting it
+        # here put 767 beside a report that measured 696.
+        (
+            "Labeled (gold)",
+            f"{dataset.overall.n:,} of {dataset.n_records - dataset.n_score_excluded:,} "
+            "choice and yes/no",
+        ),
         ("Labeled (silver)", f"{dataset.n_labeled_silver:,}"),
         ("Unlabeled", f"{dataset.n_unlabeled:,}"),
         ("Excluded score records", f"{dataset.n_score_excluded:,}"),

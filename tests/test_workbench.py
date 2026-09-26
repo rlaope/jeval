@@ -33,7 +33,7 @@ SCREEN_SCRIPT = REPO / "examples" / "make-demo-dashboard.py"
 
 # A phrase that occurs in the report and in neither the screen nor the workbench's own chrome. Its
 # presence, exactly once, is the proof that the report body itself was embedded.
-REPORT_ONLY_SIGNATURE = "line in use 0.85 (auto_route)"
+REPORT_ONLY_SIGNATURE = "recommended 0.85 (auto_route) · in use 0.60"
 
 
 def _load(name: str, path: Path) -> ModuleType:

@@ -287,6 +287,8 @@ strong { font-weight: 600; }
 .block-sub { margin: 0; font-size: var(--fs-sm); font-weight: 400; color: var(--muted); }
 .action-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
 .action-head .ident { font-size: var(--fs-lg); font-weight: 600; }
+/* Per-class calibration sits under the reliability data table, as its own short argument. */
+.classwise { margin-top: 22px; }
 
 /* Callouts. The left edge carries the kind, the tint only separates them from the page. */
 .diag {
@@ -556,7 +558,7 @@ footer p { margin: 0; max-width: 72ch; }
      screen, and the first action's cost and impact. Everything interactive, repeated or
      exploratory stays in the file. */
   nav, .toc, .tabs, .tab, .controls, .actions, .verdict-actions, button, .button,
-  .copy-summary, .no-print, footer, .slider, #segments, #score, #labels, #drift,
+  .copy-summary, .no-print, footer, .slider, #discrimination, #segments, #score, #labels, #drift,
   #data-quality, .splits, .action-block ~ .action-block, .question-block > .note,
   #cost > .intro, #reliability > .intro { display: none !important; }
   .print-only { display: block !important; font-size: 8.5pt; color: var(--muted);
@@ -852,6 +854,9 @@ REPORT_JS = """\
         var on = buttons[i].getAttribute("data-jeval-tab") === key;
         buttons[i].setAttribute("aria-selected", on ? "true" : "false");
         buttons[i].setAttribute("tabindex", on ? "0" : "-1");
+        // The server-rendered first tab carries `is-active` for a reader without JavaScript; left
+        // in place, it stays highlighted beside the tab that was actually chosen.
+        buttons[i].classList.toggle("is-active", on);
       }
       for (var j = 0; j < panels.length; j += 1) {
         show(panels[j], panels[j].getAttribute("data-jeval-question") === key);

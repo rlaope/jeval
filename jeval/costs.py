@@ -443,7 +443,13 @@ def _bootstrap(
     alpha: float,
     seed: int,
 ) -> tuple[float, float]:
-    """Percentile bootstrap over records, re-choosing the threshold on every resample."""
+    """Percentile bootstrap over records, re-choosing the threshold on every resample.
+
+    With no resamples there is no interval: ``(nan, nan)``, the same answer
+    :func:`bootstrap_threshold_ci` gives, rather than a quantile of an empty array.
+    """
+    if n_boot <= 0:
+        return (_NAN, _NAN)
     thresholds = _thresholds(steps)
     rng = np.random.default_rng(seed)
     estimates = np.empty(n_boot, dtype=np.float64)

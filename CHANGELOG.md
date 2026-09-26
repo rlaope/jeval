@@ -47,6 +47,22 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   with a message asking to re-save it with `--save-baseline`.
 
 ### Added
+- **Discrimination: does confidence rank the model's own errors?** A new report section after
+  Reliability draws one risk-coverage curve per `choice` and `noul` question — coverage is the share
+  of decisions automated, most confident first, and risk is the error rate among them — against the
+  flat no-ranking line and the best possible ranking, with the recommended line marked where a cost
+  action sets one. Key figures give AUROC and AURC with 95% bootstrap intervals and the error rate
+  at full coverage, and one sentence says what the ranking can buy, including when it cannot tell
+  itself from a coin flip. `jeval report` prints AUROC per question. `jeval/calibration.py` gains
+  `auroc`, `risk_coverage`, `aurc` and `compute_discrimination`; score questions stay out.
+- **Classwise calibration for `choice` questions.** The reliability block of a `choice` question adds
+  a per-class table — class, labels, ECE with its interval, and the cost action that fires on the
+  class — and names the worst class in one sentence that says when the intervals do not settle the
+  ranking. Records whose probability map is missing or does not sum to 1 within 0.02 (top-k maps)
+  are set aside and counted; a class with fewer than 30 labels is named and not measured.
+- `jeval.synth` mode `class_inflated`: confidence is inflated only when one named class is
+  predicted, and the other classes are underconfident by exactly enough that top-1 ECE stays near
+  zero. Existing modes generate byte-identical output.
 - `jeval drift --paired`: a head-to-head comparison of two model versions on the requests both
   answered, matched by `(source_key, question)`. Per question it prints the number of pairs,
   accuracy, ECE and Brier on both sides with the current-minus-baseline difference and its 95%
@@ -140,6 +156,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   reader from install to an open report in three lines.
 
 ### Fixed
+- An AUROC interval was drawn from a sample with a handful of wrong answers, where a percentile
+  bootstrap excluded 0.5 up to 42% of the time on data whose confidence ranked nothing, and the
+  reading called that separation. Below 20 wrong (or right) answers there is no interval, and the
+  reading says there are too few to tell. The discrimination chart's perfect-ranking line is dotted,
+  so it is told from the model's line by more than its grey, and coverage levels print three digits.
+- The reliability chart drew the *recommended* threshold in the alert colour and called it "line in
+  use", so the demo showed "line in use 0.85" beside a verdict saying 0.60 is in use. The chart now
+  draws both lines and names each — `in use` dashed in the alert colour, `recommended` solid in the
+  accent — and the block's subtitle states both.
+- The data-quality row "Labeled (gold)" counted score answers, so it read 767 beside a report
+  measured on 696; it now counts the choice and yes/no answers the metrics were measured on.
+- `costs.sweep(n_boot=0)` crashed on the quantile of an empty array; it now reports no interval,
+  as `bootstrap_threshold_ci` already did.
 - **Yes/no (`noul`) calibration was measured on the wrong scale.** The record stores confidence as
   the distance from a coin flip, `|p - 0.5| * 2`, and every calibration measure read that value as
   the probability of being right. A perfectly calibrated synthetic yes/no question reported ECE

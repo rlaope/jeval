@@ -774,8 +774,18 @@ def build_and_write_report(
         result.question: result.threshold for result in thresholds if result.curve
     }
     action_by_question = {result.question: result.action for result in thresholds if result.curve}
+    cost_classes: dict[str, dict[str, list[str]]] = {}
+    for action in actions:
+        cost_classes.setdefault(action.question, {}).setdefault(action.when, []).append(action.name)
+    deployed = impact.current_threshold if impact is not None else None
     blocks = template.build_blocks(
-        dataset, thresholds=threshold_by_question, actions=action_by_question
+        dataset,
+        thresholds=threshold_by_question,
+        actions=action_by_question,
+        cost_classes=cost_classes,
+        in_use={question: deployed for question in threshold_by_question}
+        if deployed is not None
+        else None,
     )
     html = template.render_document(model, blocks, segment_metrics=segment_metrics)
     template.write_report(html, out)
@@ -1323,6 +1333,23 @@ def print_report_summary(dataset: DatasetReport) -> None:
         typer.echo(
             f"{needed} more labels would roughly halve the ECE interval "
             f"(currently +/-{overall.ece_ci_span / 2:.3f})."
+        )
+    for question in dataset.questions:
+        ranking = question.discrimination
+        if ranking is None or ranking.n == 0:
+            continue
+        if ranking.auroc != ranking.auroc:
+            figure = "AUROC undefined (every labeled answer right, or every one wrong)"
+        elif ranking.auroc_ci_low != ranking.auroc_ci_low:
+            figure = f"AUROC {ranking.auroc:.2f} (no interval)"
+        else:
+            figure = (
+                f"AUROC {ranking.auroc:.2f} "
+                f"(95% CI {ranking.auroc_ci_low:.2f}-{ranking.auroc_ci_high:.2f})"
+            )
+        typer.echo(
+            f"discrimination {question.question_key}: {figure} · AURC {ranking.aurc:.3f} · "
+            f"error rate {ranking.full_coverage_risk:.1%} at full coverage · n={ranking.n}"
         )
 
 

@@ -148,6 +148,35 @@ def test_every_image_the_readme_references_exists() -> None:
         assert target.stat().st_size > 20_000, f"{image} looks too small to be a real screenshot"
 
 
+def test_the_discrimination_figures_the_readme_quotes_are_in_the_artifact() -> None:
+    html = _artifact()
+    readme = _readme()
+    section = html.split('<section id="discrimination"', 1)[1].split("</section>", 1)[0]
+    intent = section.split('data-jeval-question="intent"', 1)[1].split("data-jeval-question=", 1)[0]
+    reading = _text(re.search(r'<p class="diag">(.*?)</p>', intent).group(1))
+    assert reading in readme, "the quoted AUROC reading does not match the artifact"
+    for figure in ("17.2%", "0.077", "0.172"):
+        assert figure in _text(intent), figure
+        assert figure in readme, figure
+
+
+def test_the_classwise_figures_the_readme_quotes_are_in_the_artifact() -> None:
+    html = _artifact()
+    readme = _readme()
+    reliability = html.split('<section id="reliability"', 1)[1].split("</section>", 1)[0]
+    intent = reliability.split('data-jeval-question="intent"', 1)[1].split(
+        "data-jeval-question=", 1
+    )[0]
+    rows = [_text(" ".join(row)) for row in _table_rows(intent, '<div class="classwise">')]
+    for name, ece in (("check_balance", "0.057"), ("other", "0.086"), ("refund_request", "0.063")):
+        assert any(row.startswith(name) and ece in row for row in rows), (name, rows)
+        assert f"{ece} (`{name}`" in readme, (name, ece)
+    assert "top-1 ECE 0.091" in _text(intent)
+    assert "top-1 ECE of 0.091" in readme
+    assert "Worst class: other" in _text(intent)
+    assert "(0.051-0.121)" in readme and "95% CI 0.051-0.121" in _text(intent)
+
+
 @pytest.mark.parametrize("token", ["Your threshold is too low.", "0.97"])
 def test_representative_claims_are_present(token: str) -> None:
     assert token in _artifact()

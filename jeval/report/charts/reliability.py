@@ -11,6 +11,7 @@ from collections.abc import Sequence
 
 from jeval.calibration import CalibrationMetrics
 from jeval.report import svg as S
+from jeval.report.charts.cost import _lane_labels
 
 WIDTH = 660.0
 HEIGHT = 480.0
@@ -34,12 +35,18 @@ def render_reliability(
     metrics: CalibrationMetrics,
     *,
     threshold: float | None = None,
+    recommended: float | None = None,
     title: str = "Reliability",
     width: float = WIDTH,
     height: float = HEIGHT,
     subtitle: str = "",
 ) -> str:
-    """Draw the reliability curve with Wilson intervals, density strip and threshold marker."""
+    """Draw the reliability curve with Wilson intervals, density strip and both threshold lines.
+
+    ``threshold`` is the line in use, drawn dashed in the alert colour; ``recommended`` is the line
+    the cost minimum points at, drawn solid in the accent. Each is named in words, so the two can
+    never be read as one another.
+    """
     if metrics.n == 0:
         return _empty(width, title)
 
@@ -107,18 +114,40 @@ def render_reliability(
             )
         )
 
-    if threshold is not None and 0.0 <= threshold <= 1.0:
+    marks: list[tuple[float, str, str, str]] = []
+    in_use = threshold if threshold is not None and 0.0 <= threshold <= 1.0 else None
+    rec = recommended if recommended is not None and 0.0 <= recommended <= 1.0 else None
+    same = in_use is not None and rec is not None and abs(in_use - rec) < 1e-9
+    if in_use is not None and not same:
         parts.append(
-            S.marker_line(
-                x(threshold),
-                y0=plot_top,
-                y1=plot_bottom,
-                label=f"line in use {S.fmt(threshold)}",
-                colour=S.ALERT,
-                label_y=plot_top - 8,
-                anchor="end" if threshold > 0.78 else "start",
+            S.line(
+                x(in_use),
+                plot_top,
+                x(in_use),
+                plot_bottom,
+                stroke=S.ALERT,
+                width=1.5,
+                dash="4 3",
+                cls="alert-stroke",
             )
         )
+        marks.append((x(in_use), f"in use {S.fmt(in_use)}", S.ALERT, "alert-ink"))
+    if rec is not None:
+        parts.append(
+            S.line(
+                x(rec),
+                plot_top,
+                x(rec),
+                plot_bottom,
+                stroke=S.ACCENT,
+                width=1.5,
+                cls="accent-stroke",
+            )
+        )
+        label = f"{'in use = recommended' if same else 'recommended'} {S.fmt(rec)}"
+        marks.append((x(rec), label, S.ACCENT, "accent-ink"))
+    if marks:
+        parts.append(_lane_labels(marks, y=plot_top - 8, left=4.0, right=width - 4.0))
 
     # Budget for the space under the plot, top to bottom: tick labels, the axis title, the density
     # strip and its own label, then the legend. Overlapping these is what makes a chart look
@@ -263,11 +292,14 @@ def render_reliability_section(
     metrics: CalibrationMetrics,
     *,
     threshold: float | None = None,
+    recommended: float | None = None,
     title: str = "Reliability",
     subtitle: str = "",
 ) -> str:
     """Chart beside its key figures, then the accessible data table, as one block."""
-    chart = render_reliability(metrics, threshold=threshold, title=title, subtitle=subtitle)
+    chart = render_reliability(
+        metrics, threshold=threshold, recommended=recommended, title=title, subtitle=subtitle
+    )
     caption = (
         "<figcaption>Points below the dashed line are overconfident: the model claimed more "
         "than it earned. Dot size follows the number of decisions in the bin, the bars are 95% "
