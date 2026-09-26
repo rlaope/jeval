@@ -14,6 +14,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   now (`0.5 + 0.83 / 2`); rerun `jeval threshold` rather than editing the number by hand. Recalibration
   maps for `noul` are fitted on the same scale, so the value an application passes to `apply()` is
   `max(p, 1 - p)`. Stored records are unchanged and need no migration.
+- **Baseline snapshots move to `schema_version` 3.** A version-2 snapshot holds `noul` figures on
+  the old scale and showed a false ECE improvement of about 0.19 on identical data; it is now refused
+  with a message asking to re-save it with `--save-baseline`.
 
 ### Added
 - `jeval threshold --currency`: the terminal prints per-case costs and the segment table in the same
@@ -100,14 +103,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Fixed
 - **Yes/no (`noul`) calibration was measured on the wrong scale.** The record stores confidence as
   the distance from a coin flip, `|p - 0.5| * 2`, and every calibration measure read that value as
-  the probability of being right. A perfectly calibrated yes/no question reported ECE 0.23 and
-  "underconfidence"; the demo's calibrated `is_urgent` question read ECE 0.213, and the pooled ECE
-  0.101 carried the error into the verdict ("Band 0.03-0.44", a range no answer's probability of
-  being right can fall in). Measurement, thresholds, the labeling queue and recalibration now read
-  `DecisionRecord.stated_probability`, which is `0.5 + confidence / 2` for `noul`. The demo's pooled
-  ECE is 0.054, and the verdict names the overconfidence the demo injects on purpose (`intent`,
-  0.86-0.91). Three synthetic tests pin the fix: calibrated yes/no near zero, inflated yes/no
-  flagged overconfident, and a yes/no answer measured on the same scale as a choice answer.
+  the probability of being right. A perfectly calibrated synthetic yes/no question reported ECE
+  about 0.21-0.22 and "underconfidence". In the README's demo (`--seed 11 --scale 0.5`) the
+  calibrated `is_urgent` question read ECE 0.250, and the pooled ECE 0.101 carried the error into
+  the verdict ("Band 0.03-0.44", a range no answer's probability of being right can fall in).
+  Measurement, thresholds, the labeling queue and recalibration now read
+  `DecisionRecord.stated_probability`, which is `0.5 + confidence / 2` for `noul`. The same demo's
+  `is_urgent` reads 0.062, the pooled ECE 0.054, and the verdict names the overconfidence the demo
+  injects on purpose (`intent`, 0.86-0.91). Synthetic tests pin the fix in calibration, the
+  threshold sweep and the labeling queue.
 - The README's pandas comparison quoted ECE figures no current run reproduces; it now quotes the
   demo's `intent` question, 0.091 against 0.107 under equal-width bins.
 - Shares are rounded the way the slider rounds them: a rate of exactly 12.5% read "12%" in the

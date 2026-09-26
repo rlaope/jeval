@@ -359,7 +359,7 @@ between currencies and never guesses one from your locale.
 
 And you probably should, once. Your number will still differ from `jeval report`, because of one
 choice: `pd.cut` makes bins of equal width, while jeval makes bins of equal size. On the demo's
-`intent` question that difference is ECE 0.091 against ECE 0.107 — equal-width binning put 132 of
+`intent` question that is ECE 0.107 with equal-width bins against ECE 0.091 with jeval's — equal-width binning put 132 of
 244 labels in the top bin while the others held 8 to 17, so one bin carried more than half the
 weight. `jeval report --bins-equal-width` shows the equal-width number next to the same data. Which
 number you ship is a decision, not a detail.
@@ -493,7 +493,7 @@ streams and works with whatever tool you already read files with:
   "question_key": "department",
   "question_type": "choice",     // choice | score | noul
   "prediction": "billing",
-  "confidence": 0.91,            // normalized top-1 probability
+  "confidence": 0.91,            // top-1 probability; for noul, |P(yes) - 0.5| * 2
   "probabilities": {"billing": 0.91, "technical": 0.06, "other": 0.03},
   "label": "billing",            // null until something labels it
   "label_source": "human_override",
@@ -503,6 +503,12 @@ streams and works with whatever tool you already read files with:
   "cost_usd": 0.00008
 }
 ```
+
+A yes/no (`noul`) record stores its confidence as the distance from a coin flip, so a 50/50 answer
+sits at zero; jeval measures and thresholds it on `max(p, 1 - p)`, the probability that the answer
+is right. When you ingest yes/no rows, map a `probabilities` field holding the probability of `yes`
+(and `no`) rather than a `confidence` column: a bare `confidence` for a `noul` row is read on the
+distance scale, so 0.9 there means P(yes) = 0.95.
 
 Three fields carry most of the value:
 
