@@ -21,12 +21,13 @@ reproduced with `JEVAL_ROOT=/tmp/jeval-service uv run python examples/service-qu
 In the service's environment, and wherever you will run the command line:
 
 ```sh
-pip install "jeval_cli @ git+https://github.com/rlaope/jeval"
+pip install \
+  https://github.com/rlaope/jeval/releases/download/v0.2.0/jeval_cli-0.2.0-py3-none-any.whl
 ```
 
 That gives the service `from jeval import collect` and the host a `jeval` command. It needs no
-server, no account and no network access at run time. (`collect.resolve` and `jeval status` are on
-`main` ahead of the next tagged release.)
+server, no account and no network access at run time. (`collect.resolve` and `jeval status` need
+v0.2.0 or later.)
 
 ## 2. Record what the model answered
 

@@ -30,12 +30,13 @@ whole script, with synthetic answers and a synthetic human.
 In the service's environment:
 
 ```sh
-pip install "jeval_cli @ git+https://github.com/rlaope/jeval"
+pip install \
+  https://github.com/rlaope/jeval/releases/download/v0.2.0/jeval_cli-0.2.0-py3-none-any.whl
 ```
 
-`collect.resolve` and `jeval status` are on `main` and not yet in a tagged release (the latest is
-v0.1.8), so install from the repository until the next tag; pin a commit with `@<sha>` for a
-reproducible deploy. The distribution is `jeval_cli` and the import is `jeval`.
+`collect.resolve` and `jeval status` arrived in v0.2.0; for what is on `main` since, install from the
+repository instead: `pip install "jeval_cli @ git+https://github.com/rlaope/jeval"`, pinned with
+`@<sha>` for a reproducible deploy. The distribution is `jeval_cli` and the import is `jeval`.
 Never `pip install jeval`: that name on PyPI belongs to an unrelated project. The same install puts
 the `jeval` command on the PATH, so the service host can also run the command line.
 
