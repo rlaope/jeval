@@ -155,11 +155,13 @@ cannot tell apart.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/report-impact-dark.png" />
-  <img src="docs/report-impact.png" alt="Impact table comparing the threshold in use with the recommended one, with the direction of each change, above a live threshold slider" width="820" />
+  <img src="docs/report-impact.png" alt="The cost finding: moving the line from 0.60 to 0.75 saves KRW 3,770,492 a month, above four cards for cost per case, monthly cost, accuracy when automated and share automated, each with the figure it replaces" width="820" />
 </picture>
 
-**Impact.** What moving the line changes and what it costs, as a table you can quote and a slider
-that answers "what if" without writing anything to disk.
+**Impact.** What moving the line buys, said as a sentence and set as four figures, each with the one
+it replaces struck through. Every section works this way: the finding first, drawn at a size you can
+read across a room, and the table it came from folded underneath for anyone who wants to copy a
+number. A slider below answers "what if" without writing anything to disk.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/report-segments-dark.png" />
@@ -371,7 +373,7 @@ And what acting on it would change:
 </table>
 
 None of these numbers were typed in by hand, because the report itself is in the repository. Open
-[`examples/report-example.html`](examples/report-example.html) in a browser (one 340 KB file, no
+[`examples/report-example.html`](examples/report-example.html) in a browser (one 374 KB file, no
 network, no server), or build it again yourself:
 
 ```sh

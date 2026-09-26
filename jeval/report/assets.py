@@ -571,7 +571,10 @@ footer p { margin: 0; max-width: 72ch; }
   .plate { padding: 14px 12px 10px; overflow-x: auto; }
   .claim { font-size: 25px; }
   .claim.small { font-size: 21px; }
-  .fc-now, .p-big { font-size: 32px; }
+  .fc-now, .p-big { font-size: 28px; }
+  .figcards { grid-template-columns: 1fr 1fr; gap: 10px; }
+  .figcard { padding: 14px 14px; }
+  .fc-unit { font-size: 14px; }
   .claim-row { grid-template-columns: 1fr 1fr; }
   .claim-row svg { grid-column: 1 / -1; grid-row: 2; }
   .claim-row .cr-flag { grid-column: 1 / -1; }
