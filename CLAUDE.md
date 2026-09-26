@@ -36,7 +36,7 @@ and a pull request adding them will be closed:
 | `jeval/store.py` | JSONL read/write; the only module that knows about `.jeval/` |
 | `jeval/config.py` | `config.yaml` defaults and the ingest field mapping |
 | `jeval/ingest.py` | raw JSONL/CSV rows to decision records, one record per question |
-| `jeval/calibration.py` | binning, ECE/MCE/Brier, Wilson and bootstrap intervals — pure functions |
+| `jeval/calibration.py` | binning, ECE/MCE/Brier, classwise ECE, AUROC/AURC, Wilson and bootstrap intervals — pure functions |
 | `jeval/evaluate.py` | record set to report-ready structures; gold/silver separation |
 | `jeval/synth.py` | synthetic logs with known miscalibration; shared by tests and `jeval demo` |
 | `jeval/costs.py` | cost matrix, threshold sweep, the bootstrap interval on the threshold, impact table |
@@ -51,7 +51,7 @@ and a pull request adding them will be closed:
 | `jeval/recalibrate.py` | temperature and isotonic fits, cross-validated, exported as YAML; declines when the gain is noise |
 | `jeval/report/model.py` | the frozen data contract every chart and the template render from |
 | `jeval/report/svg.py` | pure SVG primitives: scales, ticks, axes, legends, error bars |
-| `jeval/report/charts/` | one module per chart: reliability, cost, segments, drift |
+| `jeval/report/charts/` | one module per chart: reliability, discrimination, cost, segments, drift |
 | `jeval/report/verdict.py` | verdict branching and the markdown summary |
 | `jeval/report/assets.py` | inline CSS and JavaScript |
 | `jeval/report/template.py` | section assembly in the fixed reading order |

@@ -287,7 +287,7 @@ only the label fields.
 ## Read the report
 
 It reads top to bottom as one case, always in the same order: the verdict, the reliability chart,
-the cost curve with both lines named, what moving the line changes, the segments that do worst, drift
+whether confidence ranks the errors at all, the cost curve with both lines named, what moving the line changes, the segments that do worst, drift
 before and after, and the state of the data. Every chart is inline SVG drawn by jeval — no chart
 library, no web font, no request to anywhere — and the file opens with the network switched off, in
 light or dark mode.
@@ -337,13 +337,41 @@ And what acting on it would change:
 </table>
 
 None of these numbers were typed in by hand, because the report itself is in the repository. Open
-[`examples/report-example.html`](examples/report-example.html) in a browser (one 292 KB file, no
+[`examples/report-example.html`](examples/report-example.html) in a browser (one 340 KB file, no
 network, no server), or build it again yourself:
 
 ```sh
 uv run jeval demo --out-dir examples/report-example --seed 11 --scale 0.5
 cp examples/report-example/report.html examples/report-example.html
 ```
+
+### Honest is not the same as useful
+
+ECE says whether confidence is honest on average. It cannot say whether a confident answer is more
+likely to be right than an unconfident one, and that is the only thing a threshold can use: a model
+that says 0.8 on every answer and is right 80% of the time has an ECE of zero and ranks nothing, so
+raising its line escalates a random sample. The **Discrimination** section asks that second question
+with one risk-coverage curve per question: automate the most confident answers first and read the
+error rate among them, against a flat line (confidence ranks nothing) and the best any ranking could
+do. `AUROC` is the chance that a right answer carries more confidence than a wrong one — 0.50 is a
+coin flip — and `AURC` is the area under the curve. The example report reads, for `intent`:
+
+> AUROC 0.77 (95% CI 0.71-0.84, n=244): a right answer outranks a wrong one 77% of the time. Moderate separation; a higher threshold buys accuracy at a cost in volume.
+
+Its error rate with every answer automated is 17.2%, and AURC is 0.077 where no ranking would leave
+0.172. `jeval report` prints the same AUROC for each question in the terminal.
+
+Top-1 calibration has a blind spot of its own: it averages over whichever class was predicted, so a
+class that is overconfident only when it is the answer — the class a cost action fires on — can hide
+behind classes that err the other way. For a `choice` question the reliability block adds a table that
+measures every class on its own probability, `P(class)` against whether the label was that class.
+In the example, `intent` has a top-1 ECE of 0.091 and per-class ECEs of 0.057 (`check_balance`),
+0.086 (`other`) and 0.063 (`refund_request`, the class `auto_refund` fires on). The report names
+`other` as the worst class and says in the same sentence that its interval (0.051-0.121) overlaps
+another class's, so 244 labels do not settle the ranking. The demo generator splits the probability
+left over after the top class at random, so these per-class figures describe that synthetic map, not
+a real model. A map that is missing or does not sum to 1 within 0.02 — a top-k map — is set aside
+and counted rather than read as zeros, and a class with fewer than 30 labels is named and not measured.
 
 ### Money is written the way its currency is
 
@@ -467,7 +495,7 @@ direction, and no command here is a stub that only looks implemented.
 | --- | --- | --- |
 | `jeval init` | create `.jeval/` config and the ingest map | implemented |
 | `jeval ingest` | JSONL/CSV logs to decision records; `--preset jev-native` reads a decision API's own response log; `--labels` brings in human answers | implemented |
-| `jeval report` | the report itself: verdict, reliability, cost, impact, segments, score questions, labels and correction, drift, data quality — one HTML file, or `--format md` for a summary you can paste | implemented |
+| `jeval report` | the report itself: verdict, reliability, discrimination, cost, impact, segments, score questions, labels and correction, drift, data quality — one HTML file, or `--format md` for a summary you can paste | implemented |
 | `jeval threshold` | cost matrix to a threshold per action, with an uncertainty range, written to `thresholds.yaml`; `--by <segment>` answers whether splitting pays | implemented |
 | `jeval drift` | compare model versions or periods, save a baseline, fail a build with `--fail-on`, and see where the threshold moved per slice | implemented |
 | `jeval label` | a labeling queue with a CSV sheet to fill in | implemented |

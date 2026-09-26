@@ -19,6 +19,22 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   with a message asking to re-save it with `--save-baseline`.
 
 ### Added
+- **Discrimination: does confidence rank the model's own errors?** A new report section after
+  Reliability draws one risk-coverage curve per `choice` and `noul` question — coverage is the share
+  of decisions automated, most confident first, and risk is the error rate among them — against the
+  flat no-ranking line and the best possible ranking, with the recommended line marked where a cost
+  action sets one. Key figures give AUROC and AURC with 95% bootstrap intervals and the error rate
+  at full coverage, and one sentence says what the ranking can buy, including when it cannot tell
+  itself from a coin flip. `jeval report` prints AUROC per question. `jeval/calibration.py` gains
+  `auroc`, `risk_coverage`, `aurc` and `compute_discrimination`; score questions stay out.
+- **Classwise calibration for `choice` questions.** The reliability block of a `choice` question adds
+  a per-class table — class, labels, ECE with its interval, and the cost action that fires on the
+  class — and names the worst class in one sentence that says when the intervals do not settle the
+  ranking. Records whose probability map is missing or does not sum to 1 within 0.02 (top-k maps)
+  are set aside and counted; a class with fewer than 30 labels is named and not measured.
+- `jeval.synth` mode `class_inflated`: confidence is inflated only when one named class is
+  predicted, and the other classes are underconfident by exactly enough that top-1 ECE stays near
+  zero. Existing modes generate byte-identical output.
 - `jeval threshold --currency`: the terminal prints per-case costs and the segment table in the same
   currency format as the report (`KRW 1,738 per case`), where it used to print a bare `1,738` or
   `1,737.70`.
