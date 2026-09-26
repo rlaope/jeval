@@ -378,6 +378,9 @@ model changed: jev-1.13.0 -> jev-1.14.0 (Sep 16)
   department       0.028      0.141  +0.113   FAIL
 recommended threshold (department): 0.96 -> 0.98
   at the current 0.96: auto-rate 2% -> 5%
+failed ece-increase: department: ECE 0.028 -> 0.141 (+0.113), limit 0.050
+note: ECE 95% bootstrap intervals per question: department 0.025-0.056 -> 0.110-0.170. cost matrix applied: cost-derived thresholds attached to 2 of 2 slice(s).
+exit 1
 $ echo $?
 1
 ```
@@ -390,8 +393,17 @@ uv run python examples/make-drift-log.py /tmp/jeval-drift
 uv run jeval drift --root /tmp/jeval-drift --fail-on ece-increase=0.05
 ```
 
+Calibration is not the only thing a new version can move. `--fail-on threshold-shift=0.05` fails the
+build when the cost-optimal line moves by more than 0.05 in either direction — on this log the line
+moved 0.96 to 0.98, so a limit of 0.01 fails with
+`failed threshold-shift: department: recommended threshold 0.96 -> 0.98 (+0.02), limit 0.010`. The
+line a reviewer approved is the one the application runs, so a version that moves it needs a new
+approval even when its calibration looks fine. The four checks are `ece-increase`, `ece-above`,
+`auto-rate-drop` and `threshold-shift`.
+
 The threshold line appears only when a cost matrix is present. Without costs the output says
-`recommended threshold: not available (no cost matrix was applied)` rather than inventing a number.
+`recommended threshold: not available (no cost matrix was applied)` rather than inventing a number,
+and `threshold-shift` is refused with exit 1 rather than passed.
 `--save-baseline .jeval/baseline.json` compares against the last measurement you accepted, which
 matters when the model string never changes but its behaviour does; a snapshot holds measurements,
 not records, so it is safe to commit. [`examples/ci/drift.yml`](examples/ci/drift.yml) is a

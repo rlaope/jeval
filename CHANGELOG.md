@@ -7,6 +7,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — drift gate
+- `jeval drift --fail-on threshold-shift=0.05` fails the build when the cost-optimal threshold moves
+  by more than the limit in either direction. The line a reviewer approved is the one the
+  application runs, so a version that moves it needs a new approval even when its calibration looks
+  fine. Without a cost matrix the check is refused with exit 1 rather than passed.
+- The CI block names every failed check under the table (`failed threshold-shift: department:
+  recommended threshold 0.96 -> 0.98 (+0.02), limit 0.010`); the table's `FAIL` only said that a
+  question failed something.
+
 ### Changed — compatibility
 - **`noul` thresholds are now on the probability-of-being-right scale.** A yes/no threshold is
   compared with `max(p, 1 - p)`, like every `choice` threshold, instead of with the stored
