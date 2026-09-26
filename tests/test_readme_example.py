@@ -199,3 +199,31 @@ def test_the_drift_log_the_readme_asks_a_reader_to_build_is_buildable() -> None:
         "the drift example needs two model versions to compare"
     )
     assert all(record.is_gold for record in records), "an unlabeled record cannot be compared"
+
+
+def test_the_readme_paired_block_is_a_captured_run(tmp_path: Path) -> None:
+    """The `--paired` block in the README is reproduced literally from the script it names."""
+    import importlib.util
+
+    from typer.testing import CliRunner
+
+    from jeval.cli import app
+    from jeval.store import records_path, write_records
+
+    quoted = re.search(
+        r"```\n\$ jeval drift --root /tmp/jeval-paired (?P<args>[^\n]*)\n(?P<out>.*?)\n```",
+        _readme(),
+        re.DOTALL,
+    )
+    assert quoted is not None, "the README no longer quotes a `jeval drift --paired` run"
+    script = REPO / "examples" / "make-paired-log.py"
+    spec = importlib.util.spec_from_file_location("make_paired_log", script)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    write_records(module.build(), records_path(tmp_path))
+
+    args = ["drift", "--root", str(tmp_path), *quoted.group("args").split()]
+    result = CliRunner().invoke(app, args)
+    assert result.exit_code == 0, result.output
+    assert result.output.rstrip("\n") == quoted.group("out")

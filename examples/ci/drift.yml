@@ -48,10 +48,13 @@ jobs:
           uvx jeval drift \
             --fail-on ece-increase=0.05 \
             --fail-on auto-rate-drop=0.15 \
+            ${COSTS:+--fail-on threshold-shift=0.05} \
             ${BASELINE:+--baseline "$BASELINE"} \
             2>&1 | tee drift-report.txt
         env:
           BASELINE: ${{ hashFiles('.jeval/baseline.json') != '' && '.jeval/baseline.json' || '' }}
+          # threshold-shift needs a cost matrix; without costs.yaml it is left out, not failed.
+          COSTS: ${{ hashFiles('costs.yaml') != '' && 'costs.yaml' || '' }}
 
       # The summary is what a reviewer reads without opening anything.
       - name: Render the summary for the comment

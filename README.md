@@ -99,6 +99,34 @@ Python 3.10 or newer. The runtime dependencies are `numpy`, `pydantic`, `pyyaml`
 
 ---
 
+## Two ways to use it, one directory between them
+
+| | In your service (the library) | On the command line |
+| --- | --- | --- |
+| **What you do** | `collect.track(client)` where the client is built; `collect.resolve(...)` where a human settles a case | `jeval status`, `jeval report`, `jeval threshold`, `jeval drift` |
+| **What happens** | every answer and every human answer is appended to `$JEVAL_ROOT/.jeval/` | the same files are read, joined and measured |
+| **What it never does** | raise, block, call a model, or send anything off the machine | write configuration it was not asked to, or need a network |
+
+```python
+from jeval import collect
+
+client = collect.track(TicketClassifier(), source_key=lambda **kw: kw["ticket_id"])
+...
+collect.resolve(source_key=ticket.id, question="department", answer=ticket.final_department)
+```
+
+```sh
+JEVAL_ROOT=/var/lib/jeval    # in the service
+jeval status --root /var/lib/jeval
+jeval report --root /var/lib/jeval
+```
+
+Either half works alone: the library needs no command line to record, and the command line reads a
+log you already have with `jeval ingest`. [`docs/library.md`](docs/library.md) is the library's
+reference — every argument, every environment variable, the counters to check, and the limits.
+
+---
+
 ## See it
 
 Everything below is cropped from [`examples/report-example.html`](examples/report-example.html), a
@@ -239,7 +267,13 @@ client = collect.track(
     source_key=lambda **kw: kw["trace_id"],  # what a human answer is joined back on
     segment=lambda **kw: {"lang": kw.get("lang")},  # request fields to compare later
 )
+
+# where the case closes
+collect.resolve(source_key=trace_id, question="department", answer=final_department)
 ```
+
+Every command joins the answers `resolve` recorded onto the decisions they answer, on read, with no
+ingest step; `jeval status` shows what has accumulated and what is still missing.
 
 Then check that `collect.stats()["calls"]` is not zero after the first request. A wrapper that found
 no method to patch is counted in `no_method_found`, because a silent no-op looks exactly like a
@@ -249,9 +283,9 @@ collection off.
 
 The wrapper only watches a call your code already makes. It never calls a model, never picks one,
 never retries, never blocks and never raises — a failed write is counted and dropped. It imports no
-vendor SDK, and any product-specific field name lives in a preset rather than in the core. The full
-walkthrough, with the output of each step, is in
-[`docs/instrumenting-a-service.md`](docs/instrumenting-a-service.md).
+vendor SDK, and any product-specific field name lives in a preset rather than in the core. The library
+reference is [`docs/library.md`](docs/library.md), and the full walkthrough, with the output of each
+step, is in [`docs/instrumenting-a-service.md`](docs/instrumenting-a-service.md).
 
 ### Where labels come from
 
@@ -406,6 +440,9 @@ model changed: jev-1.13.0 -> jev-1.14.0 (Sep 16)
   department       0.028      0.141  +0.113   FAIL
 recommended threshold (department): 0.96 -> 0.98
   at the current 0.96: auto-rate 2% -> 5%
+failed ece-increase: department: ECE 0.028 -> 0.141 (+0.113), limit 0.050
+note: ECE 95% bootstrap intervals per question: department 0.025-0.056 -> 0.110-0.170. cost matrix applied: cost-derived thresholds attached to 2 of 2 slice(s).
+exit 1
 $ echo $?
 1
 ```
@@ -418,13 +455,58 @@ uv run python examples/make-drift-log.py /tmp/jeval-drift
 uv run jeval drift --root /tmp/jeval-drift --fail-on ece-increase=0.05
 ```
 
+Calibration is not the only thing a new version can move. `--fail-on threshold-shift=0.05` fails the
+build when the cost-optimal line moves by more than 0.05 in either direction — on this log the line
+moved 0.96 to 0.98, so a limit of 0.01 fails with
+`failed threshold-shift: department: recommended threshold 0.96 -> 0.98 (+0.02), limit 0.010`. The
+line a reviewer approved is the one the application runs, so a version that moves it needs a new
+approval even when its calibration looks fine. The four checks are `ece-increase`, `ece-above`,
+`auto-rate-drop` and `threshold-shift`.
+
 The threshold line appears only when a cost matrix is present. Without costs the output says
-`recommended threshold: not available (no cost matrix was applied)` rather than inventing a number.
+`recommended threshold: not available (no cost matrix was applied)` rather than inventing a number,
+and `threshold-shift` is refused with exit 1 rather than passed.
 `--save-baseline .jeval/baseline.json` compares against the last measurement you accepted, which
 matters when the model string never changes but its behaviour does; a snapshot holds measurements,
 not records, so it is safe to commit. [`examples/ci/drift.yml`](examples/ci/drift.yml) is a
 copy-paste workflow: it runs the check, prints the markdown summary and posts it on the pull request,
 because jeval never holds a token.
+
+### Head to head on the same requests
+
+When shadow traffic sends the same requests to both versions, log both with the same `source_key`
+and add `--paired`. jeval then compares the versions request by request, which takes request
+difficulty out of the difference, and can say whether the newer one is really less accurate:
+
+```
+$ jeval drift --root /tmp/jeval-paired --fail-on ece-increase=0.05 --paired
+model changed: jev-1.13.0 -> jev-1.14.0 (Sep 01)
+  question    ECE before  ECE after   delta
+  department       0.036      0.035  -0.000   ok
+recommended threshold: not available (no cost matrix was applied to this comparison)
+paired: jev-1.13.0 -> jev-1.14.0 (the same requests, matched by source_key and question)
+  department: 711 pairs
+    accuracy  0.796 -> 0.745  -0.051  95% CI -0.093 to -0.010  McNemar p=0.023 (right on baseline only: 137, on current only: 101)
+    ECE       0.034 -> 0.036  +0.002  95% CI -0.024 to +0.034
+    Brier     0.148 -> 0.179  +0.031  95% CI +0.012 to +0.052
+    verdict: current is less accurate beyond noise (McNemar p=0.023); no calibration difference the sample can resolve
+  not paired: 0 without source_key, 0 at a key logged twice by one version, 0 with no partner, 189 pair(s) without a gold label on both sides, 0 with conflicting labels, 0 score
+note: ECE 95% bootstrap intervals per question: department 0.026-0.068 -> 0.028-0.071.
+exit 0
+```
+
+The ECE gate passes, because the newer version is exactly as honest about its confidence as the
+older one. The paired check shows that it is right less often. The log is synthetic and you can
+rebuild it: `uv run python examples/make-paired-log.py /tmp/jeval-paired`.
+
+Every difference is current minus baseline, with a 95% bootstrap interval over pairs. Accuracy is
+tested with the exact McNemar test on the requests where only one version was right. The pairing
+rules are strict, and every record left out is counted on the `not paired` line: records without a
+`source_key`, keys logged twice by the same version (jeval refuses to pick one), requests only one
+version answered, pairs without a gold label on both sides, pairs whose two labels disagree, and
+`score` records. Below 30 pairs, a question is refused with no numbers. `--paired` reports but never
+changes the exit code; only `--fail-on` decides that. It cannot be combined with `--by-period` or
+`--baseline`, because a snapshot holds measurements, not records.
 
 ---
 
@@ -497,11 +579,12 @@ direction, and no command here is a stub that only looks implemented.
 | `jeval ingest` | JSONL/CSV logs to decision records; `--preset jev-native` reads a decision API's own response log; `--labels` brings in human answers | implemented |
 | `jeval report` | the report itself: verdict, reliability, discrimination, cost, impact, segments, score questions, labels and correction, drift, data quality — one HTML file, or `--format md` for a summary you can paste | implemented |
 | `jeval threshold` | cost matrix to a threshold per action, with an uncertainty range, written to `thresholds.yaml`; `--by <segment>` answers whether splitting pays | implemented |
-| `jeval drift` | compare model versions or periods, save a baseline, fail a build with `--fail-on`, and see where the threshold moved per slice | implemented |
+| `jeval drift` | compare model versions or periods, save a baseline, fail a build with `--fail-on`, see where the threshold moved per slice, and compare two versions head to head on shared requests with `--paired` | implemented |
 | `jeval label` | a labeling queue with a CSV sheet to fill in | implemented |
 | `jeval plan` | how many more labels each question needs for a tighter range | implemented |
 | `jeval calibrate` | a temperature or isotonic correction map, measured on held-out data, exported as YAML | implemented |
 | `jeval demo` | a synthetic log with a known miscalibration, through the same report path | implemented |
+| `jeval status` | what the library (or `ingest`) has collected, per model and question, and how many more gold labels the verdict needs | implemented |
 
 `jeval report` writes one self-contained HTML file plus a short terminal summary. The report never
 writes configuration, never fetches anything at run time and never posts to a pull request.
@@ -555,6 +638,7 @@ Three fields carry most of the value:
 | --- | --- |
 | [`llms.txt`](llms.txt) | the short entry point for an agent |
 | [`docs/agent-setup.md`](docs/agent-setup.md) | the setup playbook, including the no-labels path |
+| [`docs/library.md`](docs/library.md) | the library in your service: `collect.track`, `collect.resolve`, the environment variables, the counters, the limits |
 | [`docs/instrumenting-a-service.md`](docs/instrumenting-a-service.md) | set it up on a running service, step by step, with the output of every step |
 | [`docs/skills.md`](docs/skills.md) | the agent skill pack, and where each host reads it |
 | [`examples/report-example.html`](examples/report-example.html) | a real generated report |

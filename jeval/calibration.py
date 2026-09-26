@@ -7,6 +7,7 @@ change to this module has to keep those tests green.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from statistics import NormalDist
@@ -255,6 +256,129 @@ def bootstrap_ece_ci(
     # interval is widened to contain its own point estimate, which is the least a reported
     # interval owes its reader.
     return (min(lower, observed), max(upper, observed))
+
+
+def mcnemar_exact(b: int, c: int) -> float:
+    """Two-sided exact McNemar p-value on the discordant pairs of a paired comparison.
+
+    ``b`` counts pairs the baseline got right and the current version got wrong, ``c`` the
+    reverse. Concordant pairs carry no information about which version is more accurate, so under
+    the null hypothesis each discordant pair is a fair coin: the p-value is twice the smaller
+    binomial tail of ``Binomial(b + c, 0.5)``, capped at 1. With no discordant pair at all there
+    is nothing to test and the p-value is 1.
+    """
+    if b < 0 or c < 0:
+        raise ValueError("discordant counts must be >= 0")
+    n = b + c
+    if n == 0:
+        return 1.0
+    tail = sum(math.comb(n, k) for k in range(min(b, c) + 1))
+    return float(min(1.0, 2 * tail / 2**n))
+
+
+@dataclass(frozen=True)
+class PairedDifference:
+    """One metric on both sides of a paired comparison, and ``current - baseline``."""
+
+    baseline: float
+    current: float
+    difference: float
+    ci_low: float
+    ci_high: float
+
+
+@dataclass(frozen=True)
+class PairedComparison:
+    """A head-to-head comparison of two versions on the same ``n`` requests."""
+
+    n: int
+    accuracy: PairedDifference
+    ece: PairedDifference
+    brier: PairedDifference
+    discordant_baseline_only: int
+    discordant_current_only: int
+    mcnemar_p: float
+
+
+def _percentile_interval(
+    estimates: NDArray[np.float64], alpha: float, observed: float
+) -> tuple[float, float]:
+    if float(np.ptp(estimates)) <= 0.0:
+        # Every resample agreed exactly, as it does for two identical logs: that says nothing about
+        # sampling error, and [x, x] would assert a precision the sample does not have.
+        return (float("nan"), float("nan"))
+    lower = float(np.quantile(estimates, alpha / 2.0))
+    upper = float(np.quantile(estimates, 1.0 - alpha / 2.0))
+    return (min(lower, observed), max(upper, observed))
+
+
+def paired_bootstrap(
+    baseline_confidences: NDArray[np.float64],
+    baseline_correct: NDArray[np.bool_],
+    current_confidences: NDArray[np.float64],
+    current_correct: NDArray[np.bool_],
+    edges: Sequence[float],
+    *,
+    n_boot: int = DEFAULT_BOOTSTRAP_SAMPLES,
+    alpha: float = DEFAULT_ALPHA,
+    seed: int = 0,
+) -> PairedComparison:
+    """Bootstrap ``current - baseline`` for accuracy, ECE and Brier over pairs, plus McNemar.
+
+    Index ``i`` of the four arrays is one request answered by both versions. A resample draws pair
+    indices, so both sides of a pair always travel together and the difference is measured on the
+    same requests — that is what removes request difficulty from the comparison. ECE on each side is
+    computed over the same fixed ``edges`` in every resample, for the reason ``bootstrap_ece_ci``
+    holds its bins fixed. Intervals are percentile intervals at ``alpha``, widened to contain their
+    own point estimate as ``bootstrap_ece_ci`` does; an interval with no spread at all is NaN.
+    """
+    n = int(baseline_confidences.size)
+    if not (baseline_correct.size == current_confidences.size == current_correct.size == n):
+        raise ValueError("paired arrays must all have the same length")
+    if n == 0:
+        raise ValueError("a paired comparison needs at least one pair")
+
+    def measure(idx: NDArray[np.intp]) -> tuple[float, float, float, float, float, float]:
+        bc, bh = baseline_confidences[idx], baseline_correct[idx]
+        cc, ch = current_confidences[idx], current_correct[idx]
+        return (
+            float(bh.mean()),
+            float(ch.mean()),
+            expected_calibration_error(bins_from_edges(bc, bh, edges, alpha), n),
+            expected_calibration_error(bins_from_edges(cc, ch, edges, alpha), n),
+            brier_score(bc, bh),
+            brier_score(cc, ch),
+        )
+
+    observed = measure(np.arange(n))
+    draws = np.empty((max(0, n_boot), 3), dtype=float)
+    rng = np.random.default_rng(seed)
+    for draw in range(max(0, n_boot)):
+        values = measure(rng.integers(0, n, size=n))
+        draws[draw] = (values[1] - values[0], values[3] - values[2], values[5] - values[4])
+
+    differences: list[PairedDifference] = []
+    for column in range(3):
+        before, after = observed[2 * column], observed[2 * column + 1]
+        difference = after - before
+        interval = (
+            _percentile_interval(draws[:, column], alpha, difference)
+            if n_boot > 0
+            else (float("nan"), float("nan"))
+        )
+        differences.append(PairedDifference(before, after, difference, interval[0], interval[1]))
+
+    b = int(np.sum(baseline_correct & ~current_correct))
+    c = int(np.sum(~baseline_correct & current_correct))
+    return PairedComparison(
+        n=n,
+        accuracy=differences[0],
+        ece=differences[1],
+        brier=differences[2],
+        discordant_baseline_only=b,
+        discordant_current_only=c,
+        mcnemar_p=mcnemar_exact(b, c),
+    )
 
 
 def compute_calibration(

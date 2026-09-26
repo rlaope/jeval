@@ -170,3 +170,13 @@ def test_report_accepts_the_question_filter(tmp_path: Path) -> None:
     missing = runner.invoke(app, ["report", "--root", str(project), "--question", "nope"])
     assert missing.exit_code == 1
     assert "no records for question" in missing.stdout
+
+
+def test_drift_refuses_a_threshold_shift_check_without_a_cost_matrix(tmp_path: Path) -> None:
+    """No costs.yaml means no line on either side; the gate must fail, not go green."""
+    project = _two_model_project(tmp_path)
+    result = runner.invoke(
+        app, ["drift", "--root", str(project), "--fail-on", "threshold-shift=0.05"]
+    )
+    assert result.exit_code == 1, result.stdout
+    assert "threshold-shift needs a cost matrix" in result.stdout

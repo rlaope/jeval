@@ -5,11 +5,13 @@ from __future__ import annotations
 import json
 from collections.abc import Iterable, Iterator
 from pathlib import Path
+from typing import Any
 
 from jeval.schema import DecisionRecord
 
 DATA_DIR_NAME = ".jeval"
 RECORDS_FILE_NAME = "records.jsonl"
+LABELS_FILE_NAME = "labels.jsonl"
 CONFIG_FILE_NAME = "config.yaml"
 
 
@@ -20,6 +22,11 @@ def data_dir(root: Path | str = ".") -> Path:
 
 def records_path(root: Path | str = ".") -> Path:
     return data_dir(root) / RECORDS_FILE_NAME
+
+
+def labels_path(root: Path | str = ".") -> Path:
+    """Where ``collect.resolve`` writes human answers, beside the records they answer."""
+    return data_dir(root) / LABELS_FILE_NAME
 
 
 def config_path(root: Path | str = ".") -> Path:
@@ -73,3 +80,28 @@ def load_records(root: Path | str = ".") -> list[DecisionRecord]:
             f"no decision records found at {path}. Run `jeval ingest <file>` first."
         )
     return read_records(path)
+
+
+def read_label_events(path: Path | str) -> list[dict[str, Any]]:
+    """Read the human answers ``collect.resolve`` appended, or an empty list when there are none.
+
+    An event is ``{"source_key", "question_key", "label", "label_source", "ts"}``. A line that is
+    not valid JSON raises, like a broken records file does: an answer that cannot be read is a
+    measurement that silently goes missing.
+    """
+    source = Path(path)
+    if not source.exists():
+        return []
+    events: list[dict[str, Any]] = []
+    with source.open(encoding="utf-8") as handle:
+        for line_number, line in enumerate(handle, start=1):
+            stripped = line.strip()
+            if not stripped:
+                continue
+            try:
+                payload = json.loads(stripped)
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"{source}:{line_number}: invalid JSON ({exc.msg})") from exc
+            if isinstance(payload, dict):
+                events.append(payload)
+    return events

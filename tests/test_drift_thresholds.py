@@ -434,3 +434,37 @@ def test_underconfidence_moves_the_line_and_leaves_the_share_alone() -> None:
     assert after.ece > before.ece
     assert after.threshold < before.threshold
     assert abs(before.auto_rate - after.auto_rate) < 0.05
+
+
+# --- threshold-shift: the line a reviewer approved has moved -------------------------------------
+
+
+def test_threshold_shift_fails_when_the_recommended_line_moves_past_its_limit() -> None:
+    records = _grown_taxonomy_log()
+    view = attach_thresholds(compare(records), records, [AUTO_REFUND_CHEAP])
+    before = _slice(view, "intent", OLDER).threshold
+    after = _slice(view, "intent", NEWER).threshold
+    assert before is not None and after is not None
+    shift = abs(after - before)
+    assert shift > 0.05, "the fixture moves the line; the check needs something to catch"
+
+    failures = run_checks(view, parse_fail_on(["threshold-shift=0.05"]))
+    assert [f.check for f in failures] == ["threshold-shift"]
+    assert failures[0].value == pytest.approx(shift)
+    assert failures[0].detail.startswith("intent: recommended threshold ")
+    assert f"{before:.2f} -> {after:.2f}" in failures[0].detail
+
+    assert run_checks(view, parse_fail_on([f"threshold-shift={shift + 0.01:.3f}"])) == ()
+
+
+def test_threshold_shift_never_passes_a_line_nobody_computed() -> None:
+    """Without a cost matrix there is no line to compare; the check is refused, not passed."""
+    records = _grown_taxonomy_log()
+    with pytest.raises(ValueError, match="threshold-shift needs a cost matrix"):
+        run_checks(compare(records), parse_fail_on(["threshold-shift=0.05"]))
+
+
+def test_threshold_shift_is_a_documented_check_key() -> None:
+    from jeval.drift import CHECK_KEYS
+
+    assert "threshold-shift" in CHECK_KEYS

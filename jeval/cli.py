@@ -6,6 +6,7 @@ import csv
 import json
 from collections.abc import Sequence
 from dataclasses import replace
+from datetime import timezone
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -17,7 +18,7 @@ from jeval.config import load_config, load_ingest_map, write_default_config
 from jeval.costs import CostAction
 from jeval.currency import format_amount, format_delta, normalise_code
 from jeval.evaluate import DatasetReport, evaluate
-from jeval.ingest import ingest_files
+from jeval.ingest import apply_label_events, ingest_files
 from jeval.report import template
 from jeval.report.charts import segments as segment_charts
 from jeval.report.model import (
@@ -35,7 +36,14 @@ from jeval.report.model import (
 )
 from jeval.report.verdict import build_verdict
 from jeval.schema import DecisionRecord
-from jeval.store import DATA_DIR_NAME, load_records, records_path, write_records
+from jeval.store import (
+    DATA_DIR_NAME,
+    labels_path,
+    load_records,
+    read_label_events,
+    records_path,
+    write_records,
+)
 from jeval.synth import demo_dataset
 
 app = typer.Typer(
@@ -308,17 +316,27 @@ report reads as 'confidence is trustworthy' whatever the data says. Two is the l
 show a direction, so two is the floor."""
 
 
-def _load_records(root: Path) -> list[DecisionRecord]:
+def _load_records(root: Path, *, join: bool = True) -> list[DecisionRecord]:
     """Read a project's records, or exit with one readable line.
 
     Six commands read records directly, so a missing file surfaced as whatever each of them happened
-    to do — one of them as an uncaught FileNotFoundError.
+    to do — one of them as an uncaught FileNotFoundError. Every one of them also sees the answers
+    ``collect.resolve`` recorded in ``labels.jsonl``, joined in memory.
     """
     try:
-        return load_records(root)
-    except FileNotFoundError as exc:
+        records = load_records(root)
+        events = read_label_events(labels_path(root)) if join else []
+    except (OSError, ValueError) as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from None
+    # Answers recorded at run time by `collect.resolve` are joined here, on every read, so the
+    # library and the command line are one loop with no ingest step between them. A command that
+    # writes records back asks for them unjoined: persisting a joined answer would freeze it, and a
+    # later correction to the same case would be kept out as "an existing label".
+    if events:
+        report = apply_label_events(records, events)
+        typer.echo(report.summary(), err=True)
+    return records
 
 
 def _report_ingest(result: Any) -> None:
@@ -1068,16 +1086,37 @@ def drift(
     ] = None,
     fail_on: Annotated[
         list[str] | None,
-        typer.Option("--fail-on", help="Check that fails the run, e.g. ece-increase=0.05."),
+        typer.Option(
+            "--fail-on",
+            help=(
+                "Check that fails the run: ece-increase, auto-rate-drop, ece-above or "
+                "threshold-shift, e.g. threshold-shift=0.05."
+            ),
+        ),
     ] = None,
     by_period: Annotated[
         str | None, typer.Option("--by-period", help="Split by W (week) or M (month).")
     ] = None,
+    paired: Annotated[
+        bool,
+        typer.Option(
+            "--paired",
+            help=(
+                "Also compare the two versions head to head on the requests both answered, "
+                "matched by source_key and question (shadow traffic)."
+            ),
+        ),
+    ] = False,
 ) -> None:
     """Compare model versions or periods, and fail the build when calibration degrades."""
     from jeval import baseline as baseline_engine
     from jeval import drift as drift_engine
 
+    if paired and (by_period or baseline is not None):
+        raise typer.BadParameter(
+            "--paired compares two model versions on the same requests; it cannot be combined "
+            "with --by-period, or with --baseline (a snapshot holds measurements, not records)"
+        )
     records = _load_records(root)
     models = sorted({record.model for record in records})
     if save_baseline is not None:
@@ -1103,11 +1142,102 @@ def drift(
         view = drift_engine.attach_thresholds(view, records, actions)
         if costs_note:
             typer.echo(costs_note)
-    checks = drift_engine.parse_fail_on(fail_on or [])
-    failures = drift_engine.run_checks(view, checks) if checks else ()
-    typer.echo(drift_engine.format_ci_block(view, failures), nl=False)
+    try:
+        checks = drift_engine.parse_fail_on(fail_on or [])
+        failures = drift_engine.run_checks(view, checks) if checks else ()
+    except ValueError as error:
+        # A check that cannot be evaluated is a refusal, not a pass: CI must not go green on a
+        # number nobody computed.
+        typer.echo(str(error))
+        raise typer.Exit(code=1) from error
+    head_to_head = (
+        drift_engine.compare_paired(
+            records, baseline=view.baseline_label, current=view.current_label
+        )
+        if paired
+        else None
+    )
+    typer.echo(drift_engine.format_ci_block(view, failures, paired=head_to_head), nl=False)
     if failures:
         raise typer.Exit(code=1)
+
+
+@app.command()
+def status(
+    root: Annotated[Path, typer.Option("--root", help="Project root holding .jeval/.")] = Path("."),
+) -> None:
+    """What has been collected so far, and what is still missing before a report means anything."""
+    from jeval.report.verdict import DEFAULT_MIN_LABELS
+
+    path = records_path(root)
+    if not path.exists():
+        typer.echo(
+            f"nothing collected yet at {path}. In the service, wrap the client with "
+            "collect.track(...) and record answers with collect.resolve(...), with JEVAL_ROOT "
+            f"pointing at {Path(root).resolve()}; or run `jeval ingest <log>` for a log you "
+            "already have."
+        )
+        raise typer.Exit(code=1)
+    records = _load_records(root)
+    if not records:
+        typer.echo(f"{path} exists but holds no decisions yet: nothing has been collected.")
+        raise typer.Exit(code=1)
+    events = read_label_events(labels_path(root))
+    # One clock for every record: an ingested log can mix offsets and naive stamps.
+    last = max(
+        (
+            record.ts.astimezone(timezone.utc)
+            if record.ts.tzinfo is not None
+            else record.ts.replace(tzinfo=timezone.utc)
+            for record in records
+        ),
+        default=None,
+    )
+    typer.echo(
+        f"decisions: {path} ({len(records):,} decisions"
+        + (f", last {last:%Y-%m-%d %H:%M}Z" if last else "")
+        + ")"
+    )
+    typer.echo(
+        f"answers:   {labels_path(root)} ({len(events):,} answers)"
+        if events
+        else "answers:   none recorded with collect.resolve yet"
+    )
+    groups: dict[tuple[str, str], list[DecisionRecord]] = {}
+    for record in records:
+        groups.setdefault((record.model, record.question_key), []).append(record)
+    typer.echo("")
+    typer.echo(f"  {'model':<18} {'question':<20} {'decisions':>9} {'gold':>6} {'silver':>7}")
+    for (model, question), group in sorted(groups.items()):
+        gold = sum(1 for record in group if record.is_gold)
+        silver = sum(1 for record in group if record.label is not None and not record.is_gold)
+        typer.echo(f"  {model:<18} {question:<20} {len(group):>9,} {gold:>6,} {silver:>7,}")
+    measurable = sum(
+        1 for record in records if record.is_gold and record.calibration_point() is not None
+    )
+    binary = sum(1 for record in records if record.question_type != "score")
+    scored = sum(1 for record in records if record.question_type == "score" and record.is_gold)
+    typer.echo("")
+    if scored:
+        typer.echo(
+            f"score questions: {scored:,} gold-labeled answers, measured as error and rank "
+            "agreement in the report, never as right or wrong."
+        )
+    if binary and measurable < DEFAULT_MIN_LABELS:
+        typer.echo(
+            f"next: {DEFAULT_MIN_LABELS - measurable} more gold labels before the verdict can say "
+            f"anything ({measurable} of {DEFAULT_MIN_LABELS}). Record them with collect.resolve "
+            "where a human settles a case."
+        )
+    else:
+        typer.echo(
+            f"ready: {measurable:,} gold-labeled decisions; `jeval report` can measure them."
+        )
+    actions, _ = resolve_cost_actions(None, root)
+    if not actions:
+        typer.echo(
+            "no cost matrix: add costs.yaml to get a threshold; calibration works without one."
+        )
 
 
 @app.command()
@@ -1432,7 +1562,9 @@ def label(
     """Queue the records whose labels would teach the tool the most."""
     from jeval import active
 
-    records = _load_records(root)
+    # Applying a sheet writes records back, so it reads them unjoined; building the queue reads the
+    # joined view, so a case a human already answered through collect.resolve is not queued again.
+    records = _load_records(root, join=apply_from is None)
     if apply_from is not None:
         with Path(apply_from).open(encoding="utf-8", newline="") as handle:
             applied = active.apply_labels(

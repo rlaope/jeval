@@ -7,6 +7,34 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — the library and the command line as one loop
+- `collect.resolve(source_key=..., question=..., answer=...)` records the answer a human settled on,
+  where the service already knows it, into `labels.jsonl` beside the records. Like `track`, it
+  never raises: an empty key, question or answer, or an unknown source, is counted in
+  `stats()["invalid_value"]`; `labels_written` counts what it wrote; `JEVAL_COLLECT=0` switches it
+  off.
+- Every command that reads records (`report`, `threshold`, `drift`, `plan`, `label`, `calibrate`,
+  `status`) joins those answers on read, by `(source_key, question)`, and prints what happened to
+  each on stderr. A decision that already has a label keeps it, an answer the question could not
+  have produced is refused, a later answer to the same case wins, and nothing is rewritten on disk.
+  The `ingest --labels` step is no longer needed for answers recorded in the service.
+- `jeval status` shows what has been collected per model and question, how many decisions carry a
+  gold or silver label, and how many more gold labels the verdict needs before it can say anything.
+- `docs/library.md`: the library reference — every argument of `track`, `record` and `resolve`, the
+  environment variables, the counters to check, what the library promises, and its limits.
+  `docs/instrumenting-a-service.md` is rewritten around `track`, `resolve` and `status`, with every
+  output captured from `examples/service-quickstart.py`; its earlier `jeval threshold` output
+  predated the currency format and could not be reproduced.
+
+### Added — drift gate
+- `jeval drift --fail-on threshold-shift=0.05` fails the build when the cost-optimal threshold moves
+  by more than the limit in either direction. The line a reviewer approved is the one the
+  application runs, so a version that moves it needs a new approval even when its calibration looks
+  fine. Without a cost matrix the check is refused with exit 1 rather than passed.
+- The CI block names every failed check under the table (`failed threshold-shift: department:
+  recommended threshold 0.96 -> 0.98 (+0.02), limit 0.010`); the table's `FAIL` only said that a
+  question failed something.
+
 ### Changed — compatibility
 - **`noul` thresholds are now on the probability-of-being-right scale.** A yes/no threshold is
   compared with `max(p, 1 - p)`, like every `choice` threshold, instead of with the stored
@@ -35,6 +63,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `jeval.synth` mode `class_inflated`: confidence is inflated only when one named class is
   predicted, and the other classes are underconfident by exactly enough that top-1 ECE stays near
   zero. Existing modes generate byte-identical output.
+- `jeval drift --paired`: a head-to-head comparison of two model versions on the requests both
+  answered, matched by `(source_key, question)`. Per question it prints the number of pairs,
+  accuracy, ECE and Brier on both sides with the current-minus-baseline difference and its 95%
+  bootstrap interval over pairs, an exact McNemar p-value on the discordant pairs, and a one-line
+  verdict that calls anything inside the noise unresolved. Records without a `source_key`, keys
+  logged twice by one version, requests with no partner, pairs without a gold label on both sides,
+  pairs whose labels disagree, and `score` records are excluded and counted. A question with fewer
+  than 30 pairs is refused with no numbers. The block informs and never changes the exit code.
+  The statistics are `calibration.mcnemar_exact` and `calibration.paired_bootstrap`;
+  `synth.generate_paired` builds shadow-traffic logs with shared requests for the tests and for
+  `examples/make-paired-log.py`.
 - `jeval threshold --currency`: the terminal prints per-case costs and the segment table in the same
   currency format as the report (`KRW 1,738 per case`), where it used to print a bare `1,738` or
   `1,737.70`.

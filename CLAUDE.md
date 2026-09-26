@@ -33,7 +33,7 @@ and a pull request adding them will be closed:
 | Path | Responsibility |
 | --- | --- |
 | `jeval/schema.py` | `DecisionRecord` and the per-`question_type` normalization rules |
-| `jeval/store.py` | JSONL read/write; the only module that knows about `.jeval/` |
+| `jeval/store.py` | JSONL read/write of `records.jsonl` and `labels.jsonl`; the only module that knows about `.jeval/` |
 | `jeval/config.py` | `config.yaml` defaults and the ingest field mapping |
 | `jeval/ingest.py` | raw JSONL/CSV rows to decision records, one record per question |
 | `jeval/calibration.py` | binning, ECE/MCE/Brier, classwise ECE, AUROC/AURC, Wilson and bootstrap intervals — pure functions |
@@ -43,7 +43,7 @@ and a pull request adding them will be closed:
 | `jeval/currency.py` | money formatting in each currency's own decimals (ISO 4217 minor units); presentation only, never conversion |
 | `jeval/drift.py` | slices by model version or period, model-change detection, `--fail-on` checks, CI text block |
 | `jeval/baseline.py` | baseline snapshots: measurements only, never records |
-| `jeval/collect.py` | the provider-neutral recorder: `track()`/`record()`, env-gated, best-effort, never raises |
+| `jeval/collect.py` | the provider-neutral recorder: `track()`/`record()` for decisions, `resolve()` for human answers; env-gated, best-effort, never raises |
 | `jeval/presets.py` | ingest presets: where a product's field spelling is written down, as data |
 | `jeval/score.py` | score-type questions: MAE, RMSE, rank correlation, level view — never binary accuracy |
 | `jeval/planning.py` | label-needed projections: interval-width scaling, with an explicit refusal below 200 labels |
