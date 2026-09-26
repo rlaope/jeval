@@ -150,3 +150,40 @@ def test_an_injected_score_bias_is_recovered_in_the_direction_it_was_injected() 
     assert metrics.bias > 0.15
     assert metrics.levels  # the level view is populated, not empty
     assert sum(level.n for level in metrics.levels) == metrics.n
+
+
+# --- yes/no questions ----------------------------------------------------------------------------
+# A noul record stores its confidence as the distance from a coin flip, |p - 0.5| * 2. Calibration
+# is a claim about how often the answer is right, which is max(p, 1 - p): measuring the stored
+# distance against accuracy reported a calibrated yes/no question as ECE 0.23 and "underconfident".
+
+
+def test_calibrated_yes_no_reports_ece_near_zero() -> None:
+    records = generate(
+        SynthSpec(n=4000, mode="calibrated", question_type="noul", question_key="q", seed=3)
+    )
+    metrics = _measure(records)
+    assert metrics.n == 4000
+    assert metrics.ece < 0.03, metrics.ece
+    assert metrics.ece_ci_low < 0.03
+
+
+def test_inflated_yes_no_is_flagged_overconfident() -> None:
+    records = generate(
+        SynthSpec(
+            n=4000, mode="inflated", inflation=1.25, question_type="noul", question_key="q", seed=6
+        )
+    )
+    metrics = _measure(records)
+    assert metrics.worst_bin is not None and metrics.worst_bin.gap < -0.02, metrics.worst_bin
+    assert "Overconfidence" in diagnose(metrics)
+
+
+def test_a_yes_no_answer_is_measured_on_the_same_scale_as_a_choice_answer() -> None:
+    choice = _measure(generate(SynthSpec(n=3000, mode="calibrated", seed=11)))
+    noul = _measure(
+        generate(
+            SynthSpec(n=3000, mode="calibrated", question_type="noul", question_key="q", seed=11)
+        )
+    )
+    assert abs(choice.ece - noul.ece) < 0.03, (choice.ece, noul.ece)

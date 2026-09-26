@@ -48,7 +48,9 @@ def test_noul_confidence_is_normalized_to_distance_from_a_coin_flip() -> None:
     assert record.confidence == pytest.approx(0.8)
     assert record.prediction == "yes"
     assert record.label == "yes"
-    assert record.calibration_point() == (pytest.approx(0.8), True)
+    # Stored as the distance from a coin flip; measured as how likely the answer is to be right.
+    assert record.stated_probability == pytest.approx(0.9)
+    assert record.calibration_point() == (pytest.approx(0.9), True)
 
 
 def test_noul_can_be_rebuilt_from_a_reported_confidence() -> None:

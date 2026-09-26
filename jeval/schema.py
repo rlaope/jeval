@@ -126,6 +126,20 @@ class DecisionRecord(BaseModel):
             return 0.5 + self.confidence / 2
         return 0.5 - self.confidence / 2
 
+    @property
+    def stated_probability(self) -> float:
+        """How likely the model said its answer is to be right: the scale calibration is about.
+
+        For ``choice`` this is ``confidence``, the top-1 probability. A ``noul`` record stores its
+        confidence as the distance from a coin flip, ``|p - 0.5| * 2``, so a 50/50 answer sits at
+        zero; the answer it gave is right with probability ``max(p, 1 - p)``, which is
+        ``0.5 + confidence / 2``. Every measurement and every threshold reads this value, so a
+        yes/no question and a multiple-choice question are judged on the same scale.
+        """
+        if self.question_type == "noul":
+            return 0.5 + self.confidence / 2.0
+        return self.confidence
+
     def calibration_point(self) -> tuple[float, bool] | None:
         """Return ``(confidence, correct)`` for binary-accuracy metrics.
 
@@ -137,7 +151,7 @@ class DecisionRecord(BaseModel):
         correct = self.is_correct
         if correct is None:
             return None
-        return (self.confidence, correct)
+        return (self.stated_probability, correct)
 
 
 def confidence_from_probabilities(probabilities: Mapping[str, float]) -> tuple[str, float]:
