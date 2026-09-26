@@ -1062,7 +1062,13 @@ def drift(
     ] = None,
     fail_on: Annotated[
         list[str] | None,
-        typer.Option("--fail-on", help="Check that fails the run, e.g. ece-increase=0.05."),
+        typer.Option(
+            "--fail-on",
+            help=(
+                "Check that fails the run: ece-increase, auto-rate-drop, ece-above or "
+                "threshold-shift, e.g. threshold-shift=0.05."
+            ),
+        ),
     ] = None,
     by_period: Annotated[
         str | None, typer.Option("--by-period", help="Split by W (week) or M (month).")
@@ -1097,8 +1103,14 @@ def drift(
         view = drift_engine.attach_thresholds(view, records, actions)
         if costs_note:
             typer.echo(costs_note)
-    checks = drift_engine.parse_fail_on(fail_on or [])
-    failures = drift_engine.run_checks(view, checks) if checks else ()
+    try:
+        checks = drift_engine.parse_fail_on(fail_on or [])
+        failures = drift_engine.run_checks(view, checks) if checks else ()
+    except ValueError as error:
+        # A check that cannot be evaluated is a refusal, not a pass: CI must not go green on a
+        # number nobody computed.
+        typer.echo(str(error))
+        raise typer.Exit(code=1) from error
     typer.echo(drift_engine.format_ci_block(view, failures), nl=False)
     if failures:
         raise typer.Exit(code=1)

@@ -65,9 +65,15 @@ COST_MATRIX_NOTE = "cost matrix applied"
 CHECK_ECE_INCREASE = "ece-increase"
 CHECK_AUTO_RATE_DROP = "auto-rate-drop"
 CHECK_ECE_ABOVE = "ece-above"
+CHECK_THRESHOLD_SHIFT = "threshold-shift"
 
 #: The only keys ``--fail-on`` accepts.
-CHECK_KEYS: tuple[str, ...] = (CHECK_ECE_INCREASE, CHECK_AUTO_RATE_DROP, CHECK_ECE_ABOVE)
+CHECK_KEYS: tuple[str, ...] = (
+    CHECK_ECE_INCREASE,
+    CHECK_AUTO_RATE_DROP,
+    CHECK_ECE_ABOVE,
+    CHECK_THRESHOLD_SHIFT,
+)
 
 #: Accepted period groupings: ISO week, calendar month.
 PERIOD_CODES: tuple[str, ...] = ("W", "M")
@@ -294,6 +300,12 @@ def run_checks(view: DriftView, checks: Sequence[DriftCheck]) -> tuple[DriftFail
     - ``ece-above``: fails when the *current* slice's ECE is above its limit, which catches a
       replacement model that is worse than the one it replaced even when the movement itself is
       small.
+    - ``threshold-shift``: fails when the cost-optimal threshold moved, in either direction, by
+      more than its limit; ``value`` is the absolute move. The line a reviewer approved is the one
+      the application runs, so a new version that moves it needs a new approval even when its
+      calibration looks fine. It needs a cost matrix: without one there is no line to compare,
+      and the check raises instead of passing. A unit whose threshold was withheld is skipped,
+      and the view note already names it.
 
     A unit whose ECE is NaN cannot produce a numerical verdict and is skipped; ``compare`` already
     names those in the view note. Failures come back in check order, then unit order, and each
@@ -301,6 +313,13 @@ def run_checks(view: DriftView, checks: Sequence[DriftCheck]) -> tuple[DriftFail
     """
     units = _comparison_units(view)
     failures: list[DriftFailure] = []
+    if any(check.key == CHECK_THRESHOLD_SHIFT for check in checks) and (
+        COST_MATRIX_NOTE not in view.note
+    ):
+        raise ValueError(
+            "threshold-shift needs a cost matrix: no threshold was computed for either side, so "
+            "there is no line to compare. Add costs.yaml, or drop the check."
+        )
     for check in checks:
         if check.key == CHECK_ECE_INCREASE:
             for unit in units:
@@ -351,6 +370,27 @@ def run_checks(view: DriftView, checks: Sequence[DriftCheck]) -> tuple[DriftFail
                             f"{check.limit:.3f}"
                         ),
                         value=measured.ece,
+                        limit=check.limit,
+                    )
+                )
+        elif check.key == CHECK_THRESHOLD_SHIFT:
+            for unit in units:
+                before_line = unit.before.threshold
+                after_line = unit.after.threshold
+                if before_line is None or after_line is None:
+                    continue
+                shift = abs(after_line - before_line)
+                if not math.isfinite(shift) or shift <= check.limit:
+                    continue
+                failures.append(
+                    DriftFailure(
+                        check=check.key,
+                        detail=(
+                            f"{unit.label}: recommended threshold {before_line:.2f} -> "
+                            f"{after_line:.2f} ({after_line - before_line:+.2f}), limit "
+                            f"{check.limit:.3f}"
+                        ),
+                        value=shift,
                         limit=check.limit,
                     )
                 )
@@ -498,8 +538,8 @@ def format_ci_block(view: DriftView, failures: Sequence[DriftFailure]) -> str:
     No colour and no decoration, because this string is read in a CI log, pasted into a bug report
     and diffed between runs. It is, in order: a header naming the change, an indented table with
     the before/after ECE and the delta per compared unit and its PASS/FAIL verdict, the threshold
-    and automation-rate movement when the slices carry one, the view's note when there is one, and
-    the exit code the block implies.
+    and automation-rate movement when the slices carry one, one line per failed check naming the
+    check and its numbers, the view's note when there is one, and the exit code the block implies.
     """
     if not view.baseline_label and not view.current_label:
         return _with_exit(view.note or "no drift comparison available", failures)
@@ -521,6 +561,9 @@ def format_ci_block(view: DriftView, failures: Sequence[DriftFailure]) -> str:
     if units:
         lines.extend(_table_lines(view, units, failures))
     lines.extend(_threshold_lines(view, units))
+    # The table marks a question FAIL whichever check failed it; these lines say which one, so a
+    # threshold that moved is not read as a calibration that broke.
+    lines.extend(f"failed {failure.check}: {failure.detail}" for failure in failures)
     if view.note:
         lines.append(f"note: {view.note}")
     return _with_exit("\n".join(lines), failures)
