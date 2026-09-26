@@ -20,6 +20,7 @@ from typing import Any
 SECTION_ORDER: tuple[str, ...] = (
     "verdict",
     "reliability",
+    "discrimination",
     "cost",
     "impact",
     "segments",
