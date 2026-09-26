@@ -504,6 +504,77 @@ def _drop_impossible_label(record: DecisionRecord, report: IngestReport) -> Deci
     )
 
 
+@dataclass
+class LabelEventReport:
+    """What happened to the answers ``collect.resolve`` recorded, when they were joined on read."""
+
+    n_events: int = 0
+    n_applied: int = 0
+    n_kept_existing: int = 0
+    n_impossible: int = 0
+    n_unmatched: int = 0
+    n_invalid: int = 0
+
+    def summary(self) -> str:
+        """One line for the terminal, naming every answer that did not become a label."""
+        parts = [f"{self.n_applied} applied"]
+        for count, words in (
+            (self.n_kept_existing, "kept an existing label"),
+            (self.n_impossible, "not an answer the question can give"),
+            (self.n_unmatched, "matched no decision"),
+            (self.n_invalid, "unreadable"),
+        ):
+            if count:
+                parts.append(f"{count} {words}")
+        return f"labels: {self.n_events} answers from labels.jsonl, " + ", ".join(parts)
+
+
+def apply_label_events(
+    records: MutableSequence[DecisionRecord],
+    events: Iterable[Mapping[str, Any]],
+) -> LabelEventReport:
+    """Join run-time answers onto records in memory, by ``(source_key, question_key)``.
+
+    The same guards as :func:`harvest_labels`: a record that already carries a label keeps it (a
+    later silver answer must never replace a human review), and an answer the record's own question
+    could not have produced is refused. When one case is answered twice, the later line wins —
+    an agent correcting their own resolution is the common reason. Nothing is written back: the
+    records file stays what the collector wrote, and the join is repeated on every read.
+    """
+    report = LabelEventReport()
+    latest: dict[tuple[str, str], tuple[str, str]] = {}
+    for event in events:
+        report.n_events += 1
+        key = str(event.get("source_key") or "").strip()
+        question = str(event.get("question_key") or "").strip()
+        label = str(event.get("label") or "").strip()
+        source = str(event.get("label_source") or "human_review")
+        if not key or not question or not label or source not in ALL_LABEL_SOURCES:
+            report.n_invalid += 1
+            continue
+        latest[(key, question)] = (label, source)
+
+    matched: set[tuple[str, str]] = set()
+    for index, record in enumerate(records):
+        pair = ((record.source_key or "").strip(), record.question_key)
+        if pair not in latest:
+            continue
+        matched.add(pair)
+        label, source = latest[pair]
+        if record.label is not None:
+            report.n_kept_existing += 1
+            continue
+        if not _label_is_possible(record, label):
+            report.n_impossible += 1
+            continue
+        records[index] = DecisionRecord.model_validate(
+            {**record.model_dump(), "label": label, "label_source": source}
+        )
+        report.n_applied += 1
+    report.n_unmatched = len(latest) - len(matched)
+    return report
+
+
 def _label_is_possible(record: DecisionRecord, label: str) -> bool:
     """Whether ``label`` is an answer this record's own question could have produced."""
     if record.question_type == "choice":

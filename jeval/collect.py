@@ -27,8 +27,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from jeval.schema import DecisionRecord, normalize_record
-from jeval.store import records_path
+from jeval.schema import ALL_LABEL_SOURCES, DecisionRecord, normalize_record
+from jeval.store import LABELS_FILE_NAME, records_path
 
 ENV_FLAG = "JEVAL_COLLECT"
 ENV_ROOT = "JEVAL_ROOT"
@@ -51,6 +51,7 @@ _STATS: dict[str, int] = {
     "sink_not_a_file": 0,
     "invalid_value": 0,
     "no_method_found": 0,  # a track() that attached to nothing
+    "labels_written": 0,
 }
 
 
@@ -192,6 +193,55 @@ def record(
         _STATS["dropped"] += 1
         return False
     return _append(built, destination)
+
+
+def resolve(
+    *,
+    source_key: str,
+    question: str,
+    answer: str,
+    source: str = "human_review",
+    ts: datetime | None = None,
+    path: str | Path | None = None,
+) -> bool:
+    """Record the answer a human settled on, so every jeval command can measure against it.
+
+    Call it where the truth arrives: an agent picks the final department for an escalated ticket, a
+    refund is approved or reversed, an auto-handled case is reopened. ``source_key`` is the key the
+    decision was recorded with (``track(source_key=...)``), ``question`` the question it answers,
+    and ``source`` one of ``human_review`` (a person checked it), ``human_override`` (a person
+    changed it) or ``silver`` (agreement with another model, kept apart from accuracy).
+
+    The answer lands in ``labels.jsonl`` beside the records file — ``$JEVAL_ROOT/.jeval/`` by
+    default, or next to the path ``JEVAL_COLLECT`` or ``path`` names — and ``jeval report``,
+    ``threshold``, ``drift`` and the other commands join it on read. Nothing is rewritten, so a
+    late answer or a second run changes nothing it should not.
+
+    Like everything here it returns whether the line was written and never raises: an empty key,
+    question or answer, or an unknown source, is counted in ``stats()["invalid_value"]``.
+    """
+    records_target = target_path(path)
+    if records_target is None:
+        return False
+    fields = {
+        "source_key": str(source_key).strip() if source_key is not None else "",
+        "question_key": str(question).strip() if question is not None else "",
+        "label": str(answer).strip() if answer is not None else "",
+    }
+    if not all(fields.values()) or source not in ALL_LABEL_SOURCES:
+        _STATS["invalid_value"] += 1
+        return False
+    destination = records_target.parent / LABELS_FILE_NAME
+    event = {**fields, "label_source": source, "ts": (ts or _now()).isoformat()}
+    try:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        with destination.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(event, ensure_ascii=False) + "\n")
+    except Exception:
+        _STATS["dropped"] += 1
+        return False
+    _STATS["labels_written"] += 1
+    return True
 
 
 def record_many(payloads: Sequence[Mapping[str, Any]], *, path: str | Path | None = None) -> int:

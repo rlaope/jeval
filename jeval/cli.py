@@ -17,7 +17,7 @@ from jeval.config import load_config, load_ingest_map, write_default_config
 from jeval.costs import CostAction
 from jeval.currency import format_amount, format_delta, normalise_code
 from jeval.evaluate import DatasetReport, evaluate
-from jeval.ingest import ingest_files
+from jeval.ingest import apply_label_events, ingest_files
 from jeval.report import template
 from jeval.report.charts import segments as segment_charts
 from jeval.report.model import (
@@ -35,7 +35,14 @@ from jeval.report.model import (
 )
 from jeval.report.verdict import build_verdict
 from jeval.schema import DecisionRecord
-from jeval.store import DATA_DIR_NAME, load_records, records_path, write_records
+from jeval.store import (
+    DATA_DIR_NAME,
+    labels_path,
+    load_records,
+    read_label_events,
+    records_path,
+    write_records,
+)
 from jeval.synth import demo_dataset
 
 app = typer.Typer(
@@ -312,13 +319,21 @@ def _load_records(root: Path) -> list[DecisionRecord]:
     """Read a project's records, or exit with one readable line.
 
     Six commands read records directly, so a missing file surfaced as whatever each of them happened
-    to do — one of them as an uncaught FileNotFoundError.
+    to do — one of them as an uncaught FileNotFoundError. Every one of them also sees the answers
+    ``collect.resolve`` recorded in ``labels.jsonl``, joined in memory.
     """
     try:
-        return load_records(root)
-    except FileNotFoundError as exc:
+        records = load_records(root)
+        events = read_label_events(labels_path(root))
+    except (FileNotFoundError, ValueError) as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from None
+    # Answers recorded at run time by `collect.resolve` are joined here, on every read, so the
+    # library and the command line are one loop with no ingest step between them.
+    if events:
+        report = apply_label_events(records, events)
+        typer.echo(report.summary(), err=True)
+    return records
 
 
 def _report_ingest(result: Any) -> None:
@@ -1136,6 +1151,65 @@ def drift(
     typer.echo(drift_engine.format_ci_block(view, failures, paired=head_to_head), nl=False)
     if failures:
         raise typer.Exit(code=1)
+
+
+@app.command()
+def status(
+    root: Annotated[Path, typer.Option("--root", help="Project root holding .jeval/.")] = Path("."),
+) -> None:
+    """What has been collected so far, and what is still missing before a report means anything."""
+    from jeval.report.verdict import DEFAULT_MIN_LABELS
+
+    path = records_path(root)
+    if not path.exists():
+        typer.echo(
+            f"nothing collected yet at {path}. In the service, wrap the client with "
+            "collect.track(...) and record answers with collect.resolve(...), with JEVAL_ROOT "
+            f"pointing at {Path(root).resolve()}; or run `jeval ingest <log>` for a log you "
+            "already have."
+        )
+        raise typer.Exit(code=1)
+    records = _load_records(root)
+    events = read_label_events(labels_path(root))
+    last = max((record.ts for record in records), default=None)
+    typer.echo(
+        f"decisions: {path} ({len(records):,} decisions"
+        + (f", last {last:%Y-%m-%d %H:%M}Z" if last else "")
+        + ")"
+    )
+    typer.echo(
+        f"answers:   {labels_path(root)} ({len(events):,} answers)"
+        if events
+        else "answers:   none recorded with collect.resolve yet"
+    )
+    groups: dict[tuple[str, str], list[DecisionRecord]] = {}
+    for record in records:
+        groups.setdefault((record.model, record.question_key), []).append(record)
+    typer.echo("")
+    typer.echo(f"  {'model':<18} {'question':<20} {'decisions':>9} {'gold':>6} {'silver':>7}")
+    for (model, question), group in sorted(groups.items()):
+        gold = sum(1 for record in group if record.is_gold)
+        silver = sum(1 for record in group if record.label is not None and not record.is_gold)
+        typer.echo(f"  {model:<18} {question:<20} {len(group):>9,} {gold:>6,} {silver:>7,}")
+    measurable = sum(
+        1 for record in records if record.is_gold and record.calibration_point() is not None
+    )
+    typer.echo("")
+    if measurable < DEFAULT_MIN_LABELS:
+        typer.echo(
+            f"next: {DEFAULT_MIN_LABELS - measurable} more gold labels before the verdict can say "
+            f"anything ({measurable} of {DEFAULT_MIN_LABELS}). Record them with collect.resolve "
+            "where a human settles a case."
+        )
+    else:
+        typer.echo(
+            f"ready: {measurable:,} gold-labeled decisions; `jeval report` can measure them."
+        )
+    actions, _ = resolve_cost_actions(None, root)
+    if not actions:
+        typer.echo(
+            "no cost matrix: add costs.yaml to get a threshold; calibration works without one."
+        )
 
 
 @app.command()
