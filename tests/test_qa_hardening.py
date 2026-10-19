@@ -623,3 +623,76 @@ def test_comparing_a_slice_with_itself_is_not_a_comparison() -> None:
 
     assert "nothing to compare" in block
     assert "model changed" not in block
+
+
+def test_the_drift_threshold_staircase_sits_at_each_slice_own_threshold() -> None:
+    """QA: the drift threshold staircase was drawn one slice ahead of itself.
+
+    The horizontal step over a slice sat at the *next* slice's threshold while the dashed
+    connector at the same x joined the two, so the segments never met: the line read a
+    threshold the slice underneath it never had, and the first slice's own threshold was
+    drawn nowhere.
+    """
+    import re
+
+    from jeval.report.charts.drift import render_threshold_steps
+    from jeval.report.model import DriftSlice, DriftView
+
+    thresholds = (0.5, 0.6, 0.7)
+    view = DriftView(
+        baseline_label="m1",
+        current_label="m3",
+        slices=tuple(
+            DriftSlice(
+                label=f"q{index}",
+                model=f"m{index}",
+                start="",
+                end="",
+                n=100,
+                ece=0.1,
+                threshold=value,
+                auto_rate=0.5,
+            )
+            for index, value in enumerate(thresholds)
+        ),
+    )
+    svg = render_threshold_steps(view)
+
+    def _number(tag: str, name: str) -> float:
+        found = re.search(rf'\s{name}="(-?[\d.]+)"', tag)
+        assert found is not None, f"{name} missing from {tag}"
+        return float(found.group(1))
+
+    lines = re.findall(r"<line [^>]*/>", svg)
+    steps = [tag for tag in lines if 'stroke-width="2.00"' in tag]
+    connectors = [tag for tag in lines if 'stroke-dasharray="3 3"' in tag]
+    assert len(steps) == len(thresholds) - 1
+    assert len(connectors) == len(thresholds) - 1
+
+    # The y axis carries the scale: every label sits 4px below the tick it names, and the
+    # scale is linear, so two labels are enough to read a height back as a threshold.
+    labelled = [
+        (float(value), _number(tag, "y") - 4.0)
+        for tag in re.findall(r"<text [^>]*>[^<]*</text>", svg)
+        if 'text-anchor="end"' in tag
+        for value in [re.sub(r"<[^>]+>", "", tag)]
+        if re.fullmatch(r"-?\d+(\.\d+)?", value)
+    ]
+    assert len(labelled) >= 2
+    (first_value, first_y), (second_value, second_y) = labelled[0], labelled[1]
+
+    def _threshold_at(y: float) -> float:
+        return first_value + (y - first_y) * (second_value - first_value) / (second_y - first_y)
+
+    drawn = [_threshold_at(_number(tag, "y1")) for tag in steps]
+    assert drawn == pytest.approx(list(thresholds[:-1]), abs=1e-3), (
+        f"the step over a slice must sit at that slice's own threshold, got {drawn}"
+    )
+    spanned = [
+        sorted((_threshold_at(_number(tag, "y1")), _threshold_at(_number(tag, "y2"))))
+        for tag in connectors
+    ]
+    assert spanned == [
+        pytest.approx(sorted((thresholds[index], thresholds[index + 1])), abs=1e-3)
+        for index in range(len(thresholds) - 1)
+    ]

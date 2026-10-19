@@ -207,7 +207,13 @@ def render_overlay(
 
 
 def render_threshold_steps(view: DriftView, *, width: float = WIDTH, height: float = 260.0) -> str:
-    """Recommended threshold per slice, as the staircase it is."""
+    """Recommended threshold per slice, as the staircase it is.
+
+    A slice's own threshold is the height of the step drawn over it: the line holds that
+    threshold from the slice's own tick to the next one, and the dashed connector at the
+    boundary is the move from one slice's threshold to the next. The two have to agree, or
+    the staircase does not join up and the line reads a threshold no slice had.
+    """
     slices = [sl for sl in view.slices if sl.threshold is not None]
     if len(slices) < 2:
         return ""
@@ -225,9 +231,9 @@ def render_threshold_steps(view: DriftView, *, width: float = WIDTH, height: flo
         steps.append(
             S.line(
                 x(float(index)),
-                y(right_value),
+                y(left_value),
                 x(float(index + 1)),
-                y(right_value),
+                y(left_value),
                 stroke=S.INK,
                 width=2.0,
             )
